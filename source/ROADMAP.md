@@ -80,7 +80,49 @@ Tutte dietro toggle, **default OFF**: non toccano il motore. Diviso per causa.
 
 ---
 
-## 3. Roadmap — ordinata per priorità (alto impatto + bassa difficoltà in cima)
+## 3. PIANO FORWARD (post-3.4.0) — ordinato per ratio Elo / (rischio × complessità)
+
+Principio: prima i +Elo facili e misurabili e gli **abilitatori** (incl. la pipeline
+dati), così quando arriveremo alla **rete custom** il self-play sarà generato dal
+motore **più forte possibile** → dataset di qualità massima. Per questo la rete è in
+fondo: non perché valga poco (vale di più di tutto il resto), ma perché **dipende**
+dal lavoro sopra.
+
+### Tier A — Quick win (basso rischio, misurabili, SUBITO)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **AggrLMR** | +0..8 | basso/basso | In test ora (toggle `AggrLMR`, div 2048 + clamp ±3). Se +, SPSA `AggrLMRDiv`/`AggrLMRClamp`. |
+| **⭐ Re-SPSA margini al TC di torneo (8+0.08)** | +3..10 | basso/basso | RFP/razor/futility/singular tarati a 3+0.2 → ottimo spostato al TC reale. Infra pronta. **Il miglior ratio rimasto.** |
+| **LMR enrichment + retune razor/NMP** | +2..8 | basso/medio | Condizioni LMR staccate (TT-move, tt-depth, quiet-count) + margini razor/NMP al TC giusto. |
+
+### Tier B — Medie (più sforzo, Elo moderato)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **Singular ext avanzate** (triple ext, multi-cut) | +2..6 | medio/medio | |
+| **CorrHistMulti / ContHist 2-4ply RIFATTE con pesi** | +0..8 | medio/medio | Le parcheggiate, fatte giuste (pesi per tabella/ply). Sotto la soglia di misura → solo se Tier A esaurito. |
+| **Lazy MovePicker** (movegen stadiato) | +5..12 | **alto/alto** | +NPS reale ma rewrite invasivo del move loop (interagisce con singular/ProbCut/Lazy SMP/qsearch + validatore TT-move). Progetto, non test. |
+
+### Tier C — Abilitatori / robustezza (no Elo diretto, ma necessari)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **ASAN + fix crash ~1/800** | 0 | basso/medio | Niente Elo ma alto valore torneo/release. Fallo prima di tornei seri. |
+| **🔑 Self-play data gen** (FEN+score+eval+depth) | 0 | medio | **PREREQUISITO della rete.** Logging già abbozzato (`DataLog`). Da consolidare. |
+| **Pulizia codice** (policy morta, ABDADA, toggle parcheggiati) | 0 | basso | Manutenibilità. |
+
+### Tier D — Ricerca (il focus originale del progetto)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **Rivivere policy net int8/più piccola** | +? | alto/medio | Distinta dalla NNUE-eval. Ora −85 in ricerca; int8/rete piccola può ribaltarla. |
+
+### Tier E — Il salto (in fondo PER SCELTA, dipende da tutto il resto)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **🏆 Rete NNUE custom** | +50..150 | alto/alto | Il lever più grosso. Richiede self-play **alla massima qualità** → serve l'engine più forte possibile (Tier A-B) + la pipeline dati (Tier C). Progetto lungo: calo iniziale fisiologico poi indipendenza totale da Stockfish. |
+
+---
+
+## 4. Roadmap storica (item originali, alcuni superati)
+### Roadmap — ordinata per priorità (alto impatto + bassa difficoltà in cima)
 
 Legenda:
 - **Elo**: guadagno atteso (stima grossolana, da confermare con SPRT).

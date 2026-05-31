@@ -148,19 +148,27 @@ void set_lazy_smp(bool v) { g_lazy_smp = v; }
 bool g_tt_4way = false;
 void set_tt_4way(bool v) { g_tt_4way = v; }
 
-// Lazy eval on/off (UCI option "LazyEval"). Default OFF. When ON, skip the NNUE
-// static eval in nodes where the side to move is in check: there the static eval
-// is not used by any forward-pruning rule (all gated !in_check), so computing it
-// is wasted work -> a few % NPS for free.
+// Lazy eval on/off (UCI option "LazyEval"). Default ON (CONFIRMED: combined with
+// TimeMgmt, +9.1 Elo LOS 96% @1+0.01, estimate held over 3k+ games). Skips the
+// NNUE static eval in nodes where the side to move is in check: there the static
+// eval is not used by any forward-pruning rule (all gated !in_check), so computing
+// it is wasted work -> a few % NPS for free.
 static bool g_lazy_eval = true;
 void set_lazy_eval(bool v) { g_lazy_eval = v; }
 
-// Extra time management on/off (UCI option "TimeMgmt"). Default OFF. When ON, the
-// main thread grants extra time when the root score DROPS vs the previous
-// completed iteration (the position may be turning against us), on top of the
-// existing best-move-instability extension.
+// Extra time management on/off (UCI option "TimeMgmt"). Default ON (CONFIRMED with
+// LazyEval, +9.1 Elo LOS 96%). The main thread grants extra time when the root
+// score DROPS vs the previous completed iteration (the position may be turning
+// against us), on top of the existing best-move-instability extension.
 static bool g_time_mgmt = true;
 void set_time_mgmt(bool v) { g_time_mgmt = v; }
+
+// Aggressive LMR on/off (UCI "AggrLMR"). Default OFF. When ON, the history- and
+// continuation-history-based LMR reductions use a SMALLER divisor and a WIDER
+// clamp (g_aggr_lmr_div / g_aggr_lmr_clamp), so a very bad-history quiet can be
+// reduced by several plies instead of just 1. Off reproduces the baseline exactly.
+static bool g_aggr_lmr = false;
+void set_aggr_lmr(bool v) { g_aggr_lmr = v; }
 
 // ---- SPSA-tunable search parameters -----------------------------------------
 // Exposed as UCI spin options (see set_search_param + uci_mt.cpp) so an external
@@ -169,7 +177,7 @@ void set_time_mgmt(bool v) { g_time_mgmt = v; }
 int g_rfp_margin       = 30;    // reverse futility: static_eval - g*depth >= beta   [SPSA-tuned]
 int g_razor_base       = 300;   // razoring: base + mult*depth below alpha -> qsearch
 int g_razor_mult       = 102;   // [SPSA-tuned]
-int g_fut_base         = 82;    // futility: base + mult*depth (+improving bonus)      [SPSA-tuned]
+int g_fut_base         = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
 int g_fut_mult         = 66;    // [SPSA-tuned]
 int g_fut_improving    = 60;    // extra futility margin when improving
 int g_singular_dmargin = 63;    // double-extension margin below singular_beta         [SPSA-tuned]
@@ -183,11 +191,26 @@ int g_corr_cap         = 32;    // max correction applied to static eval (cp). W
 int g_corr_lr_div      = 512;   // learning-rate divisor (bigger = slower/steadier learning)
 // Continuation-history pruning tunables (only active when ContHistPrune is on).
 int g_conthist_red_div = 5000;  // LMR: continuation-history reduction divisor (clamped to +/-1)
+// Aggressive-LMR tunables (only active when AggrLMR is on). Divisor MUST be below
+// HISTORY_MAX (7000) or the integer division collapses to 0 and disables the term.
+int g_aggr_lmr_div     = 2048;  // smaller divisor -> wider reduction range (7000/2048 ~ 3)
+int g_aggr_lmr_clamp   = 3;     // max +/- ply the history reductions may apply
+// NMP + LMR-enrichment tunables for the unified 8+0.08 SPSA. Defaults reproduce
+// the current search exactly (the two new LMR conditions default to NEUTRAL).
+int g_nmp_base         = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
+int g_nmp_div          = 4;
+int g_lmr_eval_margin  = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
+int g_lmr_ttdepth      = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
+// CORE LMR formula coefficients (*100), never tuned before. lmr = base + log(d)*log(m)/div.
+int g_lmr_base_x100    = 47;    // 0.47: baseline reduction floor                     [SPSA-tuned: 75->47]
+int g_lmr_div_x100     = 270;   // 2.70: bigger divisor = LESS reduction overall       [SPSA-tuned: 225->270]
 int g_histprune_margin = 1000;  // history pruning: prune late quiet if combined hist < -margin*depth
 
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
+
+void init_lmr_table();   // defined below; re-run when LMR core coefficients change
 
 // Dispatch a UCI spin option to the matching tunable. Returns true if matched.
 bool set_search_param(const char* name, int value) {
@@ -207,6 +230,14 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
     if (!strcmp(name, "HistPruneMargin"))     { g_histprune_margin = value; return true; }
     if (!strcmp(name, "SmallNetThreshold"))   { g_small_net_threshold = value; return true; }
+    if (!strcmp(name, "AggrLMRDiv"))          { g_aggr_lmr_div     = value; return true; }
+    if (!strcmp(name, "AggrLMRClamp"))        { g_aggr_lmr_clamp   = value; return true; }
+    if (!strcmp(name, "NMPBase"))             { g_nmp_base         = value; return true; }
+    if (!strcmp(name, "NMPDiv"))              { g_nmp_div          = value; return true; }
+    if (!strcmp(name, "LMREvalMargin"))       { g_lmr_eval_margin  = value; return true; }
+    if (!strcmp(name, "LMRTTDepth"))          { g_lmr_ttdepth      = value; return true; }
+    if (!strcmp(name, "LMRBase"))             { g_lmr_base_x100 = value; init_lmr_table(); return true; }
+    if (!strcmp(name, "LMRDiv"))              { g_lmr_div_x100  = value; init_lmr_table(); return true; }
     return false;
 }
 
@@ -257,7 +288,7 @@ void init_lmr_table() {
                 lmr_table[depth][moves] = 0;
             }
             else {
-                lmr_table[depth][moves] = (int)(0.75 + log(depth) * log(moves) / 2.25);
+                lmr_table[depth][moves] = (int)(g_lmr_base_x100 / 100.0 + log(depth) * log(moves) / (g_lmr_div_x100 / 100.0));
             }
         }
     }
@@ -1461,7 +1492,7 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
             // Null move: the child has no "previous move" for counter-move.
             td.move_stack[td.ply] = 0;
 
-            int R = 3 + depth / 4;
+            int R = g_nmp_base + depth / g_nmp_div;
             if (R > depth - 1) R = depth - 1;
 
             sf_pos_do_null(td.sfpos, td.fifty);
@@ -1844,8 +1875,11 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
                 if (!pv_node) reduction++;
                 if (move == td.killer_moves[0][td.ply] || move == td.killer_moves[1][td.ply])
                     reduction--;
-                if (static_eval + 100 < alpha) reduction++;
+                if (static_eval + g_lmr_eval_margin < alpha) reduction++;
                 if (is_cut_node) reduction++;
+                // Enrichment (neutral at default 0): a deep TT entry for this node
+                // means the ordering is trustworthy -> reduce a bit less.
+                if (g_lmr_ttdepth && tt_hit && tt_depth >= depth) reduction -= g_lmr_ttdepth;
                 // Reduce one extra ply when the position is NOT improving: a
                 // flat/falling eval makes late quiets less likely to be the move.
                 if (g_improving && !improving) reduction++;
@@ -1853,9 +1887,12 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
                 // History-based reduction: search good-history quiets less and
                 // bad-history quiets more. Clamped to +/-1 ply to stay
                 // conservative; the divisor is the knob to tune in matches.
-                int hist_r = td.history_moves[get_move_piece(move)][get_move_target(move)] / g_hist_red_div;
-                if (hist_r > 1) hist_r = 1;
-                else if (hist_r < -1) hist_r = -1;
+                int raw_hist = td.history_moves[get_move_piece(move)][get_move_target(move)];
+                int hist_r, hclamp;
+                if (g_aggr_lmr) { hist_r = raw_hist / g_aggr_lmr_div; hclamp = g_aggr_lmr_clamp; }
+                else            { hist_r = raw_hist / g_hist_red_div;  hclamp = 1; }
+                if (hist_r >  hclamp) hist_r =  hclamp;
+                else if (hist_r < -hclamp) hist_r = -hclamp;
                 reduction -= hist_r;
 
                 // Continuation-history reduction: the move scored in the context of
@@ -1868,9 +1905,11 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
                     if (prev) {
                         int ch = td.continuation_history[get_move_piece(prev)][get_move_target(prev)]
                                                         [get_move_piece(move)][get_move_target(move)];
-                        int ch_r = ch / g_conthist_red_div;
-                        if (ch_r > 1) ch_r = 1;
-                        else if (ch_r < -1) ch_r = -1;
+                        int ch_r, cclamp;
+                        if (g_aggr_lmr) { ch_r = ch / g_aggr_lmr_div; cclamp = g_aggr_lmr_clamp; }
+                        else            { ch_r = ch / g_conthist_red_div; cclamp = 1; }
+                        if (ch_r >  cclamp) ch_r =  cclamp;
+                        else if (ch_r < -cclamp) ch_r = -cclamp;
                         reduction -= ch_r;
                     }
                 }
