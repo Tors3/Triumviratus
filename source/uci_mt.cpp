@@ -250,12 +250,20 @@ void uci_loop()
             printf("option name CorrHist type check default true\n");
             printf("option name ProbCut type check default true\n");
             printf("option name ContHistPrune type check default true\n");
-            printf("option name LazySMP type check default true\n");
             printf("option name TT4Way type check default false\n");
             printf("option name CorrHistMulti type check default false\n");
             printf("option name ContHistMulti type check default false\n");
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
+            printf("option name AggrLMR type check default false\n");
+            printf("option name AggrLMRDiv type spin default 2048 min 512 max 6000\n");
+            printf("option name AggrLMRClamp type spin default 3 min 1 max 6\n");
+            printf("option name NMPBase type spin default 3 min 1 max 6\n");
+            printf("option name NMPDiv type spin default 4 min 2 max 8\n");
+            printf("option name LMREvalMargin type spin default 100 min 0 max 400\n");
+            printf("option name LMRTTDepth type spin default 0 min 0 max 2\n");
+            printf("option name LMRBase type spin default 75 min 0 max 200\n");
+            printf("option name LMRDiv type spin default 225 min 100 max 500\n");
             // SPSA-tunable search parameters (spin). Defaults = current hand-set values.
             printf("option name RFPMargin type spin default 30 min 20 max 200\n");
             printf("option name RazorBase type spin default 300 min 100 max 600\n");
@@ -449,13 +457,6 @@ void uci_loop()
             set_cont_hist_prune(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
-        // "setoption name LazySMP value <true|false>" (A/B Lazy SMP vs ABDADA)
-        else if (strncmp(input, "setoption name LazySMP value ", 29) == 0)
-        {
-            const char* v = input + 29;
-            set_lazy_smp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
-
         // "setoption name TT4Way value <true|false>" (A/B 4-way bucketed TT)
         else if (strncmp(input, "setoption name TT4Way value ", 28) == 0)
         {
@@ -489,6 +490,13 @@ void uci_loop()
         {
             const char* v = input + 30;
             set_time_mgmt(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // "setoption name AggrLMR value <true|false>" (A/B aggressive multi-ply LMR)
+        else if (strncmp(input, "setoption name AggrLMR value ", 29) == 0)
+        {
+            const char* v = input + 29;
+            set_aggr_lmr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // UCI command: "setoption name SyzygyPath value <dir[;dir...]>"

@@ -185,10 +185,6 @@ extern void set_cont_hist_prune(bool enabled);
 // and 4-ply continuation histories to ordering + updates. Default off.
 extern void set_conthist_multi(bool enabled);
 
-// Lazy SMP on/off (UCI option "LazySMP") — replace ABDADA busy-node coordination
-// with independent TT-sharing threads + per-thread depth skipping. Default off.
-extern void set_lazy_smp(bool enabled);
-
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
 extern void set_tt_4way(bool enabled);
@@ -198,6 +194,10 @@ extern void set_lazy_eval(bool enabled);
 
 // Extra time management (UCI "TimeMgmt") — score-drop time extension. Default off.
 extern void set_time_mgmt(bool enabled);
+
+// Aggressive LMR (UCI "AggrLMR") — multi-ply history/conthist reductions via a
+// smaller divisor + wider clamp (AggrLMRDiv / AggrLMRClamp spins). Default off.
+extern void set_aggr_lmr(bool enabled);
 
 // SPSA-tunable search parameters: set one by name (UCI spin option). Returns true
 // if the name matched a known tunable. Used by an external SPSA tuner (fastchess).

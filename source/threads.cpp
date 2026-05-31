@@ -1,14 +1,11 @@
 /*
- * TRIUMVIRATUS - ABDADA Multi-threaded Search
+ * TRIUMVIRATUS - Lazy SMP Multi-threaded Search
  *
- * ABDADA = Alpha-Beta Distributed Avoiding Duplicate Analysis
- *
- * Key insight: In Lazy SMP, threads often search the same nodes simultaneously,
- * wasting work. ABDADA marks nodes as "busy" when a thread starts searching them.
- * Other threads skip busy nodes (for non-critical moves) and search them later
- * if still needed.
- *
- * Result: Real time speedup, not just NPS increase!
+ * Each thread runs an independent alpha-beta search, sharing only the
+ * transposition table. Helper threads (id > 0) diversify their effort via
+ * per-thread iterative-deepening depth skipping (LSMP_Skip* tables); the main
+ * thread (id 0) drives time management and the PV. The legacy ABDADA busy-node
+ * coordination was removed once Lazy SMP proved a clear win (+55 Elo @4CPU).
  */
 
 #include "threads.h"
@@ -132,14 +129,10 @@ void set_cont_hist_prune(bool v) { g_cont_hist_prune = v; }
 static bool g_conthist_multi = false;
 void set_conthist_multi(bool v) { g_conthist_multi = v; }
 
-// Lazy SMP on/off (UCI option "LazySMP"). Default ON (ADOPTED): validated big win
-// over the old ABDADA busy-node coordination — direct A/B @2+0.02 4-thread was
-// +102 Elo (LOS 99.99%), and the 4CPU gauntlet anchor jumped 3503 -> 3558 (~+55).
-// The ABDADA deferral was wasting work; Lazy lets helper threads search fully
-// independently (shared TT only) + diversify via per-thread depth skipping (see
-// LSMP_Skip* below). Toggle off to fall back to ABDADA for an A/B.
-static bool g_lazy_smp = true;
-void set_lazy_smp(bool v) { g_lazy_smp = v; }
+// Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
+// @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
+// independently (shared TT only) and diversify via per-thread depth skipping (see
+// LSMP_Skip* below). The legacy ABDADA busy-node coordination was removed.
 
 // 4-way set-associative TT on/off (UCI option "TT4Way"). Default OFF reproduces
 // the direct-mapped table; defined here, declared extern in tt.h (the bucket
@@ -1112,7 +1105,7 @@ static inline int td_is_repetition(ThreadData& td) {
 // ============================================================================
 
 static int td_quiescence(ThreadData& td, int alpha, int beta) {
-    // Illegal-position / king-capture guard (see td_negamax_abdada for the full
+    // Illegal-position / king-capture guard (see td_negamax for the full
     // rationale): never search a position where the side not to move is in check,
     // because making the king capture desyncs the NNUE accumulator and crashes.
     {
@@ -1247,11 +1240,8 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
 }
 
 // ============================================================================
-// ABDADA NEGAMAX - The key innovation!
+// NEGAMAX (Lazy SMP: each thread runs this independently, sharing only the TT)
 // ============================================================================
-
-// ABDADA parameters
-#define ABDADA_THRESHOLD 3  // Only use ABDADA at depth >= this
 
 // ---- Correction history ----------------------------------------------------
 // Learns the systematic gap between the NNUE static eval and the value the search
@@ -1351,7 +1341,7 @@ static inline void td_conthist_multi_update(ThreadData& td, int move, int bonus)
     }
 }
 
-int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node, int excluded_move = 0) {
+int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node, int excluded_move = 0) {
     td.pv_length[td.ply] = td.ply;
 
     // Illegal-position / king-capture guard. If the side-to-move can capture the
@@ -1496,7 +1486,7 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
             if (R > depth - 1) R = depth - 1;
 
             sf_pos_do_null(td.sfpos, td.fifty);
-            score = -td_negamax_abdada(td, -beta, -beta + 1, depth - 1 - R, !is_cut_node);
+            score = -td_negamax(td, -beta, -beta + 1, depth - 1 - R, !is_cut_node);
             sf_pos_undo(td.sfpos);
 
             td.ply--;
@@ -1571,7 +1561,7 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
                 // pay for the reduced-depth (depth-4) confirmation search.
                 int pc_score = -td_quiescence(td, -probcut_beta, -probcut_beta + 1);
                 if (pc_score >= probcut_beta)
-                    pc_score = -td_negamax_abdada(td, -probcut_beta, -probcut_beta + 1,
+                    pc_score = -td_negamax(td, -probcut_beta, -probcut_beta + 1,
                                                   depth - 4, !is_cut_node);
 
                 td_unmake_move(td, move, undo);
@@ -1709,11 +1699,6 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
     int searched_captures[64];
     int n_searched_captures = 0;
 
-    // ABDADA: Deferred moves list
-    int deferred[256];
-    int deferred_count = 0;
-
-    // First pass: search moves, deferring busy ones
     for (int count = 0; count < move_list->count; count++) {
 
         // --- INIZIO PICK-NEXT: Cerca la mossa migliore tra quelle rimaste ---
@@ -1801,7 +1786,7 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
             tt_score > -mate_score && tt_score < mate_score) {
             int singular_beta = tt_score - 2 * depth;
             int singular_depth = (depth - 1) / 2;
-            int s = td_negamax_abdada(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
+            int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
             if (s < singular_beta) {
                 extension = 1;
                 // Double extension: the TT move beats every alternative by a wide
@@ -1841,28 +1826,10 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
         // Record the move that leads to the child node (for counter-move).
         td.move_stack[td.ply] = move;
 
-        // *** ABDADA: Check if child node is busy ***
-        // Only for non-first moves at sufficient depth
-        if (moves_searched > 0 && depth >= ABDADA_THRESHOLD && num_threads > 1 && !g_lazy_smp) {
-            if (is_node_busy(td.hash_key)) {
-                // Defer this move - another thread is working on it
-                td_unmake_move(td, move, undo);
-                td.ply--;
-                td.repetition_index--;
-                deferred[deferred_count++] = move;
-                continue;
-            }
-        }
-
-        // Mark node as busy before searching
-        if (depth >= ABDADA_THRESHOLD && num_threads > 1 && !g_lazy_smp) {
-            mark_busy(td.hash_key, depth);
-        }
-
         // PVS + LMR
         U64 root_nodes_before = is_root_node ? td.nodes : 0;
         if (moves_searched == 0) {
-            score = -td_negamax_abdada(td, -beta, -alpha, depth - 1 + extension, false);
+            score = -td_negamax(td, -beta, -alpha, depth - 1 + extension, false);
         }
         else {
             int reduction = 0;
@@ -1935,20 +1902,15 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
                 if (reduction > depth - 2) reduction = depth - 2;
             }
 
-            score = -td_negamax_abdada(td, -alpha - 1, -alpha, depth - 1 - reduction, true);
+            score = -td_negamax(td, -alpha - 1, -alpha, depth - 1 - reduction, true);
 
             if (score > alpha && reduction > 0) {
-                score = -td_negamax_abdada(td, -alpha - 1, -alpha, depth - 1, !is_cut_node);
+                score = -td_negamax(td, -alpha - 1, -alpha, depth - 1, !is_cut_node);
             }
 
             if (score > alpha && score < beta) {
-                score = -td_negamax_abdada(td, -beta, -alpha, depth - 1, false);
+                score = -td_negamax(td, -beta, -alpha, depth - 1, false);
             }
-        }
-
-        // Unmark busy
-        if (depth >= ABDADA_THRESHOLD && num_threads > 1 && !g_lazy_smp) {
-            unmark_busy(td.hash_key);
         }
 
         td_unmake_move(td, move, undo);
@@ -2029,115 +1991,6 @@ int td_negamax_abdada(ThreadData& td, int alpha, int beta, int depth, bool is_cu
         }
     }
 
-    // *** ABDADA: Second pass - search deferred moves ***
-    for (int i = 0; i < deferred_count; i++) {
-        if (stop_threads.load(std::memory_order_relaxed)) break;
-
-        int move = deferred[i];
-        bool is_capture = get_move_capture(move);
-        bool is_promotion = get_move_promoted(move);
-        bool is_quiet = !is_capture && !is_promotion;
-
-        UndoInfo undo;
-        td.ply++;
-        td.repetition_table[++td.repetition_index] = td.hash_key;
-
-        if (!td_make_move(td, move, undo)) {
-            td.ply--;
-            td.repetition_index--;
-            continue;
-        }
-
-        // Record the move that leads to the child node (for counter-move).
-        td.move_stack[td.ply] = move;
-
-        // Mark busy
-        mark_busy(td.hash_key, depth);
-
-        // Search with null window first
-        score = -td_negamax_abdada(td, -alpha - 1, -alpha, depth - 1, true);
-
-        if (score > alpha && score < beta) {
-            score = -td_negamax_abdada(td, -beta, -alpha, depth - 1, false);
-        }
-
-        unmark_busy(td.hash_key);
-
-        td_unmake_move(td, move, undo);
-        td.ply--;
-        td.repetition_index--;
-
-        if (stop_threads.load(std::memory_order_relaxed)) return 0;
-
-        moves_searched++;
-        if (is_quiet && n_searched_quiets < 64)
-            searched_quiets[n_searched_quiets++] = move;
-        else if (is_capture && n_searched_captures < 64)
-            searched_captures[n_searched_captures++] = move;
-
-        if (score > best_score) {
-            best_score = score;
-            best_move = move;
-
-            if (score > alpha) {
-                alpha = score;
-                hash_flag = hash_flag_exact;
-
-                td.pv_table[td.ply][td.ply] = move;
-                for (int i = td.ply + 1; i < td.pv_length[td.ply + 1]; i++)
-                    td.pv_table[td.ply][i] = td.pv_table[td.ply + 1][i];
-                td.pv_length[td.ply] = td.pv_length[td.ply + 1];
-
-                if (score >= beta) {
-                    if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply);
-                    td_corr_update(td, corr_idx, static_eval, best_score, hash_flag_beta, depth, in_check, move, excluded_move);
-
-                    if (is_quiet) {
-                        // Evita di clonare la stessa mossa in entrambi gli slot
-                        // killer (dimezzerebbe le chance di cutoff).
-                        if (move != td.killer_moves[0][td.ply]) {
-                            td.killer_moves[1][td.ply] = td.killer_moves[0][td.ply];
-                            td.killer_moves[0][td.ply] = move;
-                        }
-                        int prev_cm = td.move_stack[td.ply];
-                        int pcp = prev_cm ? get_move_piece(prev_cm) : 0;
-                        int pct = prev_cm ? get_move_target(prev_cm) : 0;
-                        if (prev_cm)
-                            td.counter_moves[pcp][pct] = move;
-                        int bonus = depth * depth;
-                        td_update_history(td.history_moves[get_move_piece(move)][get_move_target(move)], bonus);
-                        if (prev_cm)
-                            td_update_history(td.continuation_history[pcp][pct][get_move_piece(move)][get_move_target(move)], bonus);
-                        td_conthist_multi_update(td, move, bonus);
-                        // malus: quiet moves tried before the cutoff get penalized
-                        for (int q = 0; q < n_searched_quiets; q++) {
-                            int qm = searched_quiets[q];
-                            if (qm == move) continue;
-                            td_update_history(td.history_moves[get_move_piece(qm)][get_move_target(qm)], -bonus);
-                            if (prev_cm)
-                                td_update_history(td.continuation_history[pcp][pct][get_move_piece(qm)][get_move_target(qm)], -bonus);
-                            td_conthist_multi_update(td, qm, -bonus);
-                        }
-                    }
-                    else if (is_capture) {
-                        // Capture history: bonus alla cattura del cutoff, malus
-                        // alle catture provate prima senza riuscirci.
-                        int bonus = depth * depth;
-                        int vic = td_captured_piece(td, get_move_target(move));
-                        td_update_history(td.capture_history[get_move_piece(move)][get_move_target(move)][vic], bonus);
-                        for (int c = 0; c < n_searched_captures; c++) {
-                            int cm = searched_captures[c];
-                            if (cm == move) continue;
-                            int cvic = td_captured_piece(td, get_move_target(cm));
-                            td_update_history(td.capture_history[get_move_piece(cm)][get_move_target(cm)][cvic], -bonus);
-                        }
-                    }
-
-                    return best_score;
-                }
-            }
-        }
-    }
 
     // Checkmate / Stalemate
     if (legal_moves == 0) {
@@ -2229,7 +2082,7 @@ static void thread_search(int thread_id, int max_depth) {
         // they diversify which iterations they invest in. The main thread (id 0)
         // never skips: it drives time management and prints the PV, so it must
         // progress through every depth monotonically.
-        if (g_lazy_smp && thread_id > 0) {
+        if (thread_id > 0) {
             int s = (thread_id - 1) % 8;
             if (((current_depth + LSMP_SkipPhase[s]) / LSMP_SkipSize[s]) & 1)
                 continue;
@@ -2252,7 +2105,7 @@ static void thread_search(int thread_id, int max_depth) {
         U64 iter_nodes = 0;
         while (true) {
             U64 nodes_before_call = td.nodes;
-            score = td_negamax_abdada(td, alpha, beta, current_depth, false);
+            score = td_negamax(td, alpha, beta, current_depth, false);
             iter_nodes = td.nodes - nodes_before_call;   // nodes of the last (in-window) search
             if (stop_threads.load(std::memory_order_relaxed)) break;
 
