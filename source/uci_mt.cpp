@@ -97,6 +97,11 @@ void parse_position(char* command)
 }
 
 // reset time control variables
+// UCI option "Depth": 0 = off (use time / explicit "go depth"); >0 = force a
+// fixed search depth and ignore the clock (handy for testing / fixed strength).
+// An explicit "go depth N" in the command still overrides this.
+int g_uci_depth = 0;
+
 void reset_time_control()
 {
     quit = 0;
@@ -140,6 +145,15 @@ void parse_go(char* command)
 
     if ((argument = strstr(command, "depth")))
         depth = atoi(argument + 6);
+
+    // UCI option "Depth" > 0 forces a fixed-depth search (clock ignored), unless
+    // the GUI sent an explicit "go depth N" (which takes precedence).
+    if (depth == -1 && g_uci_depth > 0)
+    {
+        depth = g_uci_depth;
+        movetime = -1;
+        time_uci = -1;
+    }
 
     if (movetime != -1)
     {
@@ -239,6 +253,7 @@ void uci_loop()
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
+            printf("option name Depth type spin default 0 min 0 max 64\n");
             printf("option name DataLog type check default false\n");
             printf("option name DataFile type string default triumviratus_dataset.txt\n");
             printf("option name UsePolicy type check default false\n");
@@ -370,6 +385,15 @@ void uci_loop()
             if (threads > max_threads) threads = max_threads;
 
             init_threads(threads);
+        }
+
+        // UCI command: "setoption name Depth value X" (0 = off; >0 = fixed depth)
+        else if (strncmp(input, "setoption name Depth value ", 27) == 0)
+        {
+            int d = atoi(input + 27);
+            if (d < 0) d = 0;
+            if (d > 64) d = 64;
+            g_uci_depth = d;
         }
 
         // UCI command: "setoption name DataLog value <true|false>" (self-play)
