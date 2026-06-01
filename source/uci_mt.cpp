@@ -276,26 +276,25 @@ void uci_loop()
             printf("option name NMPBase type spin default 3 min 1 max 6\n");
             printf("option name NMPDiv type spin default 4 min 2 max 8\n");
             printf("option name LMREvalMargin type spin default 100 min 0 max 400\n");
-            printf("option name LMRTTDepth type spin default 0 min 0 max 2\n");
-            printf("option name LMRBase type spin default 75 min 0 max 200\n");
-            printf("option name LMRDiv type spin default 225 min 100 max 500\n");
-            // SPSA-tunable search parameters (spin). Defaults = current hand-set values.
-            printf("option name RFPMargin type spin default 30 min 20 max 200\n");
+            printf("option name LMRTTDepth type spin default 2 min 0 max 2\n");
+            printf("option name LMRBase type spin default 47 min 0 max 200\n");
+            printf("option name LMRDiv type spin default 270 min 100 max 500\n");
+            printf("option name RFPMargin type spin default 21 min 20 max 200\n");        // bakato: 30->21
             printf("option name RazorBase type spin default 300 min 100 max 600\n");
-            printf("option name RazorMult type spin default 102 min 20 max 250\n");
-            printf("option name FutilityBase type spin default 82 min 20 max 300\n");
+            printf("option name RazorMult type spin default 139 min 20 max 250\n");       // bakato: 102->139
+            printf("option name FutilityBase type spin default 111 min 20 max 300\n");
             printf("option name FutilityMult type spin default 66 min 20 max 200\n");
-            printf("option name FutilityImproving type spin default 60 min 0 max 200\n");
-            printf("option name SingularDoubleMargin type spin default 63 min 0 max 200\n");
-            printf("option name HistReductionDiv type spin default 3500 min 500 max 8000\n");
-            printf("option name AspInitDelta type spin default 25 min 8 max 60\n");
-            printf("option name AspGrow type spin default 100 min 30 max 200\n");
+            printf("option name FutilityImproving type spin default 93 min 0 max 200\n"); // bakato: 60->93
+            printf("option name SingularDoubleMargin type spin default 43 min 0 max 200\n"); // bakato: 63->43
+            printf("option name HistReductionDiv type spin default 1041 min 500 max 8000\n"); // bakato: 3500->1041
+            printf("option name AspInitDelta type spin default 31 min 8 max 60\n");       // bakato: 25->31
+            printf("option name AspGrow type spin default 31 min 30 max 200\n");          // bakato: 100->31
             printf("option name ProbCutMargin type spin default 180 min 60 max 400\n");
             printf("option name CorrCap type spin default 32 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 512 min 64 max 2048\n");
-            printf("option name ContHistDiv type spin default 5000 min 1000 max 12000\n");
+            printf("option name ContHistDiv type spin default 6595 min 1000 max 12000\n"); // bakato: 5000->6595
             printf("option name HistPruneMargin type spin default 1000 min 200 max 4000\n");
-            printf("option name SmallNetThreshold type spin default 1050 min 300 max 2000\n");
+            printf("option name SmallNetThreshold type spin default 782 min 300 max 2000\n"); // bakato: 1050->782
             printf("option name SyzygyPath type string default <empty>\n");
             printf("uciok\n");
             fflush(stdout);

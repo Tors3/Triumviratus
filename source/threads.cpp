@@ -167,38 +167,34 @@ void set_aggr_lmr(bool v) { g_aggr_lmr = v; }
 // Exposed as UCI spin options (see set_search_param + uci_mt.cpp) so an external
 // SPSA tuner (fastchess) can set them per-game without recompiling. Defaults =
 // the current hand-set values. After a tuning run, bake the converged values in.
-int g_rfp_margin       = 30;    // reverse futility: static_eval - g*depth >= beta   [SPSA-tuned]
-int g_razor_base       = 300;   // razoring: base + mult*depth below alpha -> qsearch
-int g_razor_mult       = 102;   // [SPSA-tuned]
-int g_fut_base         = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
-int g_fut_mult         = 66;    // [SPSA-tuned]
-int g_fut_improving    = 60;    // extra futility margin when improving
-int g_singular_dmargin = 63;    // double-extension margin below singular_beta         [SPSA-tuned]
-int g_hist_red_div     = 3500;  // LMR history-reduction divisor
-int g_asp_init_delta   = 25;    // aspiration: initial window half-width
-int g_asp_grow         = 100;   // aspiration: growth % on fail (delta += delta*g/100; 100=double)
-int g_probcut_margin   = 180;   // ProbCut: capture verification must beat beta by this margin
+int g_rfp_margin = 21;    // reverse futility: static_eval - g*depth >= beta   [SPSA-tuned: 30->21]
+int g_razor_base = 300;   // razoring: base + mult*depth below alpha -> qsearch
+int g_razor_mult = 139;   // [SPSA-tuned: 102->139]
+int g_fut_base = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
+int g_fut_mult = 66;    // [SPSA-tuned]
+int g_fut_improving = 93;    // extra futility margin when improving                [SPSA-tuned: 60->93]
+int g_singular_dmargin = 43;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
+int g_hist_red_div = 1041;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
+int g_asp_init_delta = 31;    // aspiration: initial window half-width               [SPSA-tuned: 25->31]
+int g_asp_grow = 31;    // aspiration: growth % on fail                        [SPSA-tuned: 100->31]
+int g_probcut_margin = 180;   // ProbCut: capture verification must beat beta by this margin
 // Correction-history tunables (only active when CorrHist is on).
-int g_corr_cap         = 32;    // max correction applied to static eval (cp). Was a fixed 16
-                                // (measured neutral); raised + exposed for an SPSA retry.
-int g_corr_lr_div      = 512;   // learning-rate divisor (bigger = slower/steadier learning)
+int g_corr_cap = 32;    // max correction applied to static eval (cp).
+int g_corr_lr_div = 512;   // learning-rate divisor (bigger = slower/steadier learning)
 // Continuation-history pruning tunables (only active when ContHistPrune is on).
-int g_conthist_red_div = 5000;  // LMR: continuation-history reduction divisor (clamped to +/-1)
-// Aggressive-LMR tunables (only active when AggrLMR is on). Divisor MUST be below
-// HISTORY_MAX (7000) or the integer division collapses to 0 and disables the term.
-int g_aggr_lmr_div     = 2048;  // smaller divisor -> wider reduction range (7000/2048 ~ 3)
-int g_aggr_lmr_clamp   = 3;     // max +/- ply the history reductions may apply
-// NMP + LMR-enrichment tunables for the unified 8+0.08 SPSA. Defaults reproduce
-// the current search exactly (the two new LMR conditions default to NEUTRAL).
-int g_nmp_base         = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
-int g_nmp_div          = 4;
-int g_lmr_eval_margin  = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
-int g_lmr_ttdepth      = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
-// CORE LMR formula coefficients (*100), never tuned before. lmr = base + log(d)*log(m)/div.
-int g_lmr_base_x100    = 47;    // 0.47: baseline reduction floor                     [SPSA-tuned: 75->47]
-int g_lmr_div_x100     = 270;   // 2.70: bigger divisor = LESS reduction overall       [SPSA-tuned: 225->270]
+int g_conthist_red_div = 6595;  // LMR: continuation-history reduction divisor        [SPSA-tuned: 5000->6595]
+// Aggressive-LMR tunables (only active when AggrLMR is on).
+int g_aggr_lmr_div = 2048;  // smaller divisor -> wider reduction range
+int g_aggr_lmr_clamp = 3;     // max +/- ply the history reductions may apply
+// NMP + LMR-enrichment tunables.
+int g_nmp_base = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
+int g_nmp_div = 4;
+int g_lmr_eval_margin = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
+int g_lmr_ttdepth = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
+// CORE LMR formula coefficients (*100).
+int g_lmr_base_x100 = 47;    // 0.47: baseline reduction floor                     [SPSA-tuned: 75->47]
+int g_lmr_div_x100 = 270;   // 2.70: bigger divisor = LESS reduction overall       [SPSA-tuned: 225->270]
 int g_histprune_margin = 1000;  // history pruning: prune late quiet if combined hist < -margin*depth
-
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;

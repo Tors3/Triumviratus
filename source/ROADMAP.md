@@ -5,23 +5,21 @@ Filosofia: ogni modifica è uno step isolato dietro un toggle, validato matemati
 (SPRT per i cambi di ricerca, A/B NPS per i cambi di velocità). Niente si committa
 "a sensazione".
 
-Ultimo aggiornamento: 2026-05-30
+Ultimo aggiornamento: 2026-06-01
 
 ---
 
 ## 1. Stato attuale
 
-- **Versione:** Triumviratus 3.3.4 (MSBuild Release|x64, MSVC v143, AVX2).
-- **Forza stimata:** ~3470–3490 Elo (3.3.1 ~3430-3450; +~18 improving, +~34 singular-ext,
-  +~19 SPSA-coarse dei margini, +~6 ProbCut). Stima grossolana, da ancorare col gauntlet.
+- **Versione:** Triumviratus 3.4.2 (MSBuild Release|x64, MSVC v143, AVX2).
+- **Forza stimata:** ~3572–3583 Elo (gauntlet 4CPU: 3561 ±22 vs pool CCRL; +~31 SPSA fine-tuning 3.4.1+3.4.2).
 - **Eval:** NNUE ibrida (feature transformer + affine), incrementale + dual-net lazy.
 - **Ricerca:** alpha-beta PVS, ABDADA SMP (shared TT + busy-bit + depth-staggering),
   improving heuristic, singular ext avanzate (double/negative), ProbCut, node-based TM,
   margini SPSA-tuned (RFP/razor/futility/singular), Syzygy.
 - **Toggle UCI diagnostici/A-B:** `EvalCache` (on), `Improving` (on), `NodeTM` (on),
   `SingularExt` (on), `ProbCut` (on), `CorrHist` (off), `UsePolicy` (off), `EvalOff` (profiling).
-- **Spin SPSA-tunabili:** RFPMargin, Razor*, Futility*, SingularDoubleMargin, HistReductionDiv,
-  AspInitDelta, AspGrow, ProbCutMargin.
+- **Spin SPSA-tunabili (bakati):** LMRBase=47, LMRDiv=270, LMRTTDepth=2, FutilityBase=111 (3.4.1); RFPMargin=21, RazorMult=139, FutilityImproving=93, SingularDoubleMargin=43, HistReductionDiv=1041, AspInitDelta=31, AspGrow=31, ContHistDiv=6595, SmallNetThreshold=782 (3.4.2).
 
 ### Note di profiling (riferimento)
 - Eval NNUE = ~60% del tempo/nodo. eval-OFF ≈ 2.3M nps, eval-ON ≈ 0.9M nps (1 thread).
@@ -47,6 +45,8 @@ Ultimo aggiornamento: 2026-05-30
 | 2026-05 | **Anti-forfeit `bestmove (none)`** | correttezza | Se la ricerca viene abortita prima di produrre una mossa (estrema pressione di tempo), ripiega sulla 1ª mossa legale invece di emettere `(none)` (= sconfitta). Mitiga il crash ~1/800 in GUI/torneo. |
 | 2026-05 | **Lazy eval + TimeMgmt** (default on) | velocità/tempo | LazyEval: salta l'eval NNUE in scacco (non usato lì) = NPS gratis. TimeMgmt: estende il tempo se lo score cala vs iterazione precedente. A/B combinato @1+0.01: **+9.1 ±10.2, LOS 96%** (stima tenuta su ~+9 mentre l'IC si stringeva → effetto reale). Toggle `LazyEval`/`TimeMgmt`. Caveat: TC con qualche perdita a bandiera → magnitudine ~+5..9 incerta; il SEGNO è solido. Split LazyEval/TimeMgmt non isolato. |
 | 2026-05 | **Lazy SMP** (toggle `LazySMP`, default on) | architettura | Rimpiazza la coordinazione ABDADA (busy-table) con thread indipendenti + TT condivisa + depth-skipping per-thread. A/B diretto **+102 Elo LOS 99.99%** @2+0.02 4-thread; ancora **4CPU 3503→3558 (~+55)**. ABDADA preservato (toggle off). |
+| 2026-05 (v3.4.1) | **SPSA fine LMR/futility** (LMRBase 75→47, LMRDiv 225→270, FutilityBase 82→111, LMRTTDepth 0→2) | tuning | **+19.95 ±13.18 Elo, LOS 99.85%** @8+0.08, 1360 partite. 4 parametri core LMR e futility; prima SPSA al TC di torneo. |
+| 2026-06 (v3.4.2) | **SPSA fine search/history/aspiration** (18 parametri: AspGrow 100→31, HistReductionDiv 3500→1041, RazorMult 102→139, FutilityImproving 60→93, ContHistDiv 5000→6595, SingularDoubleMargin 63→43, AspInitDelta 25→31, RFPMargin 30→21, SmallNetThreshold 1050→782) | tuning | **+11.41 ±8.67 Elo, LOS 99.51%** @3+0.03, 3595 partite. SPRT H1 accepted. 9 parametri mossi su 18 tunati; 9 confermati all'init. |
 
 ### In sospeso — provate, non hanno reso (classificate)
 Tutte dietro toggle, **default OFF**: non toccano il motore. Diviso per causa.
@@ -91,8 +91,9 @@ dal lavoro sopra.
 ### Tier A — Quick win (basso rischio, misurabili, SUBITO)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
-| **AggrLMR** | +0..8 | basso/basso | In test ora (toggle `AggrLMR`, div 2048 + clamp ±3). Se +, SPSA `AggrLMRDiv`/`AggrLMRClamp`. |
-| **⭐ Re-SPSA margini al TC di torneo (8+0.08)** | +3..10 | basso/basso | RFP/razor/futility/singular tarati a 3+0.2 → ottimo spostato al TC reale. Infra pronta. **Il miglior ratio rimasto.** |
+| **AggrLMR** | +0..8 | basso/basso | Ai default (2048/3) = **NEUTRO** (0.1 ±10, LOS 51% @2650 partite). Non parcheggiato: i param `AggrLMRDiv`/`AggrLMRClamp` entrano nella **SPSA unificata** (frozen on) per vedere se un'aggressività diversa è +. Se restano fermi → neutro confermato. |
+| ~~**LMRBase / LMRDiv**~~ (formula core LMR) | +? | basso/basso | **FATTO (v3.4.1)**: LMRBase 75→47, LMRDiv 225→270, +19.95 Elo. |
+| ~~**Re-SPSA margini + search/history/aspiration**~~ | +3..10 | basso/basso | **FATTO (v3.4.2)**: +11.41 Elo LOS 99.51% @3+0.03. 18 parametri tunati, 9 bakati. |
 | **LMR enrichment + retune razor/NMP** | +2..8 | basso/medio | Condizioni LMR staccate (TT-move, tt-depth, quiet-count) + margini razor/NMP al TC giusto. |
 
 ### Tier B — Medie (più sforzo, Elo moderato)
