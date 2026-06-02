@@ -268,6 +268,7 @@ void uci_loop()
             printf("option name TT4Way type check default false\n");
             printf("option name CorrHistMulti type check default false\n");
             printf("option name ContHistMulti type check default false\n");
+            printf("option name MovePicker type check default true\n");
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
             printf("option name AggrLMR type check default false\n");
@@ -294,6 +295,8 @@ void uci_loop()
             printf("option name CorrLearnDiv type spin default 512 min 64 max 2048\n");
             printf("option name ContHistDiv type spin default 6595 min 1000 max 12000\n"); // bakato: 5000->6595
             printf("option name HistPruneMargin type spin default 1000 min 200 max 4000\n");
+            printf("option name SEECaptureMargin type spin default 90 min 20 max 300\n");
+            printf("option name SEEQuietMargin type spin default 50 min 10 max 200\n");
             printf("option name SmallNetThreshold type spin default 782 min 300 max 2000\n"); // bakato: 1050->782
             printf("option name SyzygyPath type string default <empty>\n");
             printf("uciok\n");
@@ -469,6 +472,13 @@ void uci_loop()
         {
             const char* v = input + 29;
             set_probcut(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // "setoption name MovePicker value <true|false>" (A/B staged move picker)
+        else if (strncmp(input, "setoption name MovePicker value ", 32) == 0)
+        {
+            const char* v = input + 32;
+            set_move_picker(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // "setoption name ContHistPrune value <true|false>" (A/B continuation-history

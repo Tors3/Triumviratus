@@ -129,6 +129,16 @@ void set_cont_hist_prune(bool v) { g_cont_hist_prune = v; }
 static bool g_conthist_multi = false;
 void set_conthist_multi(bool v) { g_conthist_multi = v; }
 
+// Staged MovePicker on/off (UCI option "MovePicker"). ADOPTED, default ON: validated
+// +16.6 Elo (LOS 96.6% @900 games, 5+0.1, vs the legacy path) once the Phase-2
+// skip_quiets/skip_bad_caps were fixed + tested at a real TC (at hyperbullet it was
+// ~0). When ON, moves are produced lazily by stage (TT -> good captures/promos ->
+// killers -> counter -> quiets -> bad captures): an early cutoff never pays to
+// generate/score the quiet moves, and LMP/futility skip the whole quiet stage. Set
+// OFF to reproduce the old generate-all + pick-next ordering for an A/B.
+static bool g_move_picker = true;
+void set_move_picker(bool v) { g_move_picker = v; }
+
 // Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
 // @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
 // independently (shared TT only) and diversify via per-thread depth skipping (see
@@ -195,6 +205,11 @@ int g_lmr_ttdepth = 2;     // LMR: reduce LESS by this when TT depth >= depth   
 int g_lmr_base_x100 = 47;    // 0.47: baseline reduction floor                     [SPSA-tuned: 75->47]
 int g_lmr_div_x100 = 270;   // 2.70: bigger divisor = LESS reduction overall       [SPSA-tuned: 225->270]
 int g_histprune_margin = 1000;  // history pruning: prune late quiet if combined hist < -margin*depth
+// SEE-pruning margins (ALSO the Phase-2 skip_bad_caps lever): a move is SEE-pruned at
+// low depth if SEE < -g_see_cap_margin*depth (captures) or < -g_see_quiet_margin*depth*depth
+// (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
+int g_see_cap_margin   = 90;
+int g_see_quiet_margin = 50;
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
@@ -218,6 +233,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CorrLearnDiv"))        { g_corr_lr_div      = value; return true; }
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
     if (!strcmp(name, "HistPruneMargin"))     { g_histprune_margin = value; return true; }
+    if (!strcmp(name, "SEECaptureMargin"))    { g_see_cap_margin   = value; return true; }
+    if (!strcmp(name, "SEEQuietMargin"))      { g_see_quiet_margin = value; return true; }
     if (!strcmp(name, "SmallNetThreshold"))   { g_small_net_threshold = value; return true; }
     if (!strcmp(name, "AggrLMRDiv"))          { g_aggr_lmr_div     = value; return true; }
     if (!strcmp(name, "AggrLMRClamp"))        { g_aggr_lmr_clamp   = value; return true; }
@@ -1085,6 +1102,309 @@ static inline void td_score_all_moves(ThreadData& td, moves* move_list, int tt_m
 }
 
 // ============================================================================
+// STAGED MOVE PICKER  (UCI option "MovePicker", default OFF)
+// ============================================================================
+
+// Pseudo-legality validator. The staged picker yields the TT move, killers and the
+// counter-move WITHOUT first generating the move list, so it must confirm each is a
+// real move in THIS position: td_make_move trusts the encoded bits and would corrupt
+// the board on a TT collision. This MUST NEVER return true for an illegal move; when
+// unsure it returns false and the move simply reappears during normal generation
+// (we only lose a little laziness, never correctness). Mirrors td_generate_moves.
+static inline bool td_is_pseudo_legal(ThreadData& td, int move) {
+    if (move == 0) return false;
+    const int source   = get_move_source(move);
+    const int target   = get_move_target(move);
+    const int piece    = get_move_piece(move);
+    const int promoted = get_move_promoted(move);
+    const int capture  = get_move_capture(move) ? 1 : 0;
+    const int dbl      = get_move_double(move) ? 1 : 0;
+    const int enpass   = get_move_enpassant(move) ? 1 : 0;
+    const int castling = get_move_castling(move) ? 1 : 0;
+
+    // The moving piece must belong to the side to move and sit on `source`.
+    if (td.side == white) { if (piece < P || piece > K) return false; }
+    else                  { if (piece < p || piece > k) return false; }
+    if (!get_bit(td.bitboards[piece], source)) return false;
+
+    const U64 occ     = td.occupancies[both];
+    const U64 friends = td.occupancies[td.side];
+    const U64 enemies = td.occupancies[td.side ^ 1];
+
+    // A target holding a friendly piece is never legal (also rejects source==target).
+    if (get_bit(friends, target)) return false;
+
+    const bool isPawn = (piece == P || piece == p);
+    const bool isKing = (piece == K || piece == k);
+
+    // ---- Castling ----
+    if (castling) {
+        if (!isKing || capture || promoted || enpass || dbl) return false;
+        if (td.side == white) {
+            if (source != e1) return false;
+            if (target == g1) return (td.castle & wk) &&
+                !get_bit(occ, f1) && !get_bit(occ, g1) &&
+                !td_is_square_attacked(td, e1, black) && !td_is_square_attacked(td, f1, black);
+            if (target == c1) return (td.castle & wq) &&
+                !get_bit(occ, d1) && !get_bit(occ, c1) && !get_bit(occ, b1) &&
+                !td_is_square_attacked(td, e1, black) && !td_is_square_attacked(td, d1, black);
+            return false;
+        }
+        else {
+            if (source != e8) return false;
+            if (target == g8) return (td.castle & bk) &&
+                !get_bit(occ, f8) && !get_bit(occ, g8) &&
+                !td_is_square_attacked(td, e8, white) && !td_is_square_attacked(td, f8, white);
+            if (target == c8) return (td.castle & bq) &&
+                !get_bit(occ, d8) && !get_bit(occ, c8) && !get_bit(occ, b8) &&
+                !td_is_square_attacked(td, e8, white) && !td_is_square_attacked(td, d8, white);
+            return false;
+        }
+    }
+
+    // Only pawns may carry promotion / double-push / en-passant flags.
+    if (!isPawn && (promoted || dbl || enpass)) return false;
+
+    // ---- Pawns ----
+    if (isPawn) {
+        const int up = (td.side == white) ? -8 : 8;   // board layout: a8=0 ... h1=63
+        const bool toLastRank = (td.side == white) ? (target <= h8) : (target >= a1);
+
+        // A pawn reaching the last rank MUST promote (and the promoted piece must
+        // belong to the side to move); promotion off the last rank is illegal.
+        if (promoted) {
+            if (!toLastRank) return false;
+            if (td.side == white) { if (promoted < N || promoted > Q) return false; }
+            else                  { if (promoted < n || promoted > q) return false; }
+        }
+        else if (toLastRank && !enpass) {
+            return false;
+        }
+
+        if (capture) {
+            if (!get_bit(pawn_attacks[td.side][source], target)) return false;
+            if (enpass) {
+                if (dbl) return false;
+                if (td.enpassant == no_sq || target != td.enpassant) return false;
+                const int capsq  = (td.side == white) ? target + 8 : target - 8;
+                const int eppawn = (td.side == white) ? p : P;
+                return get_bit(td.bitboards[eppawn], capsq) != 0;
+            }
+            return get_bit(enemies, target) != 0;       // ordinary capture
+        }
+        else {
+            if (enpass) return false;
+            if (get_bit(occ, target)) return false;     // push onto empty square only
+            if (dbl) {
+                const bool onStart = (td.side == white) ? (source >= a2 && source <= h2)
+                                                        : (source >= a7 && source <= h7);
+                if (!onStart) return false;
+                if (target != source + 2 * up) return false;
+                return !get_bit(occ, source + up);       // intermediate square empty
+            }
+            return (target == source + up);
+        }
+    }
+
+    // ---- Knight / Bishop / Rook / Queen / King (non-castling) ----
+    U64 att;
+    switch (piece) {
+        case N: case n: att = knight_attacks[source];               break;
+        case B: case b: att = get_bishop_attacks(source, occ);       break;
+        case R: case r: att = get_rook_attacks(source, occ);         break;
+        case Q: case q: att = get_queen_attacks(source, occ);        break;
+        case K: case k: att = king_attacks[source];                  break;
+        default: return false;
+    }
+    if (!get_bit(att, target)) return false;
+    // The capture flag must agree with whether an enemy occupies the target square.
+    return (capture != 0) == (get_bit(enemies, target) != 0);
+}
+
+// Stage order matches the legacy score bands so the search is (near) byte-identical.
+enum {
+    MPS_TT = 0,         // hash move (validated)
+    MPS_GEN_TACTICAL,   // generate captures + capture-promotions, score them
+    MPS_GOOD_TACTICAL,  // promotions + SEE>=0 captures, by score
+    MPS_KILLER0,
+    MPS_KILLER1,
+    MPS_COUNTER,
+    MPS_GEN_QUIET,      // generate all moves, keep & score the quiets
+    MPS_QUIET,          // quiets by history, low to high consumed
+    MPS_BAD_TACTICAL,   // SEE<0 captures, by score
+    MPS_DONE
+};
+
+// Sentinel placed in a score slot once that move has been yielded. Far below any
+// real move score (good caps ~+7e5, bad caps ~-7e5), so it never collides.
+static const int MP_CONSUMED = -2000000000;
+
+struct MovePicker {
+    bool   staged;
+    int    stage;
+    int    tt_move, killer0, killer1, counter;
+    moves* caps;   int* cap_scores;  int cap_n;   // capture/promotion buffer
+    moves* quiets; int* q_scores;     int q_n;     // quiet buffer (legacy: all moves)
+    int    l_idx;                                  // legacy pick-next cursor
+    // Phase-2 skip flags: set by the search loop when a pruning condition is met
+    // BEFORE the first quiet/bad-cap is even generated. mp_next() reads these and
+    // jumps past the entire stage — zero generation cost for pruned nodes.
+    bool   skip_quiets;    // skip MPS_GEN_QUIET + MPS_QUIET + killers/counter
+    bool   skip_bad_caps;  // skip MPS_BAD_TACTICAL
+};
+
+// caps/cap_scores: scratch buffers for the tactical stages (staged mode only).
+// quiets/q_scores: in legacy mode these are the fully generated+scored move list;
+// in staged mode they are reused as the quiet-stage buffer.
+static inline void mp_init(MovePicker& mp, ThreadData& td, bool staged, int tt_move,
+                           moves* caps, int* cap_scores, moves* quiets, int* q_scores) {
+    mp.staged      = staged;
+    mp.tt_move     = tt_move;
+    mp.caps        = caps;    mp.cap_scores = cap_scores;  mp.cap_n = 0;
+    mp.quiets      = quiets;  mp.q_scores   = q_scores;    mp.q_n   = 0;
+    mp.l_idx       = 0;
+    mp.stage       = MPS_TT;
+    mp.skip_quiets   = false;
+    mp.skip_bad_caps = false;
+    if (staged) {
+        mp.killer0 = td.killer_moves[0][td.ply];
+        mp.killer1 = td.killer_moves[1][td.ply];
+        int prev   = td.move_stack[td.ply];
+        mp.counter = prev ? td.counter_moves[get_move_piece(prev)][get_move_target(prev)] : 0;
+    }
+    else {
+        mp.killer0 = mp.killer1 = mp.counter = 0;
+    }
+}
+
+// Returns the next move to search, 0 when exhausted.
+static int mp_next(ThreadData& td, MovePicker& mp) {
+    // --- Legacy: pick-next over the fully scored move list (bit-identical to the
+    //     original in-loop selection sort). ---
+    if (!mp.staged) {
+        moves* ml = mp.quiets;
+        int*   sc = mp.q_scores;
+        int i = mp.l_idx;
+        if (i >= ml->count) return 0;
+        int best = i;
+        for (int j = i + 1; j < ml->count; j++)
+            if (sc[j] > sc[best]) best = j;
+        if (best != i) {
+            int tm = ml->moves[i]; ml->moves[i] = ml->moves[best]; ml->moves[best] = tm;
+            int ts = sc[i];        sc[i]        = sc[best];        sc[best]        = ts;
+        }
+        mp.l_idx = i + 1;
+        return ml->moves[i];
+    }
+
+    // --- Staged ---
+    switch (mp.stage) {
+    case MPS_TT:
+        mp.stage = MPS_GEN_TACTICAL;
+        if (mp.tt_move && td_is_pseudo_legal(td, mp.tt_move))
+            return mp.tt_move;
+        [[fallthrough]];
+
+    case MPS_GEN_TACTICAL:
+        td_generate_moves(td, mp.caps, true);                 // captures + capture-promos
+        mp.cap_n = mp.caps->count;
+        for (int i = 0; i < mp.cap_n; i++)
+            mp.cap_scores[i] = td_score_move(td, mp.caps->moves[i], mp.tt_move);
+        mp.stage = MPS_GOOD_TACTICAL;
+        [[fallthrough]];
+
+    case MPS_GOOD_TACTICAL:
+        // Good tacticals score > 0 (promotions 750k, SEE>=0 captures ~700k+); bad
+        // captures score ~-700k and are deferred to MPS_BAD_TACTICAL.
+        for (;;) {
+            int best = -1, bs = 0;
+            for (int i = 0; i < mp.cap_n; i++)
+                if (mp.cap_scores[i] > bs) { bs = mp.cap_scores[i]; best = i; }
+            if (best < 0) break;
+            int m = mp.caps->moves[best];
+            mp.cap_scores[best] = MP_CONSUMED;
+            if (m != mp.tt_move) return m;                    // tt already yielded
+        }
+        mp.stage = MPS_KILLER0;
+        [[fallthrough]];
+
+    case MPS_KILLER0:
+        mp.stage = MPS_KILLER1;
+        if (!mp.skip_quiets &&
+            mp.killer0 && mp.killer0 != mp.tt_move && td_is_pseudo_legal(td, mp.killer0))
+            return mp.killer0;
+        [[fallthrough]];
+
+    case MPS_KILLER1:
+        mp.stage = MPS_COUNTER;
+        if (!mp.skip_quiets &&
+            mp.killer1 && mp.killer1 != mp.tt_move && mp.killer1 != mp.killer0 &&
+            td_is_pseudo_legal(td, mp.killer1))
+            return mp.killer1;
+        [[fallthrough]];
+
+    case MPS_COUNTER:
+        mp.stage = MPS_GEN_QUIET;
+        if (!mp.skip_quiets &&
+            mp.counter && mp.counter != mp.tt_move && mp.counter != mp.killer0 &&
+            mp.counter != mp.killer1 && td_is_pseudo_legal(td, mp.counter))
+            return mp.counter;
+        [[fallthrough]];
+
+    case MPS_GEN_QUIET:
+        if (mp.skip_quiets) { mp.stage = MPS_BAD_TACTICAL; goto bad_tactical; }
+        td_generate_moves(td, mp.quiets, false);              // all pseudo-legal moves
+        mp.q_n = mp.quiets->count;
+        for (int i = 0; i < mp.q_n; i++) {
+            int m = mp.quiets->moves[i];
+            // Captures are handled by the tactical stages; the TT/killer/counter
+            // moves were already yielded -> mark them consumed so we never repeat.
+            if (get_move_capture(m) || m == mp.tt_move || m == mp.killer0 ||
+                m == mp.killer1 || m == mp.counter)
+                mp.q_scores[i] = MP_CONSUMED;
+            else
+                mp.q_scores[i] = td_score_move(td, m, mp.tt_move);
+        }
+        mp.stage = MPS_QUIET;
+        [[fallthrough]];
+
+    case MPS_QUIET: {
+        // Phase-2: if LMP/futility flipped skip_quiets WHILE we were already in the
+        // quiet stage, stop yielding the remaining quiets at once (the search would
+        // prune every one of them anyway) and go straight to the bad captures.
+        if (mp.skip_quiets) { mp.stage = MPS_BAD_TACTICAL; goto bad_tactical; }
+        int best = -1, bs = MP_CONSUMED;
+        for (int i = 0; i < mp.q_n; i++)
+            if (mp.q_scores[i] != MP_CONSUMED && mp.q_scores[i] > bs) { bs = mp.q_scores[i]; best = i; }
+        if (best >= 0) {
+            mp.q_scores[best] = MP_CONSUMED;
+            return mp.quiets->moves[best];
+        }
+        mp.stage = MPS_BAD_TACTICAL;
+        // fallthrough into bad-tactical
+    }
+
+    bad_tactical:
+    case MPS_BAD_TACTICAL:
+        if (mp.skip_bad_caps) { mp.stage = MPS_DONE; return 0; }
+        for (;;) {
+            int best = -1, bs = MP_CONSUMED;
+            for (int i = 0; i < mp.cap_n; i++)
+                if (mp.cap_scores[i] != MP_CONSUMED && mp.cap_scores[i] > bs) { bs = mp.cap_scores[i]; best = i; }
+            if (best < 0) break;
+            int m = mp.caps->moves[best];
+            mp.cap_scores[best] = MP_CONSUMED;
+            if (m != mp.tt_move) return m;
+        }
+        mp.stage = MPS_DONE;
+        return 0;
+
+    default:
+        return 0;
+    }
+}
+
+// ============================================================================
 // REPETITION DETECTION
 // ============================================================================
 
@@ -1572,109 +1892,91 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         }
     }
 
-    // 1. Generiamo le mosse PRIMA, cosi' possiamo decidere se la CNN serve.
-    moves move_list[1];
-    td_generate_moves(td, move_list);
+    // ---- Move generation & ordering ------------------------------------------
+    // Staged MovePicker (g_move_picker) produces moves lazily by stage, so an early
+    // cutoff never pays to generate/score the quiet moves. Policy ordering is
+    // root-only; whenever it may run we keep the legacy full-sort path (picker and
+    // policy don't mix). Default OFF -> legacy path -> byte-identical search.
+    const bool node_policy = g_use_policy && (td.ply == 0);
+    const bool use_picker  = g_move_picker && !node_policy;
 
-    // 2. Conta le mosse tranquille: in posizioni puramente tattiche (solo
-    //    catture / scacchi forzati) la policy non aggiunge ordinamento utile,
-    //    quindi saltiamo la forward CNN.
-    int quiet_count = 0;
-    for (int i = 0; i < move_list->count; i++)
-        if (!get_move_capture(move_list->moves[i])) quiet_count++;
+    moves move_list[1];        // legacy: all moves | staged: quiet-stage buffer
+    int   move_scores[256];
+    moves cap_buf[1];          // staged: capture/promotion-stage buffer
+    int   cap_score_buf[256];
 
-    // --- HYBRID: query the policy net SOLO nei nodi della Variante Principale
-    // (pv_node) e solo con depth sufficiente. I nodi PV sono pochissimi (~uno
-    // per ply lungo la linea principale, NON esponenziali come ply<=3): cosi' le
-    // forward CNN restano ~10-20/mossa e gli nps non crollano, ma miglioriamo
-    // l'ordinamento proprio dove i cutoff si propagano meglio.
-    // (A controllo di tempo, ply<=3 affossava gli nps ~60x -> Hybrid perdeva.)
     static thread_local float policy_scores_by_ply[max_ply][4096];
     float* current_policy_scores = policy_scores_by_ply[td.ply];
-    bool policy_used = false;
+    bool   policy_used   = false;
+    float  policy_hi_cut = 1e9f;    // default: nessuna mossa "alta"
+    float  policy_lo_cut = -1e9f;   // default: nessuna mossa "bassa"
 
-    // 3. Cache per chiave Zobrist: una posizione distinta paga la forward CNN
-    //    UNA sola volta, anche se rivisitata ad ogni iterazione di iterative
-    //    deepening o re-search di aspiration.
-    //
-    // TEST #1 (radice): policy per l'ordinamento delle mosse a ply==0. Costa
-    // ~zero (una forward per iterazione ID) ma alla radice ID+TT ordinano gia'
-    // quasi-perfettamente -> guadagno Elo ~0 (confermato da A/B).
-    //
-    // TEST #3 (INTERIOR): estendeva la policy ai nodi PV INTERNI con
-    // depth >= POLICY_MIN_DEPTH. Ipotesi: e' DENTRO l'albero (non alla radice)
-    // che l'ordinamento NON e' gia' risolto, quindi una policy avrebbe potuto
-    // generare cutoff utili. ESITO A/B (2026-05-29, SPRT): -85 Elo. Due cause:
-    //   (1) il costo della forward CNN per-nodo affossa gli nps (~-22% a
-    //       depth>=12, -80% a depth>=6 — misurato a depth fissa);
-    //   (2) il ranking 28%-top1 NON e' piu' accurato dell'ordinamento esistente
-    //       (TT-move + killers + countermove + history + SEE), quindi rimischia
-    //       mosse buone e i nodi-per-profondita' AUMENTANO.
-    // DISABILITATO: POLICY_INTERIOR=false -> resta il solo root-only ordering
-    // (modalita' neutra, ~0 Elo). Il codice e' conservato per riferimento; per
-    // riprovarlo servirebbe prima ABBATTERE il costo CNN (quantizzazione int8 /
-    // rete piu' piccola) E limitare la policy alla CODA dei quiet a history~0
-    // (dove batte il random senza sovrascrivere mosse buone). Rimettere a true
-    // per riattivare l'esperimento.
-    constexpr bool POLICY_INTERIOR  = false;  // A/B flag (provato: -85 Elo)
-    constexpr int  POLICY_MIN_DEPTH = 12;     // solo nodi PV profondi (pochi, ad alta leva)
+    if (!use_picker) {
+        // Generiamo le mosse PRIMA, cosi' possiamo decidere se la CNN serve.
+        td_generate_moves(td, move_list);
 
-    bool policy_gate = g_use_policy && quiet_count >= 3 &&
-        ( td.ply == 0 ||
-          (POLICY_INTERIOR && pv_node && depth >= POLICY_MIN_DEPTH) );
+        // Conta le mosse tranquille: in posizioni puramente tattiche la policy non
+        // aggiunge ordinamento utile, quindi saltiamo la forward CNN.
+        int quiet_count = 0;
+        for (int i = 0; i < move_list->count; i++)
+            if (!get_move_capture(move_list->moves[i])) quiet_count++;
 
-    if (policy_gate) {
-        // 1024 entry ~16MB/thread: i nodi PV interni toccano molte piu' posizioni
-        // distinte della sola radice, quindi serve piu' capienza per evitare il
-        // thrashing della cache (e ri-pagare la forward CNN inutilmente).
-        static constexpr int PCACHE_SIZE = 1 << 10;
-        struct PolicyCacheEntry { U64 key; bool valid; float scores[4096]; };
-        static thread_local PolicyCacheEntry pcache[PCACHE_SIZE] = {};
-        PolicyCacheEntry& slot = pcache[td.hash_key & (PCACHE_SIZE - 1)];
-        if (slot.valid && slot.key == td.hash_key) {
-            // HIT: copia nel buffer del ply corrente (stabile durante il loop).
-            memcpy(current_policy_scores, slot.scores, sizeof(slot.scores));
+        // HYBRID: policy net SOLO a ply==0 (root). I nodi PV interni la pagavano
+        // troppo (POLICY_INTERIOR, A/B 2026-05-29: -85 Elo); resta il root-only
+        // ordering (~0 Elo). Rimettere POLICY_INTERIOR a true per ri-sperimentare.
+        constexpr bool POLICY_INTERIOR  = false;  // A/B flag (provato: -85 Elo)
+        constexpr int  POLICY_MIN_DEPTH = 12;     // solo nodi PV profondi
+
+        bool policy_gate = g_use_policy && quiet_count >= 3 &&
+            ( td.ply == 0 ||
+              (POLICY_INTERIOR && pv_node && depth >= POLICY_MIN_DEPTH) );
+
+        if (policy_gate) {
+            // Cache per chiave Zobrist: una sola forward CNN per posizione distinta.
+            static constexpr int PCACHE_SIZE = 1 << 10;
+            struct PolicyCacheEntry { U64 key; bool valid; float scores[4096]; };
+            static thread_local PolicyCacheEntry pcache[PCACHE_SIZE] = {};
+            PolicyCacheEntry& slot = pcache[td.hash_key & (PCACHE_SIZE - 1)];
+            if (slot.valid && slot.key == td.hash_key) {
+                memcpy(current_policy_scores, slot.scores, sizeof(slot.scores));
+            }
+            else {
+                evaluate_policy(td, current_policy_scores);
+                slot.key = td.hash_key;
+                slot.valid = true;
+                memcpy(slot.scores, current_policy_scores, sizeof(slot.scores));
+            }
+            policy_used = true;
         }
-        else {
-            // MISS: una sola forward CNN, poi memorizza in cache.
-            evaluate_policy(td, current_policy_scores);
-            slot.key = td.hash_key;
-            slot.valid = true;
-            memcpy(slot.scores, current_policy_scores, sizeof(slot.scores));
-        }
-        policy_used = true;
-    }
 
-    // --- NUOVA FASE: Assegna punteggi senza ordinare l'array (Pick-Next) ---
-    int move_scores[256];
-    td_score_all_moves(td, move_list, tt_move, move_scores, current_policy_scores, policy_used);
+        // Assegna punteggi senza ordinare l'array (la selezione e' pick-next).
+        td_score_all_moves(td, move_list, tt_move, move_scores, current_policy_scores, policy_used);
 
-    // 4b. Soglie RANK-BASED per la LMR guidata dalla policy. Usiamo i ranghi
-    // (top-3 / quartile inferiore) invece di soglie assolute sul logit, perche'
-    // la scala dei logit varia tra versioni della rete. Calcolate UNA volta per
-    // nodo; policy_used e' vero solo alla radice, quindi il costo e' trascurabile.
-    float policy_hi_cut = 1e9f;    // default: nessuna mossa "alta"
-    float policy_lo_cut = -1e9f;   // default: nessuna mossa "bassa"
-    if (policy_used) {
-        float qlog[256];
-        int qn = 0;
-        const bool wtm = (td.side == white);
-        for (int i = 0; i < move_list->count; i++) {
-            int m = move_list->moves[i];
-            if (get_move_capture(m) || get_move_promoted(m)) continue;   // solo quiet (come is_quiet)
-            int src = get_move_source(m), tgt = get_move_target(m);
-            int idx = (wtm ? (src ^ 56) : src) * 64 + (wtm ? (tgt ^ 56) : tgt);
-            qlog[qn++] = current_policy_scores[idx];
-        }
-        if (qn >= 4) {
-            std::sort(qlog, qlog + qn, std::greater<float>());
-            int hi_i = (qn > 3) ? 2 : (qn - 1);   // confine top-3
-            int lo_i = (qn * 3) / 4;              // confine quartile inferiore
-            if (lo_i >= qn) lo_i = qn - 1;
-            policy_hi_cut = qlog[hi_i];
-            policy_lo_cut = qlog[lo_i];
+        // Soglie RANK-BASED per la (disattivata) LMR guidata dalla policy.
+        if (policy_used) {
+            float qlog[256];
+            int qn = 0;
+            const bool wtm = (td.side == white);
+            for (int i = 0; i < move_list->count; i++) {
+                int m = move_list->moves[i];
+                if (get_move_capture(m) || get_move_promoted(m)) continue;   // solo quiet
+                int src = get_move_source(m), tgt = get_move_target(m);
+                int idx = (wtm ? (src ^ 56) : src) * 64 + (wtm ? (tgt ^ 56) : tgt);
+                qlog[qn++] = current_policy_scores[idx];
+            }
+            if (qn >= 4) {
+                std::sort(qlog, qlog + qn, std::greater<float>());
+                int hi_i = (qn > 3) ? 2 : (qn - 1);   // confine top-3
+                int lo_i = (qn * 3) / 4;              // confine quartile inferiore
+                if (lo_i >= qn) lo_i = qn - 1;
+                policy_hi_cut = qlog[hi_i];
+                policy_lo_cut = qlog[lo_i];
+            }
         }
     }
+
+    MovePicker mp;
+    mp_init(mp, td, use_picker, tt_move, cap_buf, cap_score_buf, move_list, move_scores);
 
     int best_move = 0;
     int best_score = -infinity;
@@ -1695,30 +1997,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     int searched_captures[64];
     int n_searched_captures = 0;
 
-    for (int count = 0; count < move_list->count; count++) {
-
-        // --- INIZIO PICK-NEXT: Cerca la mossa migliore tra quelle rimaste ---
-        int best_idx = count;
-        for (int i = count + 1; i < move_list->count; i++) {
-            if (move_scores[i] > move_scores[best_idx]) {
-                best_idx = i;
-            }
-        }
-
-        // Scambiamo sia la mossa che lo score per portarli in cima
-        if (best_idx != count) {
-            int tmp_move = move_list->moves[count];
-            move_list->moves[count] = move_list->moves[best_idx];
-            move_list->moves[best_idx] = tmp_move;
-
-            int tmp_score = move_scores[count];
-            move_scores[count] = move_scores[best_idx];
-            move_scores[best_idx] = tmp_score;
-        }
+    int move;
+    while ((move = mp_next(td, mp)) != 0) {
         // Ora move � garantita essere la migliore
-        int move = move_list->moves[count];
-        // --- FINE PICK-NEXT ---
-
+        // `move` is supplied by mp_next() in the while condition above.
         if (move == excluded_move) continue;   // singular search: skip the TT move
         bool is_capture = get_move_capture(move);
         bool is_promotion = get_move_promoted(move);
@@ -1728,7 +2010,13 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (!pv_node && !in_check && depth <= 8 && is_quiet && best_score > -mate_score) {
             int lmp_idx = (depth < 8) ? depth : 8;
             int lmp_threshold = lmp_table[lmp_idx];
-            if (quiets_searched >= lmp_threshold) continue;
+            if (quiets_searched >= lmp_threshold) {
+                // Phase-2: with the staged picker we can skip the entire quiet
+                // stage instead of testing every move individually. The flag is
+                // set once; mp_next() will never enter MPS_GEN_QUIET again.
+                if (use_picker) { mp.skip_quiets = true; continue; }
+                else continue;
+            }
         }
 
         // Futility pruning. When improving, widen the margin so we prune fewer
@@ -1737,6 +2025,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (!pv_node && !in_check && depth <= 6 && is_quiet && best_score > -mate_score) {
             int futility_margin = g_fut_base + g_fut_mult * depth + ((g_improving && improving) ? g_fut_improving : 0);
             if (static_eval + futility_margin <= alpha) {
+                // Phase-2: once futility fires, ALL remaining quiets at this node
+                // fail the same static-eval test -> skip the entire stage.
+                if (use_picker) { mp.skip_quiets = true; }
                 quiets_searched++;
                 continue;
             }
@@ -1745,9 +2036,15 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // SEE pruning: scarta a bassa profondita' le catture in perdita oltre un
         // margine, prima di cercarle (riduttore di nodi). Promozioni escluse.
         if (!pv_node && !in_check && !is_promotion && depth <= 8 && best_score > -mate_score) {
-            int see_margin = is_capture ? (-90 * depth) : (-50 * depth * depth);
+            int see_margin = is_capture ? (-g_see_cap_margin * depth) : (-g_see_quiet_margin * depth * depth);
             if (td_see(td, move) < see_margin) {
                 if (is_quiet) quiets_searched++;
+                // Phase-2: if this move came from MPS_BAD_TACTICAL it means every
+                // subsequent bad capture has an equal-or-worse SEE (they are yielded
+                // by descending score). The SEE threshold is the same for all, so we
+                // can skip the entire remaining bad-capture stage.
+                if (use_picker && is_capture && mp.stage == MPS_BAD_TACTICAL)
+                    mp.skip_bad_caps = true;
                 continue;
             }
         }

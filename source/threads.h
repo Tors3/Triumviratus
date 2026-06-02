@@ -185,6 +185,11 @@ extern void set_cont_hist_prune(bool enabled);
 // and 4-ply continuation histories to ordering + updates. Default off.
 extern void set_conthist_multi(bool enabled);
 
+// Staged MovePicker on/off (UCI option "MovePicker") — lazy staged move generation
+// (TT / good captures / killers / counter / quiets / bad captures) vs the default
+// generate-all + pick-next. Default off (behaviour-preserving when off).
+extern void set_move_picker(bool enabled);
+
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
 extern void set_tt_4way(bool enabled);
