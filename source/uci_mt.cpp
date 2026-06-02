@@ -276,7 +276,7 @@ void uci_loop()
             printf("option name NMPBase type spin default 3 min 1 max 6\n");
             printf("option name NMPDiv type spin default 4 min 2 max 8\n");
             printf("option name LMREvalMargin type spin default 100 min 0 max 400\n");
-            printf("option name LMRTTDepth type spin default 2 min 0 max 2\n");
+            printf("option name LMRTTDepth type spin default 2 min 0 max 3\n");
             printf("option name LMRBase type spin default 47 min 0 max 200\n");
             printf("option name LMRDiv type spin default 270 min 100 max 500\n");
             printf("option name RFPMargin type spin default 21 min 20 max 200\n");        // bakato: 30->21

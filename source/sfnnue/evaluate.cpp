@@ -55,7 +55,10 @@ const unsigned int         gEmbeddedNNUESmallSize    = 1;
 // threads.cpp set_search_param): when |simpleEval| exceeds this, Eval::evaluate
 // uses the cheaper Small net -> more NPS, slightly less accurate. Default 1050
 // (the Stockfish value for these nets). Global so threads.cpp can extern it.
-int g_small_net_threshold = 1050;
+// NB: 782 NON ancora validato in isolamento (era 1050 = valore Stockfish). Per ora
+// gira "in blocco" con gli altri valori bakati; va confermato con un A/B SPRT
+// dedicato (SmallNetThreshold 782 vs 1050) prima di considerarlo definitivo.
+int g_small_net_threshold = 782;   // [baked: 1050->782, da A/B-testare da solo] (deve combaciare col default UCI)
 
 namespace Stockfish {
 
