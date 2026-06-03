@@ -269,6 +269,11 @@ void uci_loop()
             printf("option name CorrHistMulti type check default false\n");
             printf("option name ContHistMulti type check default false\n");
             printf("option name MovePicker type check default true\n");
+            printf("option name DiverseSMP type check default false\n");
+            printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
+            printf("option name TripleExt type check default false\n");
+            printf("option name MultiCut type check default true\n");
+            printf("option name LMREnrich type check default false\n");
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
             printf("option name AggrLMR type check default false\n");
@@ -479,6 +484,33 @@ void uci_loop()
         {
             const char* v = input + 32;
             set_move_picker(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // "setoption name DiverseSMP value <true|false>" (A/B per-thread LMR-bias SMP).
+        // NB: must precede the generic spin handler; "DiverseSMPAmount" is NOT caught
+        // here (its 26th char is 'A', not the space before "value") -> falls through to
+        // the generic spin handler -> set_search_param.
+        else if (strncmp(input, "setoption name DiverseSMP value ", 32) == 0)
+        {
+            const char* v = input + 32;
+            set_diverse_smp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // Search bundle #3 toggles (A/B; default off = behaviour-preserving).
+        else if (strncmp(input, "setoption name TripleExt value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_triple_ext(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name MultiCut value ", 30) == 0)
+        {
+            const char* v = input + 30;
+            set_multicut(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name LMREnrich value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_lmr_enrich(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // "setoption name ContHistPrune value <true|false>" (A/B continuation-history

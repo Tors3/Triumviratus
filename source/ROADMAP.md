@@ -5,13 +5,14 @@ Filosofia: ogni modifica è uno step isolato dietro un toggle, validato matemati
 (SPRT per i cambi di ricerca, A/B NPS per i cambi di velocità). Niente si committa
 "a sensazione".
 
-Ultimo aggiornamento: 2026-06-01
+Ultimo aggiornamento: 2026-06-02
 
 ---
 
 ## 1. Stato attuale
 
-- **Versione:** Triumviratus 3.4.2 (MSBuild Release|x64, MSVC v143, AVX2).
+- **Versione:** Triumviratus 3.5 (MSBuild Release|x64, MSVC v143, AVX2). *(3.5 = MovePicker stadiato
+  bakato + pipeline NNUE validata; NON 4.0: il 4.0 è riservato alla prima rete proprietaria competitiva.)*
 - **Forza stimata:** ~3572–3583 Elo (gauntlet 4CPU: 3561 ±22 vs pool CCRL; +~31 SPSA fine-tuning 3.4.1+3.4.2).
 - **Eval:** NNUE ibrida (feature transformer + affine), incrementale + dual-net lazy.
 - **Ricerca:** alpha-beta PVS, ABDADA SMP (shared TT + busy-bit + depth-staggering),
@@ -47,6 +48,9 @@ Ultimo aggiornamento: 2026-06-01
 | 2026-05 | **Lazy SMP** (toggle `LazySMP`, default on) | architettura | Rimpiazza la coordinazione ABDADA (busy-table) con thread indipendenti + TT condivisa + depth-skipping per-thread. A/B diretto **+102 Elo LOS 99.99%** @2+0.02 4-thread; ancora **4CPU 3503→3558 (~+55)**. ABDADA preservato (toggle off). |
 | 2026-05 (v3.4.1) | **SPSA fine LMR/futility** (LMRBase 75→47, LMRDiv 225→270, FutilityBase 82→111, LMRTTDepth 0→2) | tuning | **+19.95 ±13.18 Elo, LOS 99.85%** @8+0.08, 1360 partite. 4 parametri core LMR e futility; prima SPSA al TC di torneo. |
 | 2026-06 (v3.4.2) | **SPSA fine search/history/aspiration** (18 parametri: AspGrow 100→31, HistReductionDiv 3500→1041, RazorMult 102→139, FutilityImproving 60→93, ContHistDiv 5000→6595, SingularDoubleMargin 63→43, AspInitDelta 25→31, RFPMargin 30→21, SmallNetThreshold 1050→782) | tuning | **+11.41 ±8.67 Elo, LOS 99.51%** @3+0.03, 3595 partite. SPRT H1 accepted. 9 parametri mossi su 18 tunati; 9 confermati all'init. |
+| 2026-06 (v3.5) | **MovePicker stadiato** (movegen lazy per stadio: TT→catture buone→killer→counter→quiet→catture cattive; Phase 2: skip_quiets su LMP/futility, skip_bad_caps su SEE; margini SEE esposti `SEECaptureMargin`/`SEEQuietMargin`) | ricerca | **+16.6 ±? Elo, LOS 96.6%** @5+0.1, 900 partite. **Default ON.** Conferma chiave: il segnale emerge SOLO a TC reale (5+0.1+), ~0 a iperbullet (eval-bound). Primo +Elo di ricerca solido dopo il fine-tuning. |
+| 2026-06 | **Pipeline NNUE training** (PGN→plain→binpack→nnue-pytorch→.nnue) | abilitatore | **VALIDATA end-to-end.** 12,8M pos (self-play d12, label SF), commit 2db3787 (L1=2560 SFNNv8). val_loss in caduta pulita, zero overfit. Rete "rubicon" = giro di validazione, NON competitiva (tetto distillazione). Ricetta in `memory/project_nnue_training.md` + `SCALETTA.md`. |
+| 2026-06 | **Multi-cut singolare** (`MultiCut`, gate conservativo `singular_beta >= beta` → potatura nodo) | ricerca | **+10.4 ±11.2 Elo, LOS 96.6%** @8+0.08, **1100 partite**, 1 thread (rientrato da +13.4@700, stabile). **Default ON.** Unico sopravvissuto del "bundle #3": TripleExt −75 (tree-blowup), LMREnrich −25 (over-reduction), MultiCutAggr (gate SF `s>=beta`) −13 (fail-high a metà depth troppo debole) → tutti scartati. Lezione: il gate SF non trasferisce, il nostro singular vuole il gate conservativo sul bound. Dead-end tenuti come toggle dormienti (TripleExt/LMREnrich), MultiCutAggr rimosso dal codice. |
 
 ### In sospeso — provate, non hanno reso (classificate)
 Tutte dietro toggle, **default OFF**: non toccano il motore. Diviso per causa.
@@ -91,6 +95,7 @@ dal lavoro sopra.
 ### Tier A — Quick win (basso rischio, misurabili, SUBITO)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
+| **🎯 SPSA Phase-2 MovePicker** (SEECaptureMargin/SEEQuietMargin + futility + HistPruneMargin) | +2..10 | basso/basso | **PROSSIMO.** Tuna la leva nuova di Phase-2 (soglie `skip_bad_caps`). Script pronto `Tuning_SPSA/final_tuning/spsa_phase2.py`, MovePicker frozen ON, SmallNet 782. **Lanciare a 7+0.1** (il segnale Phase-2 cresce col TC). Esplorativo → conferma con SPRT ciò che si muove. |
 | **AggrLMR** | +0..8 | basso/basso | Ai default (2048/3) = **NEUTRO** (0.1 ±10, LOS 51% @2650 partite). Non parcheggiato: i param `AggrLMRDiv`/`AggrLMRClamp` entrano nella **SPSA unificata** (frozen on) per vedere se un'aggressività diversa è +. Se restano fermi → neutro confermato. |
 | ~~**LMRBase / LMRDiv**~~ (formula core LMR) | +? | basso/basso | **FATTO (v3.4.1)**: LMRBase 75→47, LMRDiv 225→270, +19.95 Elo. |
 | ~~**Re-SPSA margini + search/history/aspiration**~~ | +3..10 | basso/basso | **FATTO (v3.4.2)**: +11.41 Elo LOS 99.51% @3+0.03. 18 parametri tunati, 9 bakati. |
@@ -101,24 +106,44 @@ dal lavoro sopra.
 |---|---|---|---|
 | **Singular ext avanzate** (triple ext, multi-cut) | +2..6 | medio/medio | |
 | **CorrHistMulti / ContHist 2-4ply RIFATTE con pesi** | +0..8 | medio/medio | Le parcheggiate, fatte giuste (pesi per tabella/ply). Sotto la soglia di misura → solo se Tier A esaurito. |
-| **Lazy MovePicker** (movegen stadiato) | +5..12 | **alto/alto** | +NPS reale ma rewrite invasivo del move loop (interagisce con singular/ProbCut/Lazy SMP/qsearch + validatore TT-move). Progetto, non test. |
+| ~~**Lazy MovePicker** (movegen stadiato)~~ | +5..12 | **alto/alto** | **FATTO (v3.5): +16.6 Elo, LOS 96.6% @5+0.1.** Rewrite del move loop + validatore TT-move (`td_is_pseudo_legal`) completato; Phase 2 (skip_quiets/skip_bad_caps) attiva. Resta da spremere via SPSA Phase-2 (Tier A). |
 
 ### Tier C — Abilitatori / robustezza (no Elo diretto, ma necessari)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
 | **ASAN + fix crash ~1/800** | 0 | basso/medio | Niente Elo ma alto valore torneo/release. Fallo prima di tornei seri. |
-| **🔑 Self-play data gen** (FEN+score+eval+depth) | 0 | medio | **PREREQUISITO della rete.** Logging già abbozzato (`DataLog`). Da consolidare. |
-| **Pulizia codice** (policy morta, ABDADA, toggle parcheggiati) | 0 | basso | Manutenibilità. |
+| ~~**🔑 Self-play data gen + pipeline training**~~ (PGN→plain→binpack→nnue-pytorch→.nnue) | 0 | medio | **VALIDATA (2026-06).** Catena end-to-end provata: 12,8M pos d12, training L1=2560 (commit 2db3787), val_loss pulito, rete che carica nel motore. Ricetta in `memory/project_nnue_training.md`. Resta da SCALARE i dati (vedi Tier E). |
+| **Pulizia codice** (policy morta, ABDADA, toggle parcheggiati) | 0 | basso | Manutenibilità. **Bake-in candidati** (default-true validati, l'SPSA NON li tocca → rimuovere l'opzione UCI, hardcodare ON, comportamento identico = solo rebuild, no SPRT): `EvalCache`, `Improving`, `SingularExt` (tieni spin SingularDoubleMargin), `ProbCut` (tieni spin ProbCutMargin), `LazyEval`. **NON bakare**: `MovePicker`/`AggrLMR` (l'SPSA li setta), `NodeTM`/`TimeMgmt` (assicurazione anti-bandiera), `CorrHist`/`ContHistPrune` (provvisori non validati), i default-false diagnostici. `LazySMP` bake = cancellare ABDADA (job separato). |
 
 ### Tier D — Ricerca (il focus originale del progetto)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
 | **Rivivere policy net int8/più piccola** | +? | alto/medio | Distinta dalla NNUE-eval. Ora −85 in ricerca; int8/rete piccola può ribaltarla. |
 
-### Tier E — Il salto (in fondo PER SCELTA, dipende da tutto il resto)
+### Tier E — Rete proprietaria (in fondo PER SCELTA, dipende da tutto il resto)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
-| **🏆 Rete NNUE custom** | +50..150 | alto/alto | Il lever più grosso. Richiede self-play **alla massima qualità** → serve l'engine più forte possibile (Tier A-B) + la pipeline dati (Tier C). Progetto lungo: calo iniziale fisiologico poi indipendenza totale da Stockfish. |
+| **🏆 Rete NNUE proprietaria** | **~0 sul net, valore = ownership** | alto/alto | **REINQUADRATA (2026-06).** La nostra eval **è già near-SOTA: è una rete SF di alto livello.** Riallenare la stessa arch L1-2560, anche su miliardi di posizioni, al meglio la **eguaglia, non la supera** → aspettarsi Elo da qui è un errore. Vale per **indipendenza/identità/licenza**, non per forza. Calo iniziale fisiologico. |
+
+> **Nota strategica sulla rete (decisiva, da non dimenticare):**
+> - **La leva Elo è il SEARCH, non la rete.** Prova: MovePicker +16.6, singular +34, SPSA +19.95/+11.41.
+>   Finché l'eval è un net SF top, l'Elo si prende in ricerca (Tier A-B), non riallenando l'eval.
+> - **Tetto di distillazione**: le label vengono da depth-12 *con la rete SF* → la rete allenata copia,
+>   non batte. Per superare servono label MIGLIORI (search più profondo, o evaluatore più forte).
+> - **Via realistica al volume (piano "T80")**: scaricare **binpack pubblici Leela/SF (T80)** = miliardi
+>   di posizioni con label forti, già nel formato del nostro nnue-pytorch. È l'unico modo di saturare
+>   la L1-2560 senza Fishtest.
+> - **Il "data mixing" NON dà identità**: i nostri 12,8M in 2-3 miliardi = ~0,5% → statisticamente
+>   invisibili. Per specializzare sul nostro motore serve **fine-tuning FINALE** solo sui nostri dati
+>   (ad alta profondità), non mescolare e basta.
+> - **Ordine corretto**: prima spremere il search (Tier A-B) così il self-play futuro è generato dal
+>   motore più forte → label migliori. La rete proprietaria resta in fondo: vale tanto come *progetto*,
+>   ma è ownership, non un +Elo a breve.
+
+### Tier F — Speculativo, a costo-ZERO runtime (ultima voce, idea aperta)
+| Voce | Elo | Rischio/Compl. | Note |
+|---|---|---|---|
+| **Policy distillata OFFLINE nelle euristiche di ordering** | +0..? | medio/medio | La policy in alpha-beta a RUNTIME è morta (−85: l'ordinamento è già quasi ottimo + costo della rete in un motore eval-bound → tenaglia accuratezza/leggerezza). Angolo che SCHIVA la tenaglia: allenare una policy (i ~14M bastano — è ranking, non centipawn) e usarla **offline** per **seminare/bias-are i priori delle tabelle history/butterfly/counter-move** del motore. Niente inferenza a runtime → **costo zero in ricerca**. Marginale e speculativo, ma è l'unico modo di sfruttare la policy *dentro* alpha-beta senza pagare velocità. Distinto dalla policy-in-search (Tier D, morta). |
 
 ---
 

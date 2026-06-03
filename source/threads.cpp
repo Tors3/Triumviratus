@@ -139,6 +139,26 @@ void set_conthist_multi(bool v) { g_conthist_multi = v; }
 static bool g_move_picker = true;
 void set_move_picker(bool v) { g_move_picker = v; }
 
+// DiverseSMP (#2): Lazy-SMP helper threads (id>0) search with a small per-thread
+// LMR reduction bias, widening the ensemble of trees to cut redundant work at high
+// thread counts. Thread 0 stays canonical. Default off (behaviour-preserving).
+static bool g_diverse_smp = false;
+void set_diverse_smp(bool v) { g_diverse_smp = v; }
+static int g_diverse_smp_amount = 1;   // max |bias| in plies (SPSA-tunable: DiverseSMPAmount)
+
+// --- Search "bundle" #3 — OUTCOME (2026-06-03): tested all-ON (-58 Elo), then isolated.
+//  * MultiCut   — singular multi-cut, CONSERVATIVE gate (singular_beta >= beta): the only
+//                 winner -> +10.4 ±11.2 Elo LOS 96.6% @1100 (1t, 8+0.08). BAKED default ON.
+//  * TripleExt  — +3-ply singular: -75 Elo (tree blow-up). DEAD, kept default-off dormant.
+//  * LMREnrich  — extra LMR on ttCapture/cut-node: -25 Elo (over-reduction). DEAD, dormant.
+//  * MultiCutAggr (SF gate s>=beta): -13 Elo (half-depth fail-high too weak). REMOVED.
+static bool g_triple_ext = false;
+void set_triple_ext(bool v) { g_triple_ext = v; }
+static bool g_lmr_enrich = false;
+void set_lmr_enrich(bool v) { g_lmr_enrich = v; }
+static bool g_multicut = true;   // BAKED ON: conservative singular multi-cut (+10.4 Elo @1100)
+void set_multicut(bool v) { g_multicut = v; }
+
 // Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
 // @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
 // independently (shared TT only) and diversify via per-thread depth skipping (see
@@ -244,6 +264,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRTTDepth"))          { g_lmr_ttdepth      = value; return true; }
     if (!strcmp(name, "LMRBase"))             { g_lmr_base_x100 = value; init_lmr_table(); return true; }
     if (!strcmp(name, "LMRDiv"))              { g_lmr_div_x100  = value; init_lmr_table(); return true; }
+    if (!strcmp(name, "DiverseSMPAmount"))    { g_diverse_smp_amount = value; return true; }
     return false;
 }
 
@@ -2085,8 +2106,23 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // Double extension: the TT move beats every alternative by a wide
                 // margin (hyper-forced) -> extend 2 plies. Non-PV only, to bound the
                 // search blow-up that uncapped double extensions can cause.
-                if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin)
+                if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin) {
                     extension = 2;
+                    // Triple extension (bundle): hyper-forced by an even larger margin
+                    // (3x the double margin) -> +3. Rare, non-PV, to bound tree growth.
+                    if (g_triple_ext && s < singular_beta - 3 * g_singular_dmargin)
+                        extension = 3;
+                }
+            }
+            // Multi-cut (BAKED, default on): the exclusion search (TT move removed) failed
+            // high and singular_beta itself is >= beta -> more than one move beats beta ->
+            // this expected cut-node is not singular -> prune the whole subtree by returning
+            // singular_beta. Conservative gate on the BOUND (not the value): fires rarely,
+            // only on a very high TT score, which keeps it safe and +Elo where the aggressive
+            // SF gate (s>=beta) over-pruned (-13 Elo). Non-PV only (unsound in PV). Safe to
+            // return: no move has been made yet this iteration.
+            else if (g_multicut && !pv_node && singular_beta >= beta) {
+                return singular_beta;
             }
             // Negative extension: the TT move is NOT singular and its score already
             // fails high -> several moves are good (multi-cut-like), so the line is
@@ -2144,6 +2180,18 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // flat/falling eval makes late quiets less likely to be the move.
                 if (g_improving && !improving) reduction++;
 
+                // LMR enrichment (bundle): extra reduction signals from SF that we do
+                // not already model. All moves here are quiet. The final [0, depth-2]
+                // clamp below keeps these additions safe.
+                if (g_lmr_enrich) {
+                    // TT best move is a capture -> tactical node; a late quiet here is
+                    // even less likely to be best -> reduce one extra ply.
+                    if (tt_move && get_move_capture(tt_move)) reduction++;
+                    // Cut-node late move: expected to fail high on an earlier move ->
+                    // extra reduction on top of the base cut-node bump above.
+                    if (is_cut_node) reduction++;
+                }
+
                 // History-based reduction: search good-history quiets less and
                 // bad-history quiets more. Clamped to +/-1 ply to stay
                 // conservative; the divisor is the knob to tune in matches.
@@ -2190,6 +2238,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     if (p_score >= policy_hi_cut) reduction--;
                     else if (p_score <= policy_lo_cut) reduction++;
                 }
+
+                // DiverseSMP: nudge this helper's reduction to diversify its tree.
+                // The clamps below keep it in [0, depth-2], so the bias can't break LMR.
+                if (g_diverse_smp) reduction += td.lmr_bias;
 
                 if (reduction < 0) reduction = 0;
                 if (reduction > depth - 2) reduction = depth - 2;
@@ -2367,6 +2419,26 @@ static void thread_search(int thread_id, int max_depth) {
 
     // Stagger starting depths for thread diversity
     int start_depth = 1 + (thread_id % 2);
+
+    // DiverseSMP (#2), WIDER-ONLY variant: per-thread LMR reduction bias. Helpers
+    // (id>0) only ever search WIDER (negative bias = less reduction); the magnitude
+    // grows with id but is capped at g_diverse_smp_amount. Thread 0 stays canonical (0).
+    // RATIONALE: an earlier symmetric (+/-) version hijacked the root move -- a helper
+    // with a *positive* bias prunes harder, reaches a higher nominal depth, and wins the
+    // depth-based result selection with an over-reduced (worse) move. amt3 measured -79
+    // Elo @8+0.08 from exactly this. Forcing bias <= 0 means every helper reaches a
+    // LOWER depth than thread 0, so it can never hijack the result; helpers contribute
+    // only via the shared TT (seeding less-pruned entries). For inter-helper diversity
+    // run DiverseSMPAmount >= 2 (else all helpers collapse to -1).
+    // Re-read each search so DiverseSMPAmount (SPSA) takes effect live. Applied in the
+    // LMR block only when g_diverse_smp is on (guarded there).
+    if (thread_id == 0) {
+        td.lmr_bias = 0;
+    } else {
+        int mag = 1 + (thread_id - 1) / 2;
+        if (mag > g_diverse_smp_amount) mag = g_diverse_smp_amount;
+        td.lmr_bias = -mag;   // wider-only: helpers never search "deeper" -> no hijack
+    }
 
     for (int current_depth = start_depth; current_depth <= max_depth; current_depth++) {
         if (stop_threads.load(std::memory_order_relaxed)) break;

@@ -14,7 +14,8 @@
 // Thread-local data structure
 struct ThreadData {
     int thread_id;
-    
+    int lmr_bias;    // DiverseSMP: per-thread LMR reduction offset (helpers only; 0 for main)
+
     // Board state copy
     U64 bitboards[12];
     U64 occupancies[3];
@@ -189,6 +190,18 @@ extern void set_conthist_multi(bool enabled);
 // (TT / good captures / killers / counter / quiets / bad captures) vs the default
 // generate-all + pick-next. Default off (behaviour-preserving when off).
 extern void set_move_picker(bool enabled);
+
+// DiverseSMP (#2): give Lazy-SMP helper threads a small per-thread LMR reduction
+// bias to diversify their search trees (cuts redundant work at high thread counts).
+// Default off (behaviour-preserving). Magnitude = DiverseSMPAmount spin.
+extern void set_diverse_smp(bool enabled);
+
+// Search bundle #3 — three small standard enrichments, each default off:
+//  TripleExt  (+3-ply singular when hyper-forced), MultiCut (prune when the singular
+//  exclusion search fails high >= beta), LMREnrich (extra LMR on ttCapture / cut-node).
+extern void set_triple_ext(bool enabled);     // bundle #3 dead-end (dormant, default off)
+extern void set_multicut(bool enabled);       // BAKED on: conservative singular multi-cut
+extern void set_lmr_enrich(bool enabled);     // bundle #3 dead-end (dormant, default off)
 
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
