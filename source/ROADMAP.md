@@ -5,7 +5,7 @@ Filosofia: ogni modifica è uno step isolato dietro un toggle, validato matemati
 (SPRT per i cambi di ricerca, A/B NPS per i cambi di velocità). Niente si committa
 "a sensazione".
 
-Ultimo aggiornamento: 2026-06-02
+Ultimo aggiornamento: 2026-06-03
 
 ---
 
@@ -52,6 +52,55 @@ Ultimo aggiornamento: 2026-06-02
 | 2026-06 | **Pipeline NNUE training** (PGN→plain→binpack→nnue-pytorch→.nnue) | abilitatore | **VALIDATA end-to-end.** 12,8M pos (self-play d12, label SF), commit 2db3787 (L1=2560 SFNNv8). val_loss in caduta pulita, zero overfit. Rete "rubicon" = giro di validazione, NON competitiva (tetto distillazione). Ricetta in `memory/project_nnue_training.md` + `SCALETTA.md`. |
 | 2026-06 | **Multi-cut singolare** (`MultiCut`, gate conservativo `singular_beta >= beta` → potatura nodo) | ricerca | **+10.4 ±11.2 Elo, LOS 96.6%** @8+0.08, **1100 partite**, 1 thread (rientrato da +13.4@700, stabile). **Default ON.** Unico sopravvissuto del "bundle #3": TripleExt −75 (tree-blowup), LMREnrich −25 (over-reduction), MultiCutAggr (gate SF `s>=beta`) −13 (fail-high a metà depth troppo debole) → tutti scartati. Lezione: il gate SF non trasferisce, il nostro singular vuole il gate conservativo sul bound. Dead-end tenuti come toggle dormienti (TripleExt/LMREnrich), MultiCutAggr rimosso dal codice. |
 
+### In corso / in validazione (2026-06-03)
+- **DiverseSMP wider-only** (`DiverseSMP`, bias≤0 = solo riduzioni, niente hijack) — **BAKATO default ON
+  (2026-06-04, bake-on-trust).** Storia @8t: +9.7 LOS94%@860 (picco) → +4.8@1080 → **+3.42 LOS74%@1220** finale.
+  SEMPRE positivo (+3..+10, MAI negativo) su ~1440 partite 4t+8t. Feature **SMP**: inerte a 1t, agisce solo
+  multi-thread (= condizione gauntlet/torneo reale). Il [0,5] SPRT NON può confermare un ~+3 (valore<H1=5 → LLR
+  a zonzo) → deciso **bake-on-trust** col segno robusto. Toggle conservato A/B (off=baseline), amount=1.
+  (NB: forma simmetrica ±bias = MORTA, −79 @8t per hijack.)
+- **DeeperShallower** (`DeeperShallower`, default OFF) — **IMPLEMENTATO 2026-06-03, SPRT IN CORSO.** Porting
+  fedele dello Step-17 SF: dopo che la re-search ridotta (LMR) batte alpha, la re-search a piena profondità
+  va **+1 ply** se lo score supera `best+52` (mossa chiaramente migliore) o **−1 ply** se appena sopra alpha
+  (`<best+9`). OFF = re-search fissa a depth-1 (byte-identico → A/B pulito). Smoke test @d18 startpos: stesso
+  eval (67cp) ma **~½ dei nodi** (548k vs 1119k) → riduzione nodi sostanziale. SPRT @8+0.08 Threads=1 Hash=128
+  con adjudication (resign mc=4 s=650 twosided + draw mn=40 mc=8 s=10). **ON/OFF @8+0.08: +24@58 → +17@140 →
+  −3.2@324 (decadimento monotòno) = NEUTRO ai default SF, NON un win.** NON un NO-GO secco (−3.2±19 = indistinguibile
+  da 0) e dimezza i nodi a pari depth → c'è efficienza che non converte, sospetto **doShallower (margine 9) over-prune**.
+  **Margini ESPOSTI come spin** `DeeperMargin`(52)/`ShallowerMargin`(9). **LINEA CHIUSA = NO-GO (tutte le varianti ≤0):**
+  doDeeper-only −19 LOS4%@198, doShallower-only −10.5 LOS7.8%@598 (NEGATIVO confermato), full −3@324, stack(+ttPv) neutro +2..5±17@540. Il "+16 per
+  sottrazione" era illusione (±29). Tutto dietro toggle default OFF, dormiente.
+- **ttPv** (`TTPv`, default OFF) — **IN IMPLEMENTAZIONE 2026-06-03.** #2 dei delta SF (dopo DeeperShallower).
+  Bit della TT (bit 63 del `data`, **era libero**) che ricorda se un nodo è/è stato PV; i nodi non-PV che la TT
+  marca come ex-PV vengono **ridotti meno** in LMR (`reduction--`). Flag propagato negli store. OFF = bit sempre
+  0 + LMR invariata (byte-identico). **NEUTRO, ARCHIVIATO** (+2.4±31@144 solo; +2..5@540 nello stack). Toggle default OFF.
+
+- **Candidati "notte" (2026-06-04)** — 5 toggle default OFF (byte-identico verificato: tutti OFF = 1.118.617 nodi @d18
+  = baseline), exe `Triumviratus_night_test.exe`, test automatici in `night_tests/` (`test_one.bat <OPT>` = SPRT pieno;
+  `screen_all.bat` = screening ~800 partite/cad sequenziale): **NMPEvalScale** (R null-move += min((eval−beta)/div,3)),
+  **QFutility** (futility per-mossa in qsearch, margine QFutMargin), **RFPDepth8** (reverse-futility depth≤8 vs 6),
+  **RazorDepth4** (razor depth≤4 vs 3), **HistBonusSF** (bonus history lineare-clampato vs depth·depth). Spin tunabili
+  esposti (NMPEvalDiv/QFutMargin/HistBonusMult/Sub/Max). Aspettativa ≤0 (search spremuto) ma **zero-rischio** → screening
+  low-cost; i promettenti (LOS>90% @800) → `test_one.bat` SPRT pieno → bake.
+  **ESITO SCREENING (α=β=0.20):** 🟢 **HistBonusSF +24.06 Elo LOS 99.99% LLR PASS @810 → BAKATO default ON (2026-06-04)** —
+  primo +Elo di ricerca dopo una settimana (toggle conservato per A/B; spin HistBonusMult/Sub/Max=155/90/1600 da SPSA-are);
+  🔴 QFutility −71@316, RazorDepth4 −23@768, RFPDepth8 −13@1282, NMPEvalScale −6@2402 = negativi (toggle OFF, dormienti);
+  ⚪ ttPv +3.5@398 neutro. Deploy bake: rebuild exe reale + commit repo sacro.
+
+> 🔬 **DA INDAGARE (perché i 4 negativi non hanno funzionato):** sono TUTTI tecniche che **aggiungono potatura/riduzione**
+> (QFutility=futility qsearch, RazorDepth4/RFPDepth8=potatura più profonda, NMPEvalScale=null-move più aggressivo) → tutti
+> ≤0. L'UNICO che ha funzionato (HistBonusSF) **non pota: cambia l'ordinamento/magnitudine history.** Insight forte: a ~3570
+> il motore è **alla frontiera della potatura** (più pruning = sovra-pota, perde tattica), mentre c'è ancora margine
+> sull'**ordinamento delle mosse**. Ipotesi specifiche: QFutility −71 = margine/base futility sbagliato per la nostra scala
+> eval o conflitto con SEE<0 (rivedere `g_qfut_margin`/futility-base); Razor/RFP depth = margini `g_razor_*`/`g_rfp_margin*d`
+> non tarati per le depth estese. **Direzione futura: cercare +Elo in ordering/history (capture-history, conthist, killer/counter
+> tuning), NON in altra potatura.**
+
+> ⛔ **SEARCH SPREMUTO (verdetto 2026-06):** una settimana di tweak — wider, DeeperShallower (×3 varianti), ttPv, stack —
+> TUTTI ≤0. A ~3570 Elo la ricerca è near-ottima; le tecniche SF residue (+3..8) stanno SOTTO il pavimento di rumore SPRT
+> del budget-macchina. **La leva Elo non è più il search.** Pivot → rete NNUE (training cloud) + NPS (static-eval-in-TT,
+> validato con A/B NPS interlacciato che SFUGGE al pavimento) + enabler (ASAN, bake toggle validati, commit MultiCut).
+
 ### In sospeso — provate, non hanno reso (classificate)
 Tutte dietro toggle, **default OFF**: non toccano il motore. Diviso per causa.
 
@@ -95,7 +144,9 @@ dal lavoro sopra.
 ### Tier A — Quick win (basso rischio, misurabili, SUBITO)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
-| **🎯 SPSA Phase-2 MovePicker** (SEECaptureMargin/SEEQuietMargin + futility + HistPruneMargin) | +2..10 | basso/basso | **PROSSIMO.** Tuna la leva nuova di Phase-2 (soglie `skip_bad_caps`). Script pronto `Tuning_SPSA/final_tuning/spsa_phase2.py`, MovePicker frozen ON, SmallNet 782. **Lanciare a 7+0.1** (il segnale Phase-2 cresce col TC). Esplorativo → conferma con SPRT ciò che si muove. |
+| **🎯 DeeperShallower** (SF Step-17 doDeeper/doShallower sulla re-search LMR) | +0..8 | basso/basso | **IMPLEMENTATO (2026-06-03), SPRT IN CORSO** @8+0.08 Threads=1 (`DeeperShallower` off vs on, con adjudication). Re-search ±1 ply su forza del fail-high (`best+52`/`best+9`). OFF byte-identico. Smoke @d18: ~½ nodi a pari eval. |
+| **🎯 ttPv** (flag PV nella TT, bit 63; LMR ridotta meno su nodi ex-PV) | +3..6 | basso/medio | **IN IMPLEMENTAZIONE (2026-06-03).** #2 dei delta SF. OFF byte-identico (bit 0 + LMR invariata). **PROSSIMO SPRT dopo DeeperShallower.** |
+| ~~**SPSA Phase-2 MovePicker**~~ (SEECaptureMargin/SEEQuietMargin + futility + HistPruneMargin) | +2..10 | basso/basso | **FATTO = NO-GO.** Vettore tunato +0.8±12.9 @8+0.08 (= zero), −17 @5+0.05. Tenuti i DEFAULT SEE/Futility/HistPrune. Lezione: validare SEMPRE l'output SPSA come blocco vs default. |
 | **AggrLMR** | +0..8 | basso/basso | Ai default (2048/3) = **NEUTRO** (0.1 ±10, LOS 51% @2650 partite). Non parcheggiato: i param `AggrLMRDiv`/`AggrLMRClamp` entrano nella **SPSA unificata** (frozen on) per vedere se un'aggressività diversa è +. Se restano fermi → neutro confermato. |
 | ~~**LMRBase / LMRDiv**~~ (formula core LMR) | +? | basso/basso | **FATTO (v3.4.1)**: LMRBase 75→47, LMRDiv 225→270, +19.95 Elo. |
 | ~~**Re-SPSA margini + search/history/aspiration**~~ | +3..10 | basso/basso | **FATTO (v3.4.2)**: +11.41 Elo LOS 99.51% @3+0.03. 18 parametri tunati, 9 bakati. |
@@ -123,7 +174,7 @@ dal lavoro sopra.
 ### Tier E — Rete proprietaria (in fondo PER SCELTA, dipende da tutto il resto)
 | Voce | Elo | Rischio/Compl. | Note |
 |---|---|---|---|
-| **🏆 Rete NNUE proprietaria** | **~0 sul net, valore = ownership** | alto/alto | **REINQUADRATA (2026-06).** La nostra eval **è già near-SOTA: è una rete SF di alto livello.** Riallenare la stessa arch L1-2560, anche su miliardi di posizioni, al meglio la **eguaglia, non la supera** → aspettarsi Elo da qui è un errore. Vale per **indipendenza/identità/licenza**, non per forza. Calo iniziale fisiologico. |
+| **🏆 Rete NNUE proprietaria** | **~0 sul net, valore = ownership** | alto/alto | **REINQUADRATA (2026-06).** La nostra eval **è già near-SOTA: è una rete SF di alto livello.** Riallenare la stessa arch L1-2560, anche su miliardi di posizioni, al meglio la **eguaglia, non la supera** → aspettarsi Elo da qui è un errore. Vale per **indipendenza/identità/licenza**, non per forza. Calo iniziale fisiologico. **RUN CLOUD T80 IN CORSO (2026-06-03):** rete "rubicon" su GCP L4 (g2-standard-4), **16 mesi T80 v6 ~138GB**, 600 epoche, ~$104; val_loss in discesa pulita (~ep9, zero overfit). Dettagli/comandi in `DataGen_Local/NNUE_Training_Pipeline/03_cloud_ubuntu/STATO_TRAINING_CLOUD.md`. A fine: serialize→scp→A/B (atteso ≈ pari rete SF). |
 
 > **Nota strategica sulla rete (decisiva, da non dimenticare):**
 > - **La leva Elo è il SEARCH, non la rete.** Prova: MovePicker +16.6, singular +34, SPSA +19.95/+11.41.

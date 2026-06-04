@@ -142,7 +142,12 @@ void set_move_picker(bool v) { g_move_picker = v; }
 // DiverseSMP (#2): Lazy-SMP helper threads (id>0) search with a small per-thread
 // LMR reduction bias, widening the ensemble of trees to cut redundant work at high
 // thread counts. Thread 0 stays canonical. Default off (behaviour-preserving).
-static bool g_diverse_smp = false;
+// **BAKED ON (2026-06-04, bake-on-trust):** wider-only diversity (bias<=0, no hijack)
+// e' SEMPRE stato positivo (+3..+10, mai negativo) su ~1440 partite a 4t+8t. Feature
+// SMP: inerte a 1 thread, agisce solo a multi-thread (= condizione gauntlet/torneo).
+// Un [0,5] SPRT non puo' confermare un ~+3 (LLR a zonzo), ma il segno e' robusto.
+// Toggle conservato per A/B (off = baseline). amount=1.
+static bool g_diverse_smp = true;
 void set_diverse_smp(bool v) { g_diverse_smp = v; }
 static int g_diverse_smp_amount = 1;   // max |bias| in plies (SPSA-tunable: DiverseSMPAmount)
 
@@ -158,6 +163,61 @@ static bool g_lmr_enrich = false;
 void set_lmr_enrich(bool v) { g_lmr_enrich = v; }
 static bool g_multicut = true;   // BAKED ON: conservative singular multi-cut (+10.4 Elo @1100)
 void set_multicut(bool v) { g_multicut = v; }
+
+// doDeeper/doShallower (UCI option "DeeperShallower"). Default OFF. Stockfish
+// Step-17 LMR refinement: after a reduced search beats alpha, the full-depth
+// re-search depth is adjusted by +/-1 ply based on how strongly the reduced score
+// beat bestValue — DEEPER (+1) when the move looks clearly best (score > best+52),
+// SHALLOWER (-1) when it barely cleared alpha (score < best+9). OFF reproduces the
+// plain fixed depth-1 re-search (behaviour-preserving for a clean A/B).
+static bool g_deeper_shallower = false;
+void set_deeper_shallower(bool v) { g_deeper_shallower = v; }
+
+// ttPv (UCI option "TTPv"). Default OFF. SF: un bit della TT (bit 63 del data, era
+// libero) ricorda se un nodo è/è stato PV. I nodi non-PV che la TT marca come ex-PV
+// vengono ridotti meno in LMR (reduction--), perché un nodo già stato PV merita più
+// attenzione. Il flag viene propagato negli store. OFF = bit sempre 0 + LMR invariata
+// (byte-identico per un A/B pulito).
+static bool g_ttpv = false;
+void set_ttpv(bool v) { g_ttpv = v; }
+
+// ===========================================================================
+// CANDIDATI "notte" (2026-06-04) — ognuno dietro toggle, default OFF =
+// byte-identico al baseline (zero rischio al motore). Da SPRT-are UNO ALLA VOLTA
+// (vedi i .bat in Tuning_SPSA/night/). Dato che "il search è spremuto",
+// aspettativa media ≤0, ma col toggle OFF non toccano nulla finché non li provi.
+// ===========================================================================
+
+// (1) NMPEvalScale: aumenta la riduzione del null-move quando static_eval supera
+//     beta di molto (più sopra beta = potatura più aggressiva). SF-standard.
+static bool g_nmp_eval_scale = false;
+void set_nmp_eval_scale(bool v) { g_nmp_eval_scale = v; }
+int g_nmp_eval_div = 200;   // R += min((static_eval - beta)/div, 3)
+
+// (2) RFPDepth8: estende la reverse-futility da depth<=6 a depth<=8.
+static bool g_rfp_depth8 = false;
+void set_rfp_depth8(bool v) { g_rfp_depth8 = v; }
+
+// (3) RazorDepth4: estende il razoring da depth<=3 a depth<=4.
+static bool g_razor_depth4 = false;
+void set_razor_depth4(bool v) { g_razor_depth4 = v; }
+
+// (4) QFutility: futility per-mossa in quiescence — salta le catture che non
+//     possono alzare best_score fino ad alpha nemmeno incassando il pezzo
+//     catturato (escluse ep/promo per sicurezza). Margine = QFutMargin.
+static bool g_qfutility = false;
+void set_qfutility(bool v) { g_qfutility = v; }
+int g_qfut_margin = 150;
+
+// (5) HistBonusSF: bonus history lineare-clampato min(mult*d - sub, max) invece
+//     di depth*depth. Cambia solo la MAGNITUDINE di bonus/malus della history.
+//     **BAKED ON (2026-06-04): +24.06 Elo LOS 99.99% @810 (8+0.08, 1t).** Primo
+//     +Elo di ricerca dopo una settimana. Toggle conservato per A/B (off = depth*depth).
+static bool g_hist_bonus_sf = true;
+void set_hist_bonus_sf(bool v) { g_hist_bonus_sf = v; }
+int g_hist_bonus_mult = 155;
+int g_hist_bonus_sub  = 90;
+int g_hist_bonus_max  = 1600;
 
 // Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
 // @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
@@ -230,6 +290,12 @@ int g_histprune_margin = 1000;  // history pruning: prune late quiet if combined
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
 int g_see_cap_margin   = 90;
 int g_see_quiet_margin = 50;
+// DeeperShallower margins (attivi solo con DeeperShallower on): la re-search a piena
+// profondità va +1 ply se reduced-score > best + g_deeper_margin, -1 ply se
+// < best + g_shallower_margin. Per il test "doDeeper-only" metti g_shallower_margin
+// molto negativo (ShallowerMargin=-1000) -> la condizione non è mai vera -> doShallower OFF.
+int g_deeper_margin    = 52;   // SF default (doDeeper)
+int g_shallower_margin = 9;    // SF default (doShallower)
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
@@ -265,6 +331,13 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRBase"))             { g_lmr_base_x100 = value; init_lmr_table(); return true; }
     if (!strcmp(name, "LMRDiv"))              { g_lmr_div_x100  = value; init_lmr_table(); return true; }
     if (!strcmp(name, "DiverseSMPAmount"))    { g_diverse_smp_amount = value; return true; }
+    if (!strcmp(name, "DeeperMargin"))        { g_deeper_margin    = value; return true; }
+    if (!strcmp(name, "ShallowerMargin"))     { g_shallower_margin = value; return true; }
+    if (!strcmp(name, "NMPEvalDiv"))          { g_nmp_eval_div     = value; return true; }
+    if (!strcmp(name, "QFutMargin"))          { g_qfut_margin      = value; return true; }
+    if (!strcmp(name, "HistBonusMult"))       { g_hist_bonus_mult  = value; return true; }
+    if (!strcmp(name, "HistBonusSub"))        { g_hist_bonus_sub   = value; return true; }
+    if (!strcmp(name, "HistBonusMax"))        { g_hist_bonus_max   = value; return true; }
     return false;
 }
 
@@ -976,6 +1049,18 @@ static inline void td_update_history(int16_t& h, int bonus) {
     h = (int16_t)v;
 }
 
+// Stat bonus per gli update history. Default = depth*depth (originale). Con
+// HistBonusSF on usa la forma SF lineare-clampata min(mult*d - sub, max).
+static inline int td_stat_bonus(int depth) {
+    if (g_hist_bonus_sf) {
+        int b = g_hist_bonus_mult * depth - g_hist_bonus_sub;
+        if (b > g_hist_bonus_max) b = g_hist_bonus_max;
+        if (b < 0) b = 0;
+        return b;
+    }
+    return depth * depth;
+}
+
 // Move-ordering score bands (well separated so the additive quiet histories,
 // range about +/-2*HISTORY_MAX, never overlap the "special" move scores):
 //   TT move > good captures > killers > counter-move > quiet history > bad captures
@@ -1534,6 +1619,13 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
 
         if (!in_check) {
             if (!get_move_capture(move)) continue;
+            // (4) QFutility: salta la cattura se best_score + valore(vittima) + margine
+            //     non arriva ad alpha (no ep/promo). OFF = nessun effetto.
+            if (g_qfutility && !get_move_promoted(move) && !get_move_enpassant(move)) {
+                int vic = td_captured_piece(td, get_move_target(move));
+                if (vic >= 0 && vic < 12 &&
+                    best_score + see_piece_values[vic] + g_qfut_margin <= alpha) continue;
+            }
             if (!get_move_promoted(move) && td_see(td, move) < 0) continue;
         }
 
@@ -1705,10 +1797,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     int tt_depth = 0;
     int tt_flag = hash_flag_alpha;
     bool tt_busy = false;
+    bool tt_pv = false;
     int score;
 
     // TT probe
-    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_busy);
+    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_busy, tt_pv);
+
+    // ttPv (SF): un nodo è "PV-ish" se è un vero PV node o se la TT lo ricorda ex-PV.
+    // store_pv viene scritto negli store TT (propaga il flag); il segnale NUOVO è ridurre
+    // meno la LMR sui nodi non-PV che la TT marca ex-PV. Gated da g_ttpv (OFF = byte-identico).
+    bool store_pv = g_ttpv && (pv_node || (tt_hit && tt_pv));
 
     // Skip the TT cutoff during a singular search (excluded_move set): we are
     // deliberately re-searching this position without the TT move.
@@ -1792,7 +1890,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // potential mate search short based on a static evaluation). When improving,
     // shave one ply off the margin (easier cutoff): a rising eval is more likely
     // to hold above beta.
-    if (!pv_node && !in_check && depth <= 6 && beta < mate_score) {
+    if (!pv_node && !in_check && depth <= (g_rfp_depth8 ? 8 : 6) && beta < mate_score) {
         int rfp_depth = depth - ((g_improving && improving) ? 1 : 0);
         if (static_eval - g_rfp_margin * rfp_depth >= beta)
             return static_eval - g_rfp_margin * rfp_depth;
@@ -1820,6 +1918,12 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             td.move_stack[td.ply] = 0;
 
             int R = g_nmp_base + depth / g_nmp_div;
+            // (1) NMPEvalScale: più sopra beta = riduzione maggiore (cap +3). OFF = invariato.
+            if (g_nmp_eval_scale) {
+                int e = (static_eval - beta) / g_nmp_eval_div;
+                if (e > 3) e = 3;
+                if (e > 0) R += e;
+            }
             if (R > depth - 1) R = depth - 1;
 
             sf_pos_do_null(td.sfpos, td.fifty);
@@ -1839,7 +1943,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     }
 
     // Razoring
-    if (!pv_node && !in_check && depth <= 3) {
+    if (!pv_node && !in_check && depth <= (g_razor_depth4 ? 4 : 3)) {
         int razor_margin = g_razor_base + g_razor_mult * depth;
         if (static_eval + razor_margin < alpha) {
             score = td_quiescence(td, alpha, beta);
@@ -2169,6 +2273,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 reduction = lmr_table[d_idx][m_idx];   // assegna alla variabile ESTERNA (niente 'int' -> niente shadowing che disattivava la LMR)
 
                 if (!pv_node) reduction++;
+                // ttPv: i nodi non-PV che la TT ricorda come ex-PV vengono ridotti meno
+                // (i veri PV node hanno già lo sconto via il !pv_node qui sopra). È il
+                // segnale nuovo dello Step ttPv di SF. OFF (g_ttpv=false) = nessun effetto.
+                if (g_ttpv && tt_hit && tt_pv && !pv_node) reduction--;
                 if (move == td.killer_moves[0][td.ply] || move == td.killer_moves[1][td.ply])
                     reduction--;
                 if (static_eval + g_lmr_eval_margin < alpha) reduction++;
@@ -2247,14 +2355,29 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 if (reduction > depth - 2) reduction = depth - 2;
             }
 
-            score = -td_negamax(td, -alpha - 1, -alpha, depth - 1 - reduction, true);
+            // Reduced-depth zero-window search (LMR). reduced_depth = depth-1-r.
+            int reduced_depth = depth - 1 - reduction;
+            score = -td_negamax(td, -alpha - 1, -alpha, reduced_depth, true);
 
+            // Full-depth re-search when the reduced search fails high.
+            int full_depth = depth - 1;
             if (score > alpha && reduction > 0) {
-                score = -td_negamax(td, -alpha - 1, -alpha, depth - 1, !is_cut_node);
+                // SF Step 17 (doDeeper/doShallower): nudge the re-search depth +/-1
+                // by how strongly the reduced score beat bestValue. OFF keeps the
+                // plain depth-1 re-search (behaviour-preserving = identical A/B).
+                if (g_deeper_shallower) {
+                    bool do_deeper    = score > best_score + g_deeper_margin;
+                    bool do_shallower = score < best_score + g_shallower_margin;
+                    full_depth += (do_deeper ? 1 : 0) - (do_shallower ? 1 : 0);
+                }
+                if (full_depth > reduced_depth)
+                    score = -td_negamax(td, -alpha - 1, -alpha, full_depth, !is_cut_node);
             }
 
+            // PV full-window re-search (uses the possibly-adjusted full_depth so a
+            // doDeeper bump also deepens the PV confirmation, matching SF).
             if (score > alpha && score < beta) {
-                score = -td_negamax(td, -beta, -alpha, depth - 1, false);
+                score = -td_negamax(td, -beta, -alpha, full_depth, false);
             }
         }
 
@@ -2286,7 +2409,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 td.pv_length[td.ply] = td.pv_length[td.ply + 1];
 
                 if (score >= beta) {
-                    if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply);
+                    if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply, store_pv);
                     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag_beta, depth, in_check, move, excluded_move);
 
                     if (is_quiet) {
@@ -2301,7 +2424,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                         int pct = prev_cm ? get_move_target(prev_cm) : 0;
                         if (prev_cm)
                             td.counter_moves[pcp][pct] = move;
-                        int bonus = depth * depth;
+                        int bonus = td_stat_bonus(depth);
                         td_update_history(td.history_moves[get_move_piece(move)][get_move_target(move)], bonus);
                         if (prev_cm)
                             td_update_history(td.continuation_history[pcp][pct][get_move_piece(move)][get_move_target(move)], bonus);
@@ -2319,7 +2442,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     else if (is_capture) {
                         // Capture history: bonus alla cattura del cutoff, malus
                         // alle catture provate prima senza riuscirci.
-                        int bonus = depth * depth;
+                        int bonus = td_stat_bonus(depth);
                         int vic = td_captured_piece(td, get_move_target(move));
                         td_update_history(td.capture_history[get_move_piece(move)][get_move_target(move)][vic], bonus);
                         for (int c = 0; c < n_searched_captures; c++) {
@@ -2344,7 +2467,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     }
 
     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag, depth, in_check, best_move, excluded_move);
-    if (!excluded_move) store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply);
+    if (!excluded_move) store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply, store_pv);
 
     return best_score;
 }

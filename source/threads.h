@@ -203,6 +203,23 @@ extern void set_triple_ext(bool enabled);     // bundle #3 dead-end (dormant, de
 extern void set_multicut(bool enabled);       // BAKED on: conservative singular multi-cut
 extern void set_lmr_enrich(bool enabled);     // bundle #3 dead-end (dormant, default off)
 
+// doDeeper/doShallower (UCI "DeeperShallower") — SF Step-17 LMR refinement: the
+// full-depth re-search runs +/-1 ply from how strongly the reduced search beat
+// bestValue (deeper if score>best+52, shallower if score<best+9). Default off
+// (behaviour-preserving = the plain fixed depth-1 re-search).
+extern void set_deeper_shallower(bool enabled);
+
+// ttPv (UCI "TTPv") — bit PV nella TT (bit 63): i nodi non-PV ricordati ex-PV vengono
+// ridotti meno in LMR. Default off (behaviour-preserving = bit 0 + LMR invariata).
+extern void set_ttpv(bool enabled);
+
+// Candidati "notte" (2026-06-04) — tutti default OFF = byte-identico.
+extern void set_nmp_eval_scale(bool enabled);  // NMPEvalScale: R null-move += min((eval-beta)/div,3)
+extern void set_rfp_depth8(bool enabled);      // RFPDepth8: reverse-futility a depth<=8 (vs 6)
+extern void set_razor_depth4(bool enabled);    // RazorDepth4: razoring a depth<=4 (vs 3)
+extern void set_qfutility(bool enabled);       // QFutility: futility per-mossa in quiescence
+extern void set_hist_bonus_sf(bool enabled);   // HistBonusSF: bonus history lineare-clampato
+
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
 extern void set_tt_4way(bool enabled);

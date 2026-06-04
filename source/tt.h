@@ -36,14 +36,18 @@ struct alignas(16) tt_entry {
     U64 data;          // Contains: move (21 bits) | score (16 bits) | depth (8 bits) | flag (2 bits) | busy (8 bits) | age (8 bits)
 };
 
-// Data packing/unpacking
-inline U64 pack_tt_data(int move, int score, int depth, int flag, int busy, int age) {
+// Data packing/unpacking.
+// Bit layout of `data` (64 bit): move[0..20] score[21..36] depth[37..44]
+// flag[45..46] busy[47..54] age[55..62] pv[63]. Bit 63 (ttPv) era libero.
+// `pv` ha default 0 -> i chiamanti che non lo passano impacchettano IDENTICO a prima.
+inline U64 pack_tt_data(int move, int score, int depth, int flag, int busy, int age, int pv = 0) {
     return ((U64)(move & 0x1FFFFF)) |
         ((U64)((score + 32768) & 0xFFFF) << 21) |
         ((U64)(depth & 0xFF) << 37) |
         ((U64)(flag & 0x3) << 45) |
         ((U64)(busy & 0xFF) << 47) |
-        ((U64)(age & 0xFF) << 55);
+        ((U64)(age & 0xFF) << 55) |
+        ((U64)(pv & 0x1) << 63);
 }
 
 inline int unpack_move(U64 data) { return data & 0x1FFFFF; }
@@ -52,6 +56,7 @@ inline int unpack_depth(U64 data) { return (data >> 37) & 0xFF; }
 inline int unpack_flag(U64 data) { return (data >> 45) & 0x3; }
 inline int unpack_busy(U64 data) { return (data >> 47) & 0xFF; }
 inline int unpack_age(U64 data) { return (data >> 55) & 0xFF; }
+inline int unpack_pv(U64 data) { return (data >> 63) & 0x1; }
 
 // Global TT
 extern tt_entry* hash_table;
@@ -164,7 +169,7 @@ inline tt_entry* tt_victim(U64 key) {
  * Returns: true if valid entry found
  * Sets: tt_move, tt_score, tt_depth, tt_flag, is_busy
  */
-inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, bool& is_busy) {
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, bool& is_busy, bool& is_pv) {
     tt_entry* entry = tt_find(hash_key);
 
     if (!entry) {
@@ -173,6 +178,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
         tt_depth = 0;
         tt_flag = hash_flag_alpha;
         is_busy = false;
+        is_pv = false;
         return false;
     }
 
@@ -183,8 +189,15 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     tt_depth = unpack_depth(data);
     tt_flag = unpack_flag(data);
     is_busy = (unpack_busy(data) > 0);
+    is_pv = (unpack_pv(data) != 0);
 
     return true;
+}
+
+// Overload retro-compatibile (chiamanti che non vogliono il flag ttPv).
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, bool& is_busy) {
+    bool is_pv_dummy;
+    return probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag, is_busy, is_pv_dummy);
 }
 
 /*
@@ -214,7 +227,8 @@ inline void mark_busy(U64 hash_key, int depth) {
                 unpack_depth(old_data),
                 unpack_flag(old_data),
                 old_busy + 1,
-                unpack_age(old_data)
+                unpack_age(old_data),
+                unpack_pv(old_data)
             );
             entry->data = new_data;
             entry->key = hash_key ^ new_data;
@@ -246,7 +260,8 @@ inline void unmark_busy(U64 hash_key) {
                 unpack_depth(old_data),
                 unpack_flag(old_data),
                 old_busy - 1,
-                unpack_age(old_data)
+                unpack_age(old_data),
+                unpack_pv(old_data)
             );
             entry->data = new_data;
             entry->key = hash_key ^ new_data;
@@ -262,7 +277,7 @@ inline void unmark_busy(U64 hash_key) {
  * 2. Replace if new depth >= old depth
  * 3. Replace if old entry is from different age
  */
-inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0) {
+inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false) {
     // Normalize mate scores to be relative to THIS node before storing
     // (value_to_tt). The probe side performs the inverse adjustment. Without
     // this, a "mate in N from the root" would be cached as if it were "mate in
@@ -284,14 +299,15 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
 
         // Don't replace deeper entries from same age unless exact score
         if (old_age == current_age && old_depth > depth && flag != hash_flag_exact) {
-            // Just update busy counter
+            // Just update busy counter (preserve the ttPv bit)
             U64 new_data = pack_tt_data(
                 unpack_move(old_data),
                 unpack_score(old_data),
                 old_depth,
                 unpack_flag(old_data),
                 old_busy,
-                old_age
+                old_age,
+                unpack_pv(old_data)
             );
             entry->data = new_data;
             entry->key = hash_key ^ new_data;
@@ -303,8 +319,8 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         entry = tt_victim(hash_key);
     }
 
-    // Store new entry
-    U64 new_data = pack_tt_data(move, score, depth, flag, old_busy, current_age);
+    // Store new entry (carry the ttPv flag; `pv` già include l'ex-PV letto al probe)
+    U64 new_data = pack_tt_data(move, score, depth, flag, old_busy, current_age, pv ? 1 : 0);
     entry->data = new_data;
     entry->key = hash_key ^ new_data;
 }

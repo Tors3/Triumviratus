@@ -269,11 +269,23 @@ void uci_loop()
             printf("option name CorrHistMulti type check default false\n");
             printf("option name ContHistMulti type check default false\n");
             printf("option name MovePicker type check default true\n");
-            printf("option name DiverseSMP type check default false\n");
+            printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
             printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
             printf("option name TripleExt type check default false\n");
             printf("option name MultiCut type check default true\n");
             printf("option name LMREnrich type check default false\n");
+            printf("option name DeeperShallower type check default false\n");
+            printf("option name TTPv type check default false\n");
+            printf("option name NMPEvalScale type check default false\n");
+            printf("option name RFPDepth8 type check default false\n");
+            printf("option name RazorDepth4 type check default false\n");
+            printf("option name QFutility type check default false\n");
+            printf("option name HistBonusSF type check default true\n");   // BAKED ON: +24 LOS99.99% @810
+            printf("option name NMPEvalDiv type spin default 200 min 50 max 1000\n");
+            printf("option name QFutMargin type spin default 150 min 0 max 500\n");
+            printf("option name HistBonusMult type spin default 155 min 1 max 600\n");
+            printf("option name HistBonusSub type spin default 90 min 0 max 400\n");
+            printf("option name HistBonusMax type spin default 1600 min 200 max 4000\n");
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
             printf("option name AggrLMR type check default false\n");
@@ -302,6 +314,8 @@ void uci_loop()
             printf("option name HistPruneMargin type spin default 1000 min 200 max 4000\n");
             printf("option name SEECaptureMargin type spin default 90 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 50 min 10 max 200\n");
+            printf("option name DeeperMargin type spin default 52 min 0 max 30000\n");  // max alto: 30000 = doDeeper OFF (mai > mate)
+            printf("option name ShallowerMargin type spin default 9 min -1000 max 200\n");  // -1000 = doShallower OFF
             printf("option name SmallNetThreshold type spin default 782 min 300 max 2000\n"); // bakato: 1050->782
             printf("option name SyzygyPath type string default <empty>\n");
             printf("uciok\n");
@@ -511,6 +525,41 @@ void uci_loop()
         {
             const char* v = input + 31;
             set_lmr_enrich(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name DeeperShallower value ", 37) == 0)
+        {
+            const char* v = input + 37;
+            set_deeper_shallower(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name TTPv value ", 26) == 0)
+        {
+            const char* v = input + 26;
+            set_ttpv(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name NMPEvalScale value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_nmp_eval_scale(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name RFPDepth8 value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_rfp_depth8(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name RazorDepth4 value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_razor_depth4(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name QFutility value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_qfutility(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name HistBonusSF value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_hist_bonus_sf(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // "setoption name ContHistPrune value <true|false>" (A/B continuation-history
