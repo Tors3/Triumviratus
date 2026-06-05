@@ -5,7 +5,7 @@ Filosofia: ogni modifica è uno step isolato dietro un toggle, validato matemati
 (SPRT per i cambi di ricerca, A/B NPS per i cambi di velocità). Niente si committa
 "a sensazione".
 
-Ultimo aggiornamento: 2026-06-03
+Ultimo aggiornamento: 2026-06-04
 
 ---
 
@@ -140,6 +140,30 @@ dati), così quando arriveremo alla **rete custom** il self-play sarà generato 
 motore **più forte possibile** → dataset di qualità massima. Per questo la rete è in
 fondo: non perché valga poco (vale di più di tutto il resto), ma perché **dipende**
 dal lavoro sopra.
+
+### ⭐ DIREZIONE ATTUALE (aggiornata 2026-06-04) — triage post "settimana del search"
+Due lezioni ferme da una settimana di SPRT: (1) **il search è spremuto sul PRUNING** (ogni tweak di
+potatura ≤0: wider a parte, DeeperShallower/ttPv/NMPEvalScale/RFP8/Razor4/QFutility tutti ≤0); il margine
+residuo è nell'**ORDERING/HISTORY** (HistBonusSF +24 bakato è l'unico +Elo della settimana). (2) **l'eval è
+già SF-grade** → la rete non è un +Elo a breve, è ownership. Priorità, in ordine:
+1. **Ordering / history** (capture-history, conthist pesata, counter-move, killer, malus) — UNICA leva di
+   ricerca viva dimostrata. Basso costo. **NON cercare altro pruning.**
+2. **NNUE cloud: finire il pretraining → A/B**, poi **fine-tuning self-play + mix T80/self-play (~70/30)**
+   (bastano 30–300M posizioni nuove, resume da checkpoint; NO altri 130GB).
+3. **Infra self-play data-gen** (aperture diversificate, opponent pool, filtraggio, posizioni a forte
+   disaccordo NNUE/SF) — enabler per #2 e per il loop di bootstrap.
+4. **Policy distillata OFFLINE per seminare i priori delle history** (Tier F) — unico uso VIVO della policy.
+
+**TAGLIATE (con prova sul campo):**
+- **Neural move-ordering / neural pruning / "NNUE search controller" a RUNTIME** = è il **policy-in-search già
+  misurato −85 Elo** (motore eval-bound: l'inferenza nel loop costa troppo + ordering già near-ottimo). La
+  "killer feature" suggerita da analisi esterne è proprio ciò che da noi è MORTO. Vivo solo OFFLINE (punto 4).
+- **L1-2560→3072 / multi-head / feature set nuove** = inferenza `sfnnue` agganciata a L1-2560 (3072 non
+  carica senza riscrivere l'inference) + net più grosso = più lento (eval-bound) + eval già top → ≈0.
+- **LMR / NMP / aspiration tuning** = già fatto/neutro (frontiera del pruning).
+- **Transformer / RL AlphaZero / MCTS neurale / search fully-neural** = speculative, non ora.
+
+> Sintesi: **il margine Elo è in ORDERING e nei DATI (self-play), non in più potatura né in più rete.**
 
 ### Tier A — Quick win (basso rischio, misurabili, SUBITO)
 | Voce | Elo | Rischio/Compl. | Note |
