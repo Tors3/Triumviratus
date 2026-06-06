@@ -152,7 +152,7 @@ int Eval::simple_eval(const Position& pos, Color c) {
         nnue -= nnue * (nnueComplexity + std::abs(simpleEval - nnue)) / 32768;
 
         int npm = pos.non_pawn_material() / 64;
-        int v   = (nnue * (915 + npm + 9 * pos.count<PAWN>())) / 1024;
+        int v   = (nnue * (600 + npm + 9 * pos.count<PAWN>())) / 1024;   // optimism 915->600: +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 too optimistic for our search.
 
         // Damp down the evaluation linearly when shuffling
         int shuffling = pos.rule50_count();
