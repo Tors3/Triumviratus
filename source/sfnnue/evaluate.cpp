@@ -58,7 +58,7 @@ const unsigned int         gEmbeddedNNUESmallSize    = 1;
 // NB: 782 NON ancora validato in isolamento (era 1050 = valore Stockfish). Per ora
 // gira "in blocco" con gli altri valori bakati; va confermato con un A/B SPRT
 // dedicato (SmallNetThreshold 782 vs 1050) prima di considerarlo definitivo.
-int g_small_net_threshold = 782;   // [baked: 1050->782, da A/B-testare da solo] (deve combaciare col default UCI)
+int g_small_net_threshold = 1050;  // 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau; il 782 era una regressione) (deve combaciare col default UCI)
 
 namespace Stockfish {
 

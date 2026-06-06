@@ -316,7 +316,7 @@ void uci_loop()
             printf("option name SEEQuietMargin type spin default 50 min 10 max 200\n");
             printf("option name DeeperMargin type spin default 52 min 0 max 30000\n");  // max alto: 30000 = doDeeper OFF (mai > mate)
             printf("option name ShallowerMargin type spin default 9 min -1000 max 200\n");  // -1000 = doShallower OFF
-            printf("option name SmallNetThreshold type spin default 782 min 300 max 2000\n"); // bakato: 1050->782
+            printf("option name SmallNetThreshold type spin default 1050 min 300 max 2000\n"); // 782->1050 (+13 Elo, higher=more Elo)
             printf("option name SyzygyPath type string default <empty>\n");
             printf("uciok\n");
             fflush(stdout);
