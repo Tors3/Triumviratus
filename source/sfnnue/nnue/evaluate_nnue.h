@@ -76,8 +76,15 @@ using LargePagePtr = std::unique_ptr<T, LargePageDeleter<T>>;
 
 std::string trace(Position& pos);
 template<NetSize Net_Size>
-Value evaluate(const Position& pos, bool adjusted = false, int* complexity = nullptr);
+Value evaluate(const Position&    pos,
+               bool               adjusted   = false,
+               int*               complexity = nullptr,
+               AccumulatorCaches* caches     = nullptr);
 void  hint_common_parent_position(const Position& pos);
+
+// (Re)initialise a per-thread AccumulatorCaches ("finny tables") to an empty
+// board (biases only) for both nets. Call once the networks are loaded.
+void clear_accumulator_caches(AccumulatorCaches& caches);
 
 std::optional<std::string> load_eval(std::istream& stream, NetSize netSize);
 bool                       save_eval(std::ostream&      stream,

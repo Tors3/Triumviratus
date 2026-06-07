@@ -58,7 +58,18 @@ const unsigned int         gEmbeddedNNUESmallSize    = 1;
 // NB: 782 NON ancora validato in isolamento (era 1050 = valore Stockfish). Per ora
 // gira "in blocco" con gli altri valori bakati; va confermato con un A/B SPRT
 // dedicato (SmallNetThreshold 782 vs 1050) prima di considerarlo definitivo.
-int g_small_net_threshold = 1050;  // 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau; il 782 era una regressione) (deve combaciare col default UCI)
+int g_small_net_threshold = 1050;  // RIPRISTINATO 782->1050 (2026-06-06): A/B dedicato = higher MORE Elo. Round-robin 8+0.08: thr1050 +29 > thr782 +16 > thr600 -10 > thr450 -35; poi 1200 -17 e 1500 -9 vs 1050 = 1050 e' il picco del plateau. Il bake 782 era una REGRESSIONE ~-13 Elo. La ns ricerca preferisce eval accurate ai nodi extra. (deve combaciare col default UCI)
+
+// Costanti del WRAPPER di valutazione (post-processing dell'output NNUE grezzo),
+// hand-tunate da Stockfish PER LA RICERCA DI SF. La nostra ricerca e' diversa ->
+// vanno ri-tunate per noi (SPSA). Global namespace + extern in threads.cpp via
+// set_search_param. NON toccano la forward-pass SIMD (Elo, non NPS). Default =
+// valori SF (engine identico finche' non tunato). Devono combaciare coi default UCI.
+int g_eval_optimism      = 600;    // BAKED 2026-06-06: 600 vs 915 = +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 troppo ottimista per la NOSTRA ricerca. Optimum forse <600 (2nd SPSA pass). v = nnue*(EvalOptimism + npm + EvalPawnScale*pawns)/1024
+int g_eval_pawn_scale    = 9;      // peso del conteggio pedoni nell'optimism
+int g_eval_complexity_div= 32768;  // divisore del damping di complessita'
+// EvalBlendDelta (psqt vs positional) vive in evaluate_nnue.cpp (namespace NNUE) -> qui sotto.
+int g_eval_blend_delta   = 24;     // blend: ((1024-d)*psqt + (1024+d)*positional)/(1024*OutputScale)
 
 namespace Stockfish {
 
@@ -139,20 +150,20 @@ int Eval::simple_eval(const Position& pos, Color c) {
 }
 
 
-    Value Eval::evaluate(const Position& pos) {
+    Value Eval::evaluate(const Position& pos, NNUE::AccumulatorCaches* caches) {
 
         int  simpleEval = simple_eval(pos, pos.side_to_move());
         bool smallNet   = std::abs(simpleEval) > ::g_small_net_threshold;
 
         int nnueComplexity;
 
-        Value nnue = smallNet ? NNUE::evaluate<NNUE::Small>(pos, true, &nnueComplexity)
-                              : NNUE::evaluate<NNUE::Big>(pos, true, &nnueComplexity);
+        Value nnue = smallNet ? NNUE::evaluate<NNUE::Small>(pos, true, &nnueComplexity, caches)
+                              : NNUE::evaluate<NNUE::Big>(pos, true, &nnueComplexity, caches);
 
-        nnue -= nnue * (nnueComplexity + std::abs(simpleEval - nnue)) / 32768;
+        nnue -= nnue * (nnueComplexity + std::abs(simpleEval - nnue)) / ::g_eval_complexity_div;
 
         int npm = pos.non_pawn_material() / 64;
-        int v   = (nnue * (600 + npm + 9 * pos.count<PAWN>())) / 1024;   // optimism 915->600: +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 too optimistic for our search.
+        int v   = (nnue * (::g_eval_optimism + npm + ::g_eval_pawn_scale * pos.count<PAWN>())) / 1024;
 
         // Damp down the evaluation linearly when shuffling
         int shuffling = pos.rule50_count();

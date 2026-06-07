@@ -9,6 +9,15 @@
 // Load the two networks (big + small). Call once at startup.
 void sf_init(const char* big_net, const char* small_net);
 
+// Toggle the per-thread accumulator refresh cache ("finny tables"). on != 0
+// enables it. Default OFF => byte-identical to the pre-finny engine. Pure NPS
+// optimisation: the evaluation value is bit-identical with it on or off.
+void sf_set_finny(int on);
+
+// DIAGNOSTIC: print accumulator refresh vs incremental counts (and refresh %)
+// since the last call, then reset. Triggered by the UCI command "accstats".
+void sf_acc_stats(void);
+
 // Evaluate a position from scratch with the HalfKAv2_hm net (full refresh).
 //   side_white : 1 if white is to move, 0 if black
 //   pieces[i]  : Stockfish piece code (W_PAWN=1..W_KING=6, B_PAWN=9..B_KING=14)
@@ -60,6 +69,10 @@ void  sf_pos_do_null(void* handle, int rule50);
 void  sf_pos_undo(void* handle);
 
 // Evaluate the current mirror position incrementally (centipawns, stm-relative).
-int   sf_pos_eval(void* handle);
+// bb / occ are the ENGINE's own bitboards (bb[12] in P,N,B,R,Q,K,p,n,b,r,q,k
+// order; occ[3] = white,black,both) in the engine's a8=0..h1=63 square layout.
+// They are used only in SINGLE-BOARD mode to reconstruct the SF board the NNUE
+// reads; in dual-board mode they are ignored (may be nullptr).
+int   sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ);
 
 #endif // SF_BRIDGE_H

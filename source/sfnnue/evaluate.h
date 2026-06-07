@@ -30,8 +30,14 @@ class Position;
 
 namespace Eval {
 
+namespace NNUE {
+struct AccumulatorCaches;
+// (Re)initialise a per-thread AccumulatorCaches to an empty board (biases only).
+void clear_accumulator_caches(AccumulatorCaches& caches);
+}
+
 int   simple_eval(const Position& pos, Color c);
-Value evaluate(const Position& pos);
+Value evaluate(const Position& pos, NNUE::AccumulatorCaches* caches = nullptr);
 
 // The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
 // for the build process (profile-build and fishtest) to work. Do not change the

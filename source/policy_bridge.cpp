@@ -39,7 +39,12 @@ static float hh_b[CH_HH];
 static float ho_w[CH_HO * CH_HH];   // out 128->64
 static float ho_b[CH_HO];
 
+// Set true at the end of a successful load_policy; consumed by policy_loaded().
+static bool g_policy_loaded = false;
+bool policy_loaded() { return g_policy_loaded; }
+
 void init_policy() {
+    g_policy_loaded = false;
     std::memset(conv1_w, 0, sizeof(conv1_w)); std::memset(conv1_b, 0, sizeof(conv1_b));
     std::memset(conv2_w, 0, sizeof(conv2_w)); std::memset(conv2_b, 0, sizeof(conv2_b));
     std::memset(conv3_w, 0, sizeof(conv3_w)); std::memset(conv3_b, 0, sizeof(conv3_b));
@@ -93,6 +98,7 @@ bool load_policy(const char* filename) {
     file.read(reinterpret_cast<char*>(ho_b), sizeof(ho_b));
 
     file.close();
+    g_policy_loaded = true;
     return true;
 }
 

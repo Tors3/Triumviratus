@@ -27,12 +27,8 @@
 
 namespace Stockfish::Eval::NNUE::Features {
 
-// Index of a feature for a given king position and another piece on some square
-template<Color Perspective>
-inline IndexType HalfKAv2_hm::make_index(Square s, Piece pc, Square ksq) {
-    return IndexType((int(s) ^ OrientTBL[Perspective][ksq]) + PieceSquareIndex[Perspective][pc]
-                     + KingBuckets[Perspective][ksq]);
-}
+// make_index() is now defined inline in half_ka_v2_hm.h (public, header-inline)
+// so the accumulator refresh-cache in nnue_feature_transformer.h can call it.
 
 // Get a list of indices for active features
 template<Color Perspective>

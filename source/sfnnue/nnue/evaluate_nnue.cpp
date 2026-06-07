@@ -39,7 +39,15 @@
 #include "nnue_accumulator.h"
 #include "nnue_common.h"
 
+// Tunable eval blend constant (UCI "EvalBlendDelta"); defined in evaluate.cpp
+// (global namespace), tuned via threads.cpp set_search_param.
+extern int g_eval_blend_delta;
+
 namespace Stockfish::Eval::NNUE {
+
+// DIAGNOSTIC counters (finny-tables analysis): see nnue_accumulator.h.
+unsigned long long g_dbg_refresh     = 0;
+unsigned long long g_dbg_incremental = 0;
 
 // Input feature converter
 LargePagePtr<FeatureTransformer<TransformedFeatureDimensionsBig, &StateInfo::accumulatorBig>>
@@ -187,13 +195,13 @@ void hint_common_parent_position(const Position& pos) {
 
 // Evaluation function. Perform differential calculation.
 template<NetSize Net_Size>
-Value evaluate(const Position& pos, bool adjusted, int* complexity) {
+Value evaluate(const Position& pos, bool adjusted, int* complexity, AccumulatorCaches* caches) {
 
     // We manually align the arrays on the stack because with gcc < 9.3
     // overaligning stack variables with alignas() doesn't work correctly.
 
     constexpr uint64_t alignment = CacheLineSize;
-    constexpr int      delta     = 24;
+    const int          delta     = ::g_eval_blend_delta;   // tunable (UCI EvalBlendDelta)
 
 #if defined(ALIGNAS_ON_STACK_VARIABLES_BROKEN)
     TransformedFeatureType transformedFeaturesUnaligned
@@ -213,9 +221,12 @@ Value evaluate(const Position& pos, bool adjusted, int* complexity) {
     ASSERT_ALIGNED(transformedFeatures, alignment);
 
     const int  bucket     = (pos.count<ALL_PIECES>() - 1) / 4;
-    const auto psqt       = Net_Size == Small
-                            ? featureTransformerSmall->transform(pos, transformedFeatures, bucket)
-                            : featureTransformerBig->transform(pos, transformedFeatures, bucket);
+    const auto psqt =
+      Net_Size == Small
+        ? featureTransformerSmall->transform(pos, transformedFeatures, bucket,
+                                             caches ? &caches->small : nullptr)
+        : featureTransformerBig->transform(pos, transformedFeatures, bucket,
+                                           caches ? &caches->big : nullptr);
     const auto positional = Net_Size == Small ? networkSmall[bucket]->propagate(transformedFeatures)
                                               : networkBig[bucket]->propagate(transformedFeatures);
 
@@ -230,8 +241,16 @@ Value evaluate(const Position& pos, bool adjusted, int* complexity) {
         return static_cast<Value>((psqt + positional) / OutputScale);
 }
 
-template Value evaluate<Big>(const Position& pos, bool adjusted, int* complexity);
-template Value evaluate<Small>(const Position& pos, bool adjusted, int* complexity);
+template Value
+evaluate<Big>(const Position& pos, bool adjusted, int* complexity, AccumulatorCaches* caches);
+template Value
+evaluate<Small>(const Position& pos, bool adjusted, int* complexity, AccumulatorCaches* caches);
+
+// (Re)initialise both per-thread caches to an empty board (biases only).
+void clear_accumulator_caches(AccumulatorCaches& caches) {
+    caches.big.clear(featureTransformerBig->bias_table());
+    caches.small.clear(featureTransformerSmall->bias_table());
+}
 
 struct NnueEvalTrace {
     static_assert(LayerStacks == PSQTBuckets);

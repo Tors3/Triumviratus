@@ -62,6 +62,16 @@ static const int sf_piece_code[12] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 }
 static bool g_use_policy = false;
 void set_use_policy(bool v) { g_use_policy = v; }
 
+// OFFLINE policy ordering (UCI "PolicySeed", default OFF). Distinct from the dead
+// in-search UsePolicy (-30 Elo): the policy is NEVER evaluated inside the search.
+// Instead, ONCE per search the root policy prior seeds the butterfly history table
+// (centered: above-mean moves nudged +, below-mean -), then the normal online
+// history overwrites it -> zero per-node cost, transient prior. Magnitude =
+// PolicySeedScale (SPSA-tunable). OFF = byte-identical (no policy eval, no seed).
+static bool g_policy_seed = false;
+void set_policy_seed(bool v) { g_policy_seed = v; }
+int  g_policy_seed_scale = 300;   // bonus = scale * (logit - mean_logit), gravity-applied
+
 // Eval-off DIAGNOSTIC toggle (UCI option "EvalOff", default false). Replaces the
 // NNUE forward in td_evaluate() with a trivial material count, so an NPS test can
 // measure how much per-node time is spent in evaluation (NNUE forward) vs the
@@ -74,6 +84,14 @@ void set_eval_off(bool v) { g_eval_off = v; }
 // run-to-run NPS drift between separate builds.
 static bool g_eval_cache = true;
 void set_eval_cache(bool v) { g_eval_cache = v; }
+
+
+// FinnyTables (NNUE accumulator refresh cache) on/off (UCI option "FinnyTables").
+// Default OFF => byte-identical to the pre-finny engine. Forwards to the bridge
+// (the cache lives per-thread in the SfPos mirror). Pure NPS lever: eval is
+// bit-identical either way, so validate with an interleaved A/B NPS test.
+void set_finny(bool v) { sf_set_finny(v ? 1 : 0); }
+
 
 // "Improving" heuristic on/off (UCI option "Improving"). Default on; off
 // reproduces the exact pre-heuristic search for a clean A/B from one build.
@@ -102,8 +120,29 @@ void set_corr_hist(bool v) { g_corr_hist = v; }
 // reproduces the pawn-only correction. When ON, two extra correction tables keyed
 // on minor (N/B) and major (R/Q) material are summed with the pawn table before
 // clamping — the net mis-evaluates material configurations too, not just pawns.
-static bool g_corr_multi = false;
+static bool g_corr_multi = true;   // BAKED ON (2026-06-05): HM compound +6.2 LOS87.6% @1338
 void set_corr_multi(bool v) { g_corr_multi = v; }
+
+// PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di ordering
+// per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale. Tabella per-thread
+// in ThreadData (SMP-safe). Indice ricalcolato in td_score_move dal board CORRENTE
+// (durante lo scoring il board e' sempre quello del nodo -> niente staleness da ricorsione).
+static bool g_pawn_hist = true;     // BAKED #1 2026-06-07 (era false): co-tune neutro@8 / +3@20+0.08
+void set_pawn_hist(bool v) { g_pawn_hist = v; }
+int g_pawn_hist_weight = 195;   // peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
+// Peso della main (butterfly) history nello scoring quiet. SF la pesa 2x (come la pawn);
+// noi storicamente 1x -> con pawn a 2x la pawn DOMINA la main = sbilanciato. Spin
+// MainHistWeight per copiare il rapporto SF (main 2x, pawn 2x). Default 1 = byte-identico.
+int g_mainhist_weight = 209;   // /100 (100 = 1.0x; SF usa 2.0x=200)
+// Peso della continuation-history nello scoring quiet (ordering). Default 1 = invariato.
+// Manopola del CO-TUNE: bilancia conthist vs main/pawn. NON tocca conthist in LMR/pruning.
+int g_conthist_weight = 134;   // /100 (100 = 1.0x)
+// Scala % della soglia LMP (late-move-pruning). Default 100 = invariato. <100 pota prima
+// (albero più stretto), >100 pota dopo. Co-tune: si ri-equilibra con l'ordering nuovo.
+int g_lmp_scale = 93;
+// Forward-decl: td_corr_index (pawn-only Zobrist bucket) e' definita piu' sotto, ma
+// serve qui sopra in td_score_move per la pawn-key.
+static inline int td_corr_index(ThreadData& td);
 
 // ProbCut on/off (UCI option "ProbCut"). Default ON: validated +Elo (SPRT @8+0.08,
 // LOS ~83% / leaning +6, textbook technique). When on: at sufficient depth, if a
@@ -126,7 +165,7 @@ void set_cont_hist_prune(bool v) { g_cont_hist_prune = v; }
 // When ON, move ordering and the cutoff history updates also use the move 2 and 4
 // plies back (not just 1 ply), giving longer-range "this reply works after that
 // sequence" signal. Tables persist like the 1-ply continuation history.
-static bool g_conthist_multi = false;
+static bool g_conthist_multi = true;   // BAKED ON (2026-06-05): HM compound +6.2 LOS87.6% @1338
 void set_conthist_multi(bool v) { g_conthist_multi = v; }
 
 // Staged MovePicker on/off (UCI option "MovePicker"). ADOPTED, default ON: validated
@@ -215,9 +254,28 @@ int g_qfut_margin = 150;
 //     +Elo di ricerca dopo una settimana. Toggle conservato per A/B (off = depth*depth).
 static bool g_hist_bonus_sf = true;
 void set_hist_bonus_sf(bool v) { g_hist_bonus_sf = v; }
-int g_hist_bonus_mult = 155;
-int g_hist_bonus_sub  = 90;
-int g_hist_bonus_max  = 1600;
+int g_hist_bonus_mult = 169;   // bakato SPSA 155->169 (block +5.2 LOS84% @1260)
+int g_hist_bonus_sub  = 84;    // bakato SPSA 90->84
+int g_hist_bonus_max  = 1720;  // bakato SPSA 1600->1720
+
+// CaptureHist (UCI option "CaptureHist"). Capture history: tabella
+// [piece][to][victim] che impara quali catture producono cutoff, e ne bias-a
+// l'ordinamento (sia good che bad captures, main search + qsearch). Default ON,
+// con DUE fix (2026-06-04) che hanno tolto una REGRESSIONE da ~-15/-21 Elo che il
+// motore spediva:
+//   (1) SCALING: il caphist era sommato GREZZO a mvv_lva (range +/-7000 vs 100-605
+//       -> schiacciava l'MVV-LVA ~10x). `CaptureHistDiv` default 16 lo riporta a
+//       +/-437 ~ mvv_lva (= scala SF (mvv*7+capthist)/16). A/B div1 ON vs OFF = -21;
+//       div16 (solo scaling) = -12.
+//   (2) MALUS: il malus alle catture provate-e-fallite era applicato solo quando il
+//       cutoff era causato da una cattura; SF lo applica a OGNI cutoff (anche best
+//       quiet). Vedi il loop nell'update. Con (1)+(2): div16+fix ON vs OFF = ~0
+//       (neutro, -0.3@1098 e +0.8@458) -> regressione rimossa.
+// Toggle conservato per A/B; OFF = contributo 0 + niente update (tabella a zero).
+// `CaptureHistDiv` resta una leva SPSA (8/16/24) per un futuro tentativo di +Elo.
+static bool g_capture_hist = true;
+void set_capture_hist(bool v) { g_capture_hist = v; }
+int g_caphist_div = 14;   // bakato SPSA 16->14 (rock-solid in convergenza)
 
 // Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
 // @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
@@ -246,6 +304,16 @@ void set_lazy_eval(bool v) { g_lazy_eval = v; }
 static bool g_time_mgmt = true;
 void set_time_mgmt(bool v) { g_time_mgmt = v; }
 
+// Time-management constants, SPSA-tunable (mai tarate; default = valori a mano).
+// Statici (usati in parse_go, uci_mt.cpp): quota base = remaining/TMMovesToGo +
+// inc*TMIncFrac/100; maximum = optimum*TMMaxMult/100. Dinamici (loop ID, sotto):
+// instabilita' best-move += headroom*TMInstab/100; eval che cala += headroom*d/TMDropDiv.
+int g_tm_movestogo = 30;    // assunzione moves-to-go quando ignota (minore = piu' tempo/mossa)
+int g_tm_inc_frac  = 75;    // % dell'incremento da spendere
+int g_tm_max_mult  = 400;   // maximum = optimum * questo/100 (burst su posizioni difficili)
+int g_tm_instab    = 50;    // % dell'headroom aggiunta al soft su cambio best-move
+int g_tm_drop_div  = 800;   // divisore dell'estensione su score-drop (minore = piu' tempo)
+
 // Aggressive LMR on/off (UCI "AggrLMR"). Default OFF. When ON, the history- and
 // continuation-history-based LMR reductions use a SMALLER divisor and a WIDER
 // clamp (g_aggr_lmr_div / g_aggr_lmr_clamp), so a very bad-history quiet can be
@@ -261,7 +329,7 @@ int g_rfp_margin = 21;    // reverse futility: static_eval - g*depth >= beta   [
 int g_razor_base = 300;   // razoring: base + mult*depth below alpha -> qsearch
 int g_razor_mult = 139;   // [SPSA-tuned: 102->139]
 int g_fut_base = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
-int g_fut_mult = 66;    // [SPSA-tuned]
+int g_fut_mult = 53;    // [SPSA-tuned; BAKED #1 2026-06-07: 66->53]
 int g_fut_improving = 93;    // extra futility margin when improving                [SPSA-tuned: 60->93]
 int g_singular_dmargin = 43;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
 int g_hist_red_div = 1041;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
@@ -269,27 +337,82 @@ int g_asp_init_delta = 31;    // aspiration: initial window half-width          
 int g_asp_grow = 31;    // aspiration: growth % on fail                        [SPSA-tuned: 100->31]
 int g_probcut_margin = 180;   // ProbCut: capture verification must beat beta by this margin
 // Correction-history tunables (only active when CorrHist is on).
-int g_corr_cap = 32;    // max correction applied to static eval (cp).
-int g_corr_lr_div = 512;   // learning-rate divisor (bigger = slower/steadier learning)
+int g_corr_cap = 32;    // max correction applied to static eval (cp). [SPSA histmulti 32->44 RIGETTATO: -1.3 LOS23% @11438 -> default]
+int g_corr_lr_div = 512;   // learning-rate divisor (bigger = slower/steadier learning) [histmulti 512->565 rigettato]
 // Continuation-history pruning tunables (only active when ContHistPrune is on).
-int g_conthist_red_div = 6595;  // LMR: continuation-history reduction divisor        [SPSA-tuned: 5000->6595]
+int g_conthist_red_div = 6595;  // LMR: continuation-history reduction divisor [SPSA-tuned 5000->6595; histmulti 6595->7050 rigettato]
 // Aggressive-LMR tunables (only active when AggrLMR is on).
 int g_aggr_lmr_div = 2048;  // smaller divisor -> wider reduction range
 int g_aggr_lmr_clamp = 3;     // max +/- ply the history reductions may apply
+
+// ---- StatScore-LMR levers (2026-06-06) --------------------------------------
+// Scoperta: vs SF15.1 SOTTO-RIDUCIAMO -> ~6 ply meno profondi a pari tempo. SF
+// guida la LMR con uno statScore CONTINUO (somma history / divisore, multi-ply)
+// invece del nostro clamp +/-1. Tre toggle INDIPENDENTI (default OFF = byte-
+// identico), ognuno A/B-abile da solo; lo SPSA tara i divisori dopo.
+static bool g_statscore_lmr = true;    // BAKED #1 2026-06-07. StatScoreLMR: butterfly history -> riduzione continua (rimpiazza il clamp +/-1)
+void set_statscore_lmr(bool v) { g_statscore_lmr = v; }
+static bool g_conthist_lmr  = true;    // BAKED #1 2026-06-07. ContHistLMR: conthist(1/2/4 ply) -> riduzione continua, scollegata da ContHistPrune
+void set_conthist_lmr(bool v) { g_conthist_lmr = v; }
+static bool g_cutnode_lmr   = false;   // CutNodeLMR: riduzione extra sui cut-node (SF li riduce di piu')
+void set_cutnode_lmr(bool v) { g_cutnode_lmr = v; }
+// ---- Threat-ordering (#2 SF, 2026-06-07) ------------------------------------
+// SF ordina i quiet anche per MINACCE: muovere un pezzo da una casa attaccata da uno
+// di valore INFERIORE e' buono (lo salvi), entrarci e' cattivo (lo metti in presa).
+// Struttura SF (regina vs minacce-di-torre, torre vs minore, minore vs pedone); UNA
+// sola costante co-tunabile (ThreatScale) invece dei ~6 magici di SF -> "struttura SF,
+// costante nostra". Default OFF = byte-identico. Minacce calcolate 1x/nodo (cache su
+// hash_key) -> niente costo per-mossa.
+static bool g_threat_ordering = true;   // BAKED FULL 2026-06-07
+void set_threat_ordering(bool v) { g_threat_ordering = v; }
+int g_threat_scale = 383;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
+// ---- Check-ordering (#3 SF, 2026-06-07) -------------------------------------
+// SF da' un bonus ai quiet che danno SCACCO DIRETTO (forcing), filtrati per non essere
+// blunder (SEE >= -75). Una sola costante co-tunabile (CheckBonus). check_sq[] (case da
+// cui ogni tipo di pezzo da scacco al re nemico) calcolate 1x/nodo. Default OFF = byte-identico.
+static bool g_check_ordering = true;    // BAKED FULL 2026-06-07
+void set_check_ordering(bool v) { g_check_ordering = v; }
+int g_check_bonus = 4201;    // bonus ordering per quiet che da scacco diretto (SF=16384). Spin CheckBonus (SPSA).
+// ---- ContHist 3/6-ply (#4 SF, 2026-06-07) -----------------------------------
+// SF somma la continuation-history a 1/2/3/4/6 ply; noi avevamo 1/2/4. #4 aggiunge
+// 3-ply (move_stack[ply-2]) e 6-ply (move_stack[ply-5]) all'ordering quiet, scalati da
+// ContHist36Weight e poi dal ContHistWeight comune. Update sui cutoff in
+// td_conthist_multi_update. SCOPE: solo ordering (NON la ContHistLMR). Default OFF = byte-identico.
+static bool g_conthist36 = true;        // BAKED FULL 2026-06-07
+void set_conthist36(bool v) { g_conthist36 = v; }
+int g_conthist36_weight = 37;   // /100: peso dei termini 3/6-ply relativo agli altri conthist. Spin ContHist36Weight.
+// ---- V2: prior-counter-move bonus + capture-history bonus (SF, 2026-06-07) --------
+// Su un nodo FAIL-LOW (nessuna mossa batte alpha) la mossa PRECEDENTE (quella che ha
+// portato qui) era forte (ci ha messo in difficolta') -> bonus alla sua history. Quiet:
+// main + continuation history; cattura: capture history (vittima da captured_stack).
+// Una sola scala co-tunabile (PriorBonusScale) sul td_stat_bonus. Default OFF = byte-identico.
+static bool g_prior_bonus = false;
+void set_prior_bonus(bool v) { g_prior_bonus = v; }
+int g_prior_bonus_scale = 100;   // /100 del td_stat_bonus(depth). Spin PriorBonusScale.
+// ---- #5: low-ply history (SF) -----------------------------------------------------
+// History per-ply usata SOLO nei primi LOW_PLY_MAX ply (vicino alla radice): cattura
+// "questa mossa e' buona a questo ply basso". Peso /(1+ply). Default OFF = byte-identico.
+static bool g_lowply = false;
+void set_lowply(bool v) { g_lowply = v; }
+int g_lowply_weight = 30;    // contributo ordering = g_lowply_weight * lowply / (100*(1+2*ply)) (SF-style decay). Spin LowPlyWeight.
+int g_lmr_ss_div    = 12104;  // BAKED #1 (era 7000). StatScoreLMR: reduction -= (2*butterfly - offset) / div
+int g_lmr_ss_offset = 2668;   // BAKED #1 (era 4600). StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
+int g_lmr_ch_div    = 4437;   // BAKED #1 (era 10000). ContHistLMR: reduction -= (conthist1+2+4) / div
+int g_cutnode_lmr_extra = 1;  // CutNodeLMR: ply extra di riduzione sui cut-node (sopra il +1 esistente)
 // NMP + LMR-enrichment tunables.
 int g_nmp_base = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
 int g_nmp_div = 4;
 int g_lmr_eval_margin = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
 int g_lmr_ttdepth = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
 // CORE LMR formula coefficients (*100).
-int g_lmr_base_x100 = 47;    // 0.47: baseline reduction floor                     [SPSA-tuned: 75->47]
-int g_lmr_div_x100 = 270;   // 2.70: bigger divisor = LESS reduction overall       [SPSA-tuned: 225->270]
-int g_histprune_margin = 1000;  // history pruning: prune late quiet if combined hist < -margin*depth
+int g_lmr_base_x100 = 41;    // baseline reduction floor [SPSA 75->47; BAKED #1 47->41]
+int g_lmr_div_x100 = 345;   // bigger divisor = LESS reduction [SPSA 225->270; BAKED #1 270->345]
+int g_histprune_margin = 1602;  // BAKED #1 (era 1000). history pruning: prune late quiet if combined hist < -margin*depth
 // SEE-pruning margins (ALSO the Phase-2 skip_bad_caps lever): a move is SEE-pruned at
 // low depth if SEE < -g_see_cap_margin*depth (captures) or < -g_see_quiet_margin*depth*depth
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
 int g_see_cap_margin   = 90;
-int g_see_quiet_margin = 50;
+int g_see_quiet_margin = 98;    // BAKED #1 2026-06-07 (era 50)
 // DeeperShallower margins (attivi solo con DeeperShallower on): la re-search a piena
 // profondità va +1 ply se reduced-score > best + g_deeper_margin, -1 ply se
 // < best + g_shallower_margin. Per il test "doDeeper-only" metti g_shallower_margin
@@ -299,6 +422,13 @@ int g_shallower_margin = 9;    // SF default (doShallower)
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
+
+// Defined in sfnnue/evaluate.cpp: eval-wrapper constants (optimism/damping/blend)
+// hand-tuned by SF for SF's search. Exposed so SPSA can re-tune them for OUR search.
+extern int g_eval_optimism;
+extern int g_eval_pawn_scale;
+extern int g_eval_complexity_div;
+extern int g_eval_blend_delta;
 
 void init_lmr_table();   // defined below; re-run when LMR core coefficients change
 
@@ -322,6 +452,29 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SEECaptureMargin"))    { g_see_cap_margin   = value; return true; }
     if (!strcmp(name, "SEEQuietMargin"))      { g_see_quiet_margin = value; return true; }
     if (!strcmp(name, "SmallNetThreshold"))   { g_small_net_threshold = value; return true; }
+    if (!strcmp(name, "EvalOptimism"))        { g_eval_optimism       = value; return true; }
+    if (!strcmp(name, "EvalPawnScale"))       { g_eval_pawn_scale     = value; return true; }
+    if (!strcmp(name, "EvalComplexityDiv"))   { g_eval_complexity_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "EvalBlendDelta"))      { g_eval_blend_delta    = value; return true; }
+    if (!strcmp(name, "TMMovesToGo"))         { g_tm_movestogo = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TMIncFrac"))           { g_tm_inc_frac        = value; return true; }
+    if (!strcmp(name, "TMMaxMult"))           { g_tm_max_mult = value < 100 ? 100 : value; return true; }
+    if (!strcmp(name, "TMInstab"))            { g_tm_instab          = value; return true; }
+    if (!strcmp(name, "TMDropDiv"))           { g_tm_drop_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "PolicySeedScale"))     { g_policy_seed_scale  = value; return true; }
+    if (!strcmp(name, "LMRStatScoreDiv"))     { g_lmr_ss_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "LMRStatScoreOffset"))  { g_lmr_ss_offset      = value; return true; }
+    if (!strcmp(name, "LMRContHistDiv"))      { g_lmr_ch_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "CutNodeLMRExtra"))     { g_cutnode_lmr_extra  = value; return true; }
+    if (!strcmp(name, "ThreatScale"))         { g_threat_scale = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "CheckBonus"))          { g_check_bonus  = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "ContHist36Weight"))    { g_conthist36_weight = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "PriorBonusScale"))     { g_prior_bonus_scale = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "LowPlyWeight"))        { g_lowply_weight = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "PawnHistoryWeight"))   { g_pawn_hist_weight   = value; return true; }
+    if (!strcmp(name, "MainHistWeight"))      { g_mainhist_weight    = value < 1 ? 1 : value; return true; }   // /100
+    if (!strcmp(name, "ContHistWeight"))      { g_conthist_weight    = value < 1 ? 1 : value; return true; }   // /100
+    if (!strcmp(name, "LMPScale"))            { g_lmp_scale          = value < 10 ? 10 : value; return true; }
     if (!strcmp(name, "AggrLMRDiv"))          { g_aggr_lmr_div     = value; return true; }
     if (!strcmp(name, "AggrLMRClamp"))        { g_aggr_lmr_clamp   = value; return true; }
     if (!strcmp(name, "NMPBase"))             { g_nmp_base         = value; return true; }
@@ -338,6 +491,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "HistBonusMult"))       { g_hist_bonus_mult  = value; return true; }
     if (!strcmp(name, "HistBonusSub"))        { g_hist_bonus_sub   = value; return true; }
     if (!strcmp(name, "HistBonusMax"))        { g_hist_bonus_max   = value; return true; }
+    if (!strcmp(name, "CaptureHistDiv"))      { g_caphist_div = value < 1 ? 1 : value; return true; }
     return false;
 }
 
@@ -453,6 +607,7 @@ void init_threads(int thread_count) {
         memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
         memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
         memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+        memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));
     }
 }
 
@@ -495,6 +650,31 @@ static inline int td_is_square_attacked(ThreadData& td, int square, int attacker
         if (get_rook_attacks(square, occ) & (td.bitboards[r] | td.bitboards[q])) return 1;
     }
     return 0;
+}
+
+// Incremental occupancy update. Flips only the bits that the move touches,
+// instead of OR-recomputing all 12 bitboards (+2.89% NPS, node-identical). XOR is
+// self-inverse, so calling it again with the same move reverses it (used on
+// make-forward, illegal rollback, and unmake). 'us' must be the MOVING side at
+// the call site.
+// captured_piece == -1 means no capture. For castling the rook squares derive
+// from the king target. Produces occupancies identical to the full recompute.
+static inline void td_occ_update(ThreadData& td, int us, int source, int target,
+                                 int captured_square, int captured_piece, int castling) {
+    td.occupancies[us] ^= (1ULL << source) | (1ULL << target);
+    if (captured_piece != -1)
+        td.occupancies[us ^ 1] ^= (1ULL << captured_square);  // capture (== target, or e.p. square)
+    if (castling) {
+        int rf, rt;
+        switch (target) {
+            case g1: rf = h1; rt = f1; break;
+            case c1: rf = a1; rt = d1; break;
+            case g8: rf = h8; rt = f8; break;
+            default: rf = a8; rt = d8; break;  // c8
+        }
+        td.occupancies[us] ^= (1ULL << rf) | (1ULL << rt);
+    }
+    td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
 }
 
 // ============================================================================
@@ -600,11 +780,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     td.castle &= castling_rights[target];
     td.hash_key ^= castle_keys[td.castle];
 
-    td.occupancies[white] = td.bitboards[P] | td.bitboards[N] | td.bitboards[B] |
-        td.bitboards[R] | td.bitboards[Q] | td.bitboards[K];
-    td.occupancies[black] = td.bitboards[p] | td.bitboards[n] | td.bitboards[b] |
-        td.bitboards[r] | td.bitboards[q] | td.bitboards[k];
-    td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
+    td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
 
     td.side ^= 1;
     td.hash_key ^= side_key;
@@ -640,14 +816,14 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
         td.fifty = undo.old_fifty;
         td.hash_key = undo.old_hash;
 
-        td.occupancies[white] = td.bitboards[P] | td.bitboards[N] | td.bitboards[B] |
-            td.bitboards[R] | td.bitboards[Q] | td.bitboards[K];
-        td.occupancies[black] = td.bitboards[p] | td.bitboards[n] | td.bitboards[b] |
-            td.bitboards[r] | td.bitboards[q] | td.bitboards[k];
-        td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
+        td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
 
         return 0;
     }
+
+    // (TT + eval-cache prefetch tried here 2026-06-07: NODE-IDENTICAL but NPS-neutral
+    //  — we are eval-bound, not TT-memory-bound, so hiding TT latency doesn't help.
+    //  Removed. The T0/pre-legality variant was -2.5% from L1 pollution.)
 
     // Mirror the (now legal) move on the incremental NNUE position, in
     // Stockfish encoding. The moving piece is dirtyPiece[0] (king-refresh).
@@ -720,11 +896,7 @@ static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
     td.fifty = undo.old_fifty;
     td.hash_key = undo.old_hash;
 
-    td.occupancies[white] = td.bitboards[P] | td.bitboards[N] | td.bitboards[B] |
-        td.bitboards[R] | td.bitboards[Q] | td.bitboards[K];
-    td.occupancies[black] = td.bitboards[p] | td.bitboards[n] | td.bitboards[b] |
-        td.bitboards[r] | td.bitboards[q] | td.bitboards[k];
-    td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
+    td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
 }
 
 // ============================================================================
@@ -752,7 +924,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
                     source_square = get_ls1b_index(bitboard);
                     target_square = source_square - 8;
 
-                    // Mosse silenziose dei pedoni: bloccate se captures_only � true
+                    // Mosse silenziose dei pedoni: bloccate se captures_only   true
                     if (!captures_only) {
                         if (!(target_square < a8) && !get_bit(td.occupancies[both], target_square)) {
                             if (source_square >= a7 && source_square <= h7) {
@@ -785,7 +957,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
                         pop_bit(attacks, target_square);
                     }
 
-                    // En passant (� sempre una cattura, lo generiamo sempre)
+                    // En passant (  sempre una cattura, lo generiamo sempre)
                     if (td.enpassant != no_sq) {
                         U64 enpassant_attacks = pawn_attacks[td.side][source_square] & (1ULL << td.enpassant);
                         if (enpassant_attacks) {
@@ -797,7 +969,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
                 }
             }
             if (piece == K) {
-                // Arrocco: bloccato se captures_only � true
+                // Arrocco: bloccato se captures_only   true
                 if (!captures_only) {
                     if (td.castle & wk) {
                         if (!get_bit(td.occupancies[both], f1) && !get_bit(td.occupancies[both], g1)) {
@@ -996,7 +1168,7 @@ static inline int td_evaluate(ThreadData& td) {
     int pieces[33], squares[33];
     int count = sf_build_piece_list(td, pieces, squares);
     int full  = sf_eval(td.side == white, pieces, squares, count, td.fifty);
-    int inc   = sf_pos_eval(td.sfpos);
+    int inc   = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
     if (full != inc) {
         std::cerr << "NNUE MISMATCH ply=" << td.ply << " full=" << full
                   << " inc=" << inc << " hash=0x" << std::hex << td.hash_key << std::dec
@@ -1013,14 +1185,14 @@ static inline int td_evaluate(ThreadData& td) {
         const U64 ck = td.hash_key ^ (0x9E3779B97F4A7C15ULL * (U64)(td.fifty + 1));
         ThreadData::EvalCacheEntry& ce = td.eval_cache[ck & ThreadData::EVAL_CACHE_MASK];
         if (ce.key == ck) return ce.eval;
-        const int v = sf_pos_eval(td.sfpos);
+        const int v = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
         ce.key = ck;
         ce.eval = v;
         return v;
     }
     // Incremental: the accumulator is updated only for the pieces that changed
     // (HalfKAv2_hm king-bucket refresh handled by Stockfish's transform()).
-    return sf_pos_eval(td.sfpos);
+    return sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
 #endif
 }
 
@@ -1080,6 +1252,49 @@ static inline int td_captured_piece(ThreadData& td, int target) {
     return P;
 }
 
+// Threat-ordering helper: fill td.threat_by_{pawn,minor,rook} = squares attacked by
+// enemy pieces grouped by the cheapest attacker's value. Called once per node (the
+// caller checks td.threat_key == td.hash_key first). Only reached when ThreatOrdering
+// is on, so it costs nothing when the toggle is off.
+static inline void td_compute_threats(ThreadData& td) {
+    const int them = td.side ^ 1;          // opponent color (white=0 / black=1)
+    const int base = them * 6;             // white pieces P..K at 0, black p..k at 6
+    const U64 occ  = td.occupancies[both];
+    U64 byP = 0, byM, byR, bb;
+
+    bb = td.bitboards[base + P];           // enemy pawns
+    while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); byP |= pawn_attacks[them][s]; }
+    byM = byP;
+    bb = td.bitboards[base + N];           // enemy knights
+    while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); byM |= knight_attacks[s]; }
+    bb = td.bitboards[base + B];           // enemy bishops
+    while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); byM |= get_bishop_attacks(s, occ); }
+    byR = byM;
+    bb = td.bitboards[base + R];           // enemy rooks
+    while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); byR |= get_rook_attacks(s, occ); }
+
+    td.threat_by_pawn  = byP;
+    td.threat_by_minor = byM;
+    td.threat_by_rook  = byR;
+    td.threat_key      = td.hash_key;
+}
+
+// Check-ordering helper: check_sq[pt] = squares from which a piece of type pt would give
+// a DIRECT check to the enemy king (= squares a pt-attacker reaches the king square from).
+// Computed once per node (caller checks td.check_key == td.hash_key). Only when CheckOrdering on.
+static inline void td_compute_checks(ThreadData& td) {
+    const int them = td.side ^ 1;
+    const U64 occ  = td.occupancies[both];
+    int ksq = get_ls1b_index(td.bitboards[them * 6 + K]);   // enemy king square
+    td.check_sq[0] = pawn_attacks[them][ksq];               // pawn (our pawn checks from these squares)
+    td.check_sq[1] = knight_attacks[ksq];                   // knight
+    td.check_sq[2] = get_bishop_attacks(ksq, occ);          // bishop
+    td.check_sq[3] = get_rook_attacks(ksq, occ);            // rook
+    td.check_sq[4] = td.check_sq[2] | td.check_sq[3];       // queen
+    td.check_sq[5] = 0;                                     // king cannot give check
+    td.check_key   = td.hash_key;
+}
+
 static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     if (move == tt_move) return SCORE_TT_MOVE;
 
@@ -1103,7 +1318,9 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
             }
         }
 
-        int caphist = td.capture_history[piece][target][victim];//qui era diviso 16
+        int caphist = g_capture_hist
+            ? td.capture_history[piece][target][victim] / g_caphist_div   // qui era diviso 16
+            : 0;
 
         // Lazy SEE: capturing a piece of equal-or-greater value is good by
         // definition (no SEE needed). Only run SEE for "attacker > victim"
@@ -1123,22 +1340,77 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     if (prev && td.counter_moves[get_move_piece(prev)][get_move_target(prev)] == move)
         return SCORE_COUNTER;
 
-    // Sum butterfly history with continuation history (the move scored in the
-    // context of the previous move) at full weight.
-    int h = td.history_moves[piece][target];
+    // Butterfly history (MainHistWeight, default 1; SF=2) + continuation history
+    // (ContHistWeight, default 1). I conthist sono sommati e poi pesati, cosi' il
+    // co-tune puo' bilanciare conthist vs main/pawn senza toccare il loro uso in LMR.
+    int h = g_mainhist_weight * td.history_moves[piece][target] / 100;
+    int ch = 0;
     if (prev)
-        h += td.continuation_history[get_move_piece(prev)][get_move_target(prev)][piece][target];
+        ch += td.continuation_history[get_move_piece(prev)][get_move_target(prev)][piece][target];
     // Longer-range continuation history: the same quiet scored in the context of
     // the move 2 and 4 plies back. Off by default (ContHistMulti).
     if (g_conthist_multi) {
         if (td.ply >= 1) {
             int p2 = td.move_stack[td.ply - 1];
-            if (p2) h += td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)][piece][target];
+            if (p2) ch += td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)][piece][target];
         }
         if (td.ply >= 3) {
             int p4 = td.move_stack[td.ply - 3];
-            if (p4) h += td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)][piece][target];
+            if (p4) ch += td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)][piece][target];
         }
+    }
+    // ContHist36 (#4): continuation history a 3-ply (ply-2) e 6-ply (ply-5), scalata da
+    // ContHist36Weight, sommata in ch. Default OFF = byte-identico.
+    if (g_conthist36) {
+        int ch36 = 0;
+        if (td.ply >= 2) {
+            int p3 = td.move_stack[td.ply - 2];
+            if (p3) ch36 += td.cont_hist_3[get_move_piece(p3)][get_move_target(p3)][piece][target];
+        }
+        if (td.ply >= 5) {
+            int p6 = td.move_stack[td.ply - 5];
+            if (p6) ch36 += td.cont_hist_6[get_move_piece(p6)][get_move_target(p6)][piece][target];
+        }
+        ch += g_conthist36_weight * ch36 / 100;
+    }
+    h += g_conthist_weight * ch / 100;
+    // PawnHistory (SF-style, weight 2x): quiet ordering by pawn structure. Indice
+    // ricalcolato dal board corrente (= board del nodo durante lo scoring -> corretto,
+    // niente staleness). Gated -> OFF = byte-identico.
+    if (g_pawn_hist) {
+        int pk = td_corr_index(td) & ThreadData::PAWN_HIST_MASK;
+        h += g_pawn_hist_weight * (int)td.pawn_history[pk][piece][target] / 100;
+    }
+    // Threat-ordering (ThreatOrdering, default OFF -> byte-identico): +scala*valore se
+    // il pezzo lascia una casa attaccata da uno INFERIORE, -scala*valore se ci entra.
+    // Tier come SF (Q vs minacce-di-torre, R vs minore, minore vs pedone); pedoni/re
+    // non hanno un "minore" -> nessun termine. Minacce calcolate 1x/nodo (cache hash_key).
+    if (g_threat_ordering) {
+        if (td.threat_key != td.hash_key) td_compute_threats(td);
+        U64 lesser = 0; bool has = true;
+        switch (piece % 6) {                 // 0=P 1=N 2=B 3=R 4=Q 5=K
+            case 4: lesser = td.threat_by_rook;  break;   // queen
+            case 3: lesser = td.threat_by_minor; break;   // rook
+            case 1: case 2: lesser = td.threat_by_pawn; break; // knight / bishop
+            default: has = false; break;                  // pawn / king
+        }
+        if (has) {
+            int from = get_move_source(move);
+            int term = (get_bit(lesser, from) ? 1 : 0) - (get_bit(lesser, target) ? 1 : 0);
+            if (term) h += g_threat_scale * see_piece_values[piece] * term / 100;
+        }
+    }
+    // Check-ordering (CheckOrdering, default OFF -> byte-identico): bonus ai quiet che danno
+    // SCACCO DIRETTO e non sono blunder (SEE>=-75), come SF. check_sq calcolate 1x/nodo.
+    if (g_check_ordering) {
+        if (td.check_key != td.hash_key) td_compute_checks(td);
+        if (get_bit(td.check_sq[piece % 6], target) && td_see(td, move) >= -75)
+            h += g_check_bonus;
+    }
+    // Low-ply history (#5, default OFF -> byte-identico): segnale per-ply near-root,
+    // peso che decade con la profondita' (1+2*ply), come SF.
+    if (g_lowply && td.ply < ThreadData::LOW_PLY_MAX) {
+        h += g_lowply_weight * td.lowply_history[td.ply][piece][target] / (100 * (1 + 2 * td.ply));
     }
     return h;
 }
@@ -1515,6 +1787,11 @@ static int mp_next(ThreadData& td, MovePicker& mp) {
 // ============================================================================
 
 static inline int td_is_repetition(ThreadData& td) {
+    // NB: la repetition_table contiene ANCHE le null-move (NMP), che pushano un'entry
+    // ma flippano il lato senza mossa reale e senza toccare `fifty`. Questo ROMPE sia
+    // l'ottimizzazione step-2 ("stesso lato", la parita' si sfasa sulle null) sia la
+    // finestra-fifty (le null aggiungono entry senza incrementare fifty). Provato il
+    // 2026-06-06: cambiava i node-count = bug. Il loop completo resta la versione corretta.
     for (int i = 0; i < td.repetition_index; i++) {
         if (td.repetition_table[i] == td.hash_key)
             return 1;
@@ -1530,6 +1807,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     // Illegal-position / king-capture guard (see td_negamax for the full
     // rationale): never search a position where the side not to move is in check,
     // because making the king capture desyncs the NNUE accumulator and crashes.
+    // (Rimozione provata 2026-06-06: node-identica ma NPS ~0 -> tenuta per safety.)
     {
         int opp_king_sq = get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);
         if (td_is_square_attacked(td, opp_king_sq, td.side))
@@ -1586,7 +1864,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
 
     // --- NUOVA FASE: Calcola punteggi senza ordinare (Pick-Next) ---
     int move_scores[256];
-    // Chiamiamo la funzione senza Policy, tanto in Q-Search esploriamo perlopi� catture
+    // Chiamiamo la funzione senza Policy, tanto in Q-Search esploriamo perlopi  catture
     td_score_all_moves(td, move_list, tt_move, move_scores);
 
     int best_move = 0;
@@ -1613,7 +1891,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
             move_scores[best_idx] = tmp_score;
         }
 
-        // Ora move � garantita essere la migliore disponibile
+        // Ora move   garantita essere la migliore disponibile
         int move = move_list->moves[count];
         // --- FINE PICK-NEXT ---
 
@@ -1754,19 +2032,32 @@ static inline void td_corr_update(ThreadData& td, int idx, int static_eval,
     }
 }
 
-// Multi-ply continuation-history update: apply `bonus` to the [2-ply][move] and
-// [4-ply][move] buckets at a cutoff. No-op unless ContHistMulti is on. Must be
+// Multi-ply continuation-history update: apply `bonus` to the 2/4-ply (ContHistMulti)
+// and 3/6-ply (ContHist36) buckets at a cutoff. No-op unless one of those is on. Must be
 // called with td.ply == the current node's ply (same context as the 1-ply update).
 static inline void td_conthist_multi_update(ThreadData& td, int move, int bonus) {
-    if (!g_conthist_multi) return;
+    if (!g_conthist_multi && !g_conthist36) return;
     int pc = get_move_piece(move), tg = get_move_target(move);
-    if (td.ply >= 1) {
-        int p2 = td.move_stack[td.ply - 1];
-        if (p2) td_update_history(td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)][pc][tg], bonus);
+    if (g_conthist_multi) {
+        if (td.ply >= 1) {
+            int p2 = td.move_stack[td.ply - 1];
+            if (p2) td_update_history(td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)][pc][tg], bonus);
+        }
+        if (td.ply >= 3) {
+            int p4 = td.move_stack[td.ply - 3];
+            if (p4) td_update_history(td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)][pc][tg], bonus);
+        }
     }
-    if (td.ply >= 3) {
-        int p4 = td.move_stack[td.ply - 3];
-        if (p4) td_update_history(td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)][pc][tg], bonus);
+    // #4: 3-ply (ply-2) e 6-ply (ply-5). Indipendente da ContHistMulti.
+    if (g_conthist36) {
+        if (td.ply >= 2) {
+            int p3 = td.move_stack[td.ply - 2];
+            if (p3) td_update_history(td.cont_hist_3[get_move_piece(p3)][get_move_target(p3)][pc][tg], bonus);
+        }
+        if (td.ply >= 5) {
+            int p6 = td.move_stack[td.ply - 5];
+            if (p6) td_update_history(td.cont_hist_6[get_move_piece(p6)][get_move_target(p6)][pc][tg], bonus);
+        }
     }
 }
 
@@ -1782,7 +2073,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // eval indexes a king-bucket feature for a now-kingless side -> access
     // violation. Return an immediate winning score instead. In legal play the
     // side not to move is never in check, so this costs one attack probe and
-    // never fires.
+    // never fires. (Gate ply==0 provato 2026-06-06: node-identico ma NPS ~0 -> non
+    // vale; tenuto pieno. La probe e' troppo cheap per spostare gli NPS.)
     {
         int opp_king_sq = get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);
         if (td_is_square_attacked(td, opp_king_sq, td.side))
@@ -1916,6 +2208,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
             // Null move: the child has no "previous move" for counter-move.
             td.move_stack[td.ply] = 0;
+            td.captured_stack[td.ply] = -1;
 
             int R = g_nmp_base + depth / g_nmp_div;
             // (1) NMPEvalScale: più sopra beta = riduzione maggiore (cap +3). OFF = invariato.
@@ -2124,7 +2417,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
     int move;
     while ((move = mp_next(td, mp)) != 0) {
-        // Ora move � garantita essere la migliore
+        // Ora move   garantita essere la migliore
         // `move` is supplied by mp_next() in the while condition above.
         if (move == excluded_move) continue;   // singular search: skip the TT move
         bool is_capture = get_move_capture(move);
@@ -2134,7 +2427,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // LMP
         if (!pv_node && !in_check && depth <= 8 && is_quiet && best_score > -mate_score) {
             int lmp_idx = (depth < 8) ? depth : 8;
-            int lmp_threshold = lmp_table[lmp_idx];
+            int lmp_threshold = lmp_table[lmp_idx] * g_lmp_scale / 100;   // LMPScale (100 = invariato)
             if (quiets_searched >= lmp_threshold) {
                 // Phase-2: with the staged picker we can skip the entire quiet
                 // stage instead of testing every move individually. The flag is
@@ -2258,6 +2551,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
         // Record the move that leads to the child node (for counter-move).
         td.move_stack[td.ply] = move;
+        td.captured_stack[td.ply] = undo.captured_piece;   // victim (-1 if quiet); V2 capture-hist
 
         // PVS + LMR
         U64 root_nodes_before = is_root_node ? td.nodes : 0;
@@ -2281,6 +2575,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     reduction--;
                 if (static_eval + g_lmr_eval_margin < alpha) reduction++;
                 if (is_cut_node) reduction++;
+                // CutNodeLMR (default OFF): SF riduce i cut-node piu' di noi. Aggiunge
+                // g_cutnode_lmr_extra ply SOPRA il +1 qui sopra. OFF = byte-identico.
+                if (g_cutnode_lmr && is_cut_node) reduction += g_cutnode_lmr_extra;
                 // Enrichment (neutral at default 0): a deep TT entry for this node
                 // means the ordering is trustworthy -> reduce a bit less.
                 if (g_lmr_ttdepth && tt_hit && tt_depth >= depth) reduction -= g_lmr_ttdepth;
@@ -2300,23 +2597,43 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     if (is_cut_node) reduction++;
                 }
 
-                // History-based reduction: search good-history quiets less and
-                // bad-history quiets more. Clamped to +/-1 ply to stay
-                // conservative; the divisor is the knob to tune in matches.
+                // History-based reduction. DEFAULT (StatScoreLMR off): butterfly
+                // history clamped to +/-1 ply (conservativo). StatScoreLMR on: stile
+                // SF, riduzione CONTINUA (niente clamp) -> quiet con ottima history
+                // ridotti molti ply in piu', quelli con pessima history molti in meno
+                // = il fix della SOTTO-RIDUZIONE (gap vs SF15.1). Divisore SPSA-tunable.
                 int raw_hist = td.history_moves[get_move_piece(move)][get_move_target(move)];
-                int hist_r, hclamp;
-                if (g_aggr_lmr) { hist_r = raw_hist / g_aggr_lmr_div; hclamp = g_aggr_lmr_clamp; }
-                else            { hist_r = raw_hist / g_hist_red_div;  hclamp = 1; }
-                if (hist_r >  hclamp) hist_r =  hclamp;
-                else if (hist_r < -hclamp) hist_r = -hclamp;
-                reduction -= hist_r;
+                if (g_statscore_lmr) {
+                    int ss = 2 * raw_hist - g_lmr_ss_offset;
+                    reduction -= ss / g_lmr_ss_div;
+                } else {
+                    int hist_r, hclamp;
+                    if (g_aggr_lmr) { hist_r = raw_hist / g_aggr_lmr_div; hclamp = g_aggr_lmr_clamp; }
+                    else            { hist_r = raw_hist / g_hist_red_div;  hclamp = 1; }
+                    if (hist_r >  hclamp) hist_r =  hclamp;
+                    else if (hist_r < -hclamp) hist_r = -hclamp;
+                    reduction -= hist_r;
+                }
 
-                // Continuation-history reduction: the move scored in the context of
-                // the move that led to this node. Good follow-ups are searched less,
-                // bad ones more. Separate +/-1 clamp so it stacks with the butterfly
-                // term above. NB: td.ply was already incremented for the child, so
-                // the previous move lives at td.move_stack[td.ply - 1].
-                if (g_cont_hist_prune) {
+                // Continuation-history reduction. ContHistLMR on: conthist CONTINUO a
+                // 1/2/4 ply indietro (scollegato da ContHistPrune) = il segnale che SF
+                // usa pesantemente nella LMR e noi ignoravamo di default. Altrimenti il
+                // legacy +/-1 ch_r (solo se ContHistPrune on). NB: td.ply gia'
+                // incrementato per il figlio -> mossa precedente a move_stack[td.ply-1].
+                if (g_conthist_lmr) {
+                    int prev = td.move_stack[td.ply - 1];
+                    int ch = 0;
+                    if (prev)
+                        ch += td.continuation_history[get_move_piece(prev)][get_move_target(prev)]
+                                                     [get_move_piece(move)][get_move_target(move)];
+                    if (td.ply >= 2) { int p2 = td.move_stack[td.ply - 2];
+                        if (p2) ch += td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)]
+                                                    [get_move_piece(move)][get_move_target(move)]; }
+                    if (td.ply >= 4) { int p4 = td.move_stack[td.ply - 4];
+                        if (p4) ch += td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)]
+                                                    [get_move_piece(move)][get_move_target(move)]; }
+                    reduction -= ch / g_lmr_ch_div;
+                } else if (g_cont_hist_prune) {
                     int prev = td.move_stack[td.ply - 1];
                     if (prev) {
                         int ch = td.continuation_history[get_move_piece(prev)][get_move_target(prev)]
@@ -2425,10 +2742,18 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                         if (prev_cm)
                             td.counter_moves[pcp][pct] = move;
                         int bonus = td_stat_bonus(depth);
+                        // PawnHistory: indice dal board corrente (= board del nodo qui,
+                        // la cutoff-move e' gia' stata unmade -> corretto). Locale = no
+                        // staleness da ricorsione.
+                        int pawn_pk = g_pawn_hist ? (td_corr_index(td) & ThreadData::PAWN_HIST_MASK) : 0;
                         td_update_history(td.history_moves[get_move_piece(move)][get_move_target(move)], bonus);
                         if (prev_cm)
                             td_update_history(td.continuation_history[pcp][pct][get_move_piece(move)][get_move_target(move)], bonus);
                         td_conthist_multi_update(td, move, bonus);
+                        if (g_pawn_hist)
+                            td_update_history(td.pawn_history[pawn_pk][get_move_piece(move)][get_move_target(move)], bonus);
+                        if (g_lowply && td.ply < ThreadData::LOW_PLY_MAX)
+                            td_update_history(td.lowply_history[td.ply][get_move_piece(move)][get_move_target(move)], bonus);
                         // malus: quiet moves tried before the cutoff get penalized
                         for (int q = 0; q < n_searched_quiets; q++) {
                             int qm = searched_quiets[q];
@@ -2437,19 +2762,33 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                             if (prev_cm)
                                 td_update_history(td.continuation_history[pcp][pct][get_move_piece(qm)][get_move_target(qm)], -bonus);
                             td_conthist_multi_update(td, qm, -bonus);
+                            if (g_pawn_hist)
+                                td_update_history(td.pawn_history[pawn_pk][get_move_piece(qm)][get_move_target(qm)], -bonus);
+                            if (g_lowply && td.ply < ThreadData::LOW_PLY_MAX)
+                                td_update_history(td.lowply_history[td.ply][get_move_piece(qm)][get_move_target(qm)], -bonus);
                         }
                     }
-                    else if (is_capture) {
-                        // Capture history: bonus alla cattura del cutoff, malus
-                        // alle catture provate prima senza riuscirci.
+                    else if (is_capture && g_capture_hist) {
+                        // Capture history: BONUS alla cattura che ha causato il cutoff.
                         int bonus = td_stat_bonus(depth);
                         int vic = td_captured_piece(td, get_move_target(move));
                         td_update_history(td.capture_history[get_move_piece(move)][get_move_target(move)][vic], bonus);
+                    }
+
+                    // SF-faithful: il MALUS alle catture provate-e-fallite si applica
+                    // a OGNI beta-cutoff (anche quando la best move e' QUIET), non solo
+                    // quando il cutoff e' causato da una cattura. Senza questo, le catture
+                    // speculative che falliscono prima di un cutoff quiet non accumulano
+                    // mai segnale negativo -> capture_history resta netto-positiva ->
+                    // vengono sovra-ordinate -> -Elo. (Era il bug che rendeva la feature
+                    // negativa: -21 @div1, -12 @div16.)
+                    if (g_capture_hist) {
+                        int cap_malus = td_stat_bonus(depth);
                         for (int c = 0; c < n_searched_captures; c++) {
                             int cm = searched_captures[c];
-                            if (cm == move) continue;
+                            if (cm == move) continue;   // la cattura-cutoff ha gia' il bonus
                             int cvic = td_captured_piece(td, get_move_target(cm));
-                            td_update_history(td.capture_history[get_move_piece(cm)][get_move_target(cm)][cvic], -bonus);
+                            td_update_history(td.capture_history[get_move_piece(cm)][get_move_target(cm)][cvic], -cap_malus);
                         }
                     }
 
@@ -2464,6 +2803,28 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     if (legal_moves == 0) {
         if (in_check) return -mate_value + td.ply;
         return 0;
+    }
+
+    // V2 (PriorBonus, default OFF -> byte-identico): nodo FAIL-LOW (hash_flag ancora alpha
+    // = nessuna mossa ha battuto alpha) -> la mossa PRECEDENTE (quella che ci ha portato qui)
+    // era forte -> bonus alla sua history. Quiet: main + 1-ply continuation; cattura: capture-hist
+    // (vittima da captured_stack, mv1 e' gia' stata fatta = via dal board).
+    if (g_prior_bonus && hash_flag == hash_flag_alpha) {
+        int mv1 = td.move_stack[td.ply];
+        if (mv1) {
+            int p1 = get_move_piece(mv1), t1 = get_move_target(mv1);
+            int pbonus = g_prior_bonus_scale * td_stat_bonus(depth) / 100;
+            if (!get_move_capture(mv1)) {
+                td_update_history(td.history_moves[p1][t1], pbonus);
+                if (td.ply >= 1) {
+                    int mv2 = td.move_stack[td.ply - 1];
+                    if (mv2) td_update_history(td.continuation_history[get_move_piece(mv2)][get_move_target(mv2)][p1][t1], pbonus);
+                }
+            } else if (g_capture_hist) {
+                int vic = td.captured_stack[td.ply];
+                if (vic >= 0) td_update_history(td.capture_history[p1][t1][vic], pbonus);
+            }
+        }
     }
 
     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag, depth, in_check, best_move, excluded_move);
@@ -2520,6 +2881,47 @@ static void print_search_info(ThreadData& td, int depth, int score) {
 static const int LSMP_SkipSize[8]  = { 1, 1, 2, 2, 2, 3, 3, 3 };
 static const int LSMP_SkipPhase[8] = { 0, 1, 0, 1, 2, 0, 1, 2 };
 
+// OFFLINE policy ordering: seed the butterfly history of THIS thread from the
+// root policy prior (one forward pass). Quiet moves only (captures/promotions are
+// ordered by SEE/MVV-LVA). The prior is CENTERED on the mean logit so above-mean
+// moves get a positive nudge and below-mean a negative one -> it reorders rather
+// than uniformly inflating. The gravity update bounds it and makes re-seeding each
+// move self-limiting. The online search then overwrites it: a transient prior at
+// zero per-node cost. No-op if no policy net is loaded.
+static void td_policy_seed_history(ThreadData& td) {
+    if (!policy_loaded()) return;
+
+    static thread_local float pscores[4096];
+    evaluate_policy(td, pscores);   // canonical STM encoding, index = from*64 + to
+
+    moves ml[1];
+    td_generate_moves(td, ml, false);   // all pseudo-legal root moves
+    const bool wtm = (td.side == white);
+
+    // Pass 1: mean policy logit over quiet moves.
+    double sum = 0.0; int n = 0;
+    for (int i = 0; i < ml->count; i++) {
+        int m = ml->moves[i];
+        if (get_move_capture(m) || get_move_promoted(m)) continue;
+        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
+        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
+        sum += pscores[cs * 64 + ct];
+        n++;
+    }
+    if (n == 0) return;
+    const double mean = sum / n;
+
+    // Pass 2: seed butterfly history[piece][to] with the centered, scaled prior.
+    for (int i = 0; i < ml->count; i++) {
+        int m = ml->moves[i];
+        if (get_move_capture(m) || get_move_promoted(m)) continue;
+        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
+        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
+        int bonus = (int)(g_policy_seed_scale * (pscores[cs * 64 + ct] - mean));
+        td_update_history(td.history_moves[get_move_piece(m)][get_move_target(m)], bonus);
+    }
+}
+
 static void thread_search(int thread_id, int max_depth) {
     ThreadData& td = thread_data[thread_id];
 
@@ -2534,7 +2936,15 @@ static void thread_search(int thread_id, int max_depth) {
     // memset(td.continuation_history, 0, sizeof(td.continuation_history));
     memset(td.pv_table, 0, sizeof(td.pv_table));
     memset(td.pv_length, 0, sizeof(td.pv_length));
+    // #5 low-ply history e' ply-indexed near-root -> NON deve persistere tra mosse
+    // (mischierebbe posizioni diverse allo stesso ply). Azzerata per-search se attiva
+    // (gated: OFF = nessun lavoro extra = byte-identico).
+    if (g_lowply) memset(td.lowply_history, 0, sizeof(td.lowply_history));
     td.move_stack[0] = 0;  // root has no previous move
+
+    // OFFLINE policy ordering (PolicySeed): nudge butterfly history from the root
+    // policy prior before iterative deepening. Default OFF -> no-op (byte-identical).
+    if (g_policy_seed) td_policy_seed_history(td);
 
     int prev_score = 0;
     int prev_best_move = 0;
@@ -2632,7 +3042,7 @@ static void thread_search(int thread_id, int max_depth) {
         if (thread_id == 0 && timeset) {
             int soft = soft_time_limit;                    // absolute timestamp (starttime + optimum)
             if (current_depth > start_depth && td.best_move != prev_best_move)
-                soft += (stoptime - soft_time_limit) / 2;
+                soft += (stoptime - soft_time_limit) * g_tm_instab / 100;
 
             // Score-drop time extension (TimeMgmt): a falling score vs the previous
             // completed iteration suggests the position is turning against us ->
@@ -2641,7 +3051,7 @@ static void thread_search(int thread_id, int max_depth) {
                 int drop = prev_completed_score - score;   // >0 = got worse
                 if (drop > 8) {
                     int d = (drop > 200) ? 200 : drop;
-                    soft += (stoptime - soft_time_limit) * d / 800;
+                    soft += (stoptime - soft_time_limit) * d / g_tm_drop_div;
                 }
             }
 

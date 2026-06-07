@@ -1,6 +1,9 @@
 #include "defs.h"
 #include "attacks.h"
 #include "magic.h"
+#if defined(USE_PEXT)
+#include <immintrin.h>   // _pext_u64 (BMI2): sliding-attack index senza moltiplicazione (come SF bmi2)
+#endif
 
 // find appropriate magic number
 U64 find_magic_number(int square, int relevant_bits, int bishop)
@@ -74,13 +77,21 @@ void init_sliders_attacks(int bishop)
             if (bishop)
             {
                 U64 occupancy = set_occupancy(index, relevant_bits_count, attack_mask);
+#if defined(USE_PEXT)
+                int magic_index = (int)_pext_u64(occupancy, bishop_masks[square]);
+#else
                 int magic_index = (int)((occupancy * bishop_magic_numbers[square]) >> (64 - bishop_relevant_bits[square]));
+#endif
                 bishop_attacks[square][magic_index] = bishop_attacks_on_the_fly(square, occupancy);
             }
             else
             {
                 U64 occupancy = set_occupancy(index, relevant_bits_count, attack_mask);
+#if defined(USE_PEXT)
+                int magic_index = (int)_pext_u64(occupancy, rook_masks[square]);
+#else
                 int magic_index = (int)((occupancy * rook_magic_numbers[square]) >> (64 - rook_relevant_bits[square]));
+#endif
                 rook_attacks[square][magic_index] = rook_attacks_on_the_fly(square, occupancy);
             }
         }
@@ -90,24 +101,36 @@ void init_sliders_attacks(int bishop)
 // get bishop attacks
 U64 get_bishop_attacks(int square, U64 occupancy)
 {
+#if defined(USE_PEXT)
+    return bishop_attacks[square][(int)_pext_u64(occupancy, bishop_masks[square])];
+#else
     occupancy &= bishop_masks[square];
     occupancy *= bishop_magic_numbers[square];
     occupancy >>= 64 - bishop_relevant_bits[square];
     return bishop_attacks[square][occupancy];
+#endif
 }
 
 // get rook attacks
 U64 get_rook_attacks(int square, U64 occupancy)
 {
+#if defined(USE_PEXT)
+    return rook_attacks[square][(int)_pext_u64(occupancy, rook_masks[square])];
+#else
     occupancy &= rook_masks[square];
     occupancy *= rook_magic_numbers[square];
     occupancy >>= 64 - rook_relevant_bits[square];
     return rook_attacks[square][occupancy];
+#endif
 }
 
 // get queen attacks
 U64 get_queen_attacks(int square, U64 occupancy)
 {
+#if defined(USE_PEXT)
+    return bishop_attacks[square][(int)_pext_u64(occupancy, bishop_masks[square])]
+         | rook_attacks[square][(int)_pext_u64(occupancy, rook_masks[square])];
+#else
     U64 queen_attacks = 0ULL;
     U64 bishop_occupancy = occupancy;
     U64 rook_occupancy = occupancy;
@@ -123,4 +146,5 @@ U64 get_queen_attacks(int square, U64 occupancy)
     queen_attacks |= rook_attacks[square][rook_occupancy];
 
     return queen_attacks;
+#endif
 }

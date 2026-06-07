@@ -36,6 +36,10 @@ struct ThreadData {
     // Move that led to each ply (0 = root / null move). Used by the
     // counter-move heuristic to know the "previous move" at a node.
     int move_stack[max_ply + 8];
+    // Captured piece of the move that led to each ply (-1 if quiet). Parallel to
+    // move_stack; set together. Used by V2 (PriorBonus) capture-history extension to
+    // know the victim of the prior move (already made, gone from the board).
+    int captured_stack[max_ply + 8];
 
     // Move ordering. +8 slack on the ply dimension: a node entering at
     // ply == max_ply-1 increments td.ply (and reads pv_length[ply+1]), so the
@@ -55,6 +59,11 @@ struct ThreadData {
     // Like continuation_history, NOT reset per-search (persist across moves).
     int16_t cont_hist_2[12][64][12][64];
     int16_t cont_hist_4[12][64][12][64];
+    // Extra continuation histories at 3-ply and 6-ply back (only used when ContHist36
+    // is on): same layout. Like the others, NOT reset per-search (persist across moves;
+    // zeroed by value-init on thread creation, same as continuation_history).
+    int16_t cont_hist_3[12][64][12][64];
+    int16_t cont_hist_6[12][64][12][64];
     // Capture history: [moving piece][to square][captured piece].
     int capture_history[12][64][12];
 
@@ -88,6 +97,34 @@ struct ThreadData {
     // [side][minor-piece key] and [side][major-piece key]. Same size as corr_hist.
     int corr_hist_minor[2][1 << 14];
     int corr_hist_major[2][1 << 14];
+
+    // Pawn history (PawnHistory toggle, default off): quiet-move ordering keyed by
+    // pawn structure -> [pawn-key bucket][piece][to]. SF weights this 2x (as much as
+    // main history); it was a whole missing dimension for us. int16 keeps it ~12.6
+    // MB/thread. Per-thread (here) = SMP-safe. Cleared in init_threads.
+    static constexpr int PAWN_HIST_SIZE = 1 << 13;          // 8192 pawn-structure buckets
+    static constexpr int PAWN_HIST_MASK = PAWN_HIST_SIZE - 1;
+    int16_t pawn_history[PAWN_HIST_SIZE][12][64];
+
+    // Threat-ordering cache (ThreatOrdering, default OFF). Squares attacked by enemy
+    // pieces grouped by the cheapest attacker's value. Computed once per node (keyed
+    // by hash_key) and read in td_score_move. Unused/untouched when the toggle is off.
+    U64 threat_key      = 0;   // hash_key the three bitboards below are valid for
+    U64 threat_by_pawn  = 0;   // squares attacked by enemy pawns
+    U64 threat_by_minor = 0;   // + enemy knights/bishops
+    U64 threat_by_rook  = 0;   // + enemy rooks
+
+    // Check-ordering cache (CheckOrdering, default OFF). check_sq[piece type] = squares
+    // from which a piece of that type gives a DIRECT check to the enemy king. Computed
+    // once per node (keyed by hash_key). Unused/untouched when the toggle is off.
+    U64 check_key   = 0;
+    U64 check_sq[6] = { 0, 0, 0, 0, 0, 0 };   // index by piece type 0=P 1=N 2=B 3=R 4=Q 5=K
+
+    // Low-ply history (#5, LowPlyHistory, default OFF): [ply][piece][target], used only
+    // in the first LOW_PLY_MAX plies for quiet ordering near the root. Cleared per-search
+    // when the toggle is on (ply-indexed => transient, must NOT persist across moves).
+    static constexpr int LOW_PLY_MAX = 4;
+    int lowply_history[LOW_PLY_MAX][12][64];
 
     // Opaque per-thread handle for the incremental NNUE mirror (see sf_bridge).
     // Owned here: created in init_threads, destroyed on re-init / shutdown.
@@ -147,11 +184,28 @@ extern void set_data_log_file(const char* path);
 // Policy on/off (UCI option "UsePolicy") — A/B the hybrid policy vs pure NNUE.
 extern void set_use_policy(bool enabled);
 
+// OFFLINE policy ordering (UCI option "PolicySeed") — seed butterfly history from
+// the root policy prior, once per search, zero per-node cost. Default off.
+extern void set_policy_seed(bool enabled);
+extern int  g_policy_seed_scale;   // PolicySeedScale spin: bonus = scale*(logit-mean)
+
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);
 
 // Static-eval cache on/off (UCI option "EvalCache") — A/B the eval cache.
 extern void set_eval_cache(bool enabled);
+
+// FinnyTables (NNUE accumulator refresh cache) on/off (UCI option "FinnyTables").
+extern void set_finny(bool enabled);
+
+// SingleBoard (single-board eval) and OccIncr (incremental occupancies) were
+// consolidated into the code (2026-06-07): both unconditional now, no toggle.
+// See sf_bridge.cpp (sf_pos_eval sync) and td_occ_update in threads.cpp.
+
+// Time-management tunables (defined in threads.cpp; used by parse_go in uci_mt.cpp).
+extern int g_tm_movestogo;
+extern int g_tm_inc_frac;
+extern int g_tm_max_mult;
 
 // "Improving" heuristic on/off (UCI option "Improving") — A/B the eval-trend
 // based pruning/reduction. Default on.
@@ -172,6 +226,10 @@ extern void set_corr_hist(bool enabled);
 // Multi-table correction history on/off (UCI option "CorrHistMulti") — adds minor
 // (N/B) and major (R/Q) material-keyed correction tables. Default off.
 extern void set_corr_multi(bool enabled);
+
+// Pawn history on/off (UCI option "PawnHistory") — quiet-move ordering term keyed by
+// pawn structure (SF-style, weighted 2x). Default off (byte-identical when off).
+extern void set_pawn_hist(bool enabled);
 
 // ProbCut on/off (UCI option "ProbCut") — prune when a capture's reduced
 // verification search beats beta + ProbCutMargin. Default on (SPRT-validated +Elo).
@@ -220,6 +278,12 @@ extern void set_razor_depth4(bool enabled);    // RazorDepth4: razoring a depth<
 extern void set_qfutility(bool enabled);       // QFutility: futility per-mossa in quiescence
 extern void set_hist_bonus_sf(bool enabled);   // HistBonusSF: bonus history lineare-clampato
 
+// CaptureHist (UCI "CaptureHist") — capture history [piece][to][victim] nell'ordering
+// di good/bad captures (main + qsearch). Sempre stata attiva, mai validata in isolamento.
+// Default ON (= comportamento attuale). OFF = contributo 0 + niente update (A/B pulito).
+// Scaling via spin CaptureHistDiv (default 1 = byte-identico; >1 = caphist pesato meno).
+extern void set_capture_hist(bool enabled);
+
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
 extern void set_tt_4way(bool enabled);
@@ -233,6 +297,18 @@ extern void set_time_mgmt(bool enabled);
 // Aggressive LMR (UCI "AggrLMR") — multi-ply history/conthist reductions via a
 // smaller divisor + wider clamp (AggrLMRDiv / AggrLMRClamp spins). Default off.
 extern void set_aggr_lmr(bool enabled);
+
+// StatScore-LMR levers (2026-06-06) — fix per la SOTTO-RIDUZIONE vs SF15.1. Tre
+// toggle indipendenti, default OFF = byte-identico. Tarabili via gli spin
+// LMRStatScoreDiv / LMRStatScoreOffset / LMRContHistDiv / CutNodeLMRExtra.
+extern void set_statscore_lmr(bool enabled);  // butterfly history -> riduzione continua (no clamp +/-1)
+extern void set_conthist_lmr(bool enabled);   // conthist 1/2/4 ply -> riduzione continua nella LMR
+extern void set_cutnode_lmr(bool enabled);    // riduzione extra sui cut-node
+extern void set_threat_ordering(bool enabled); // ThreatOrdering: bonus/malus quiet per pezzo minacciato da uno di valore inferiore (SF-style)
+extern void set_check_ordering(bool enabled);  // CheckOrdering: bonus quiet che danno scacco diretto, filtrati SEE>=-75 (SF-style)
+extern void set_conthist36(bool enabled);      // ContHist36: aggiunge conthist 3-ply e 6-ply all'ordering quiet (SF #4)
+extern void set_prior_bonus(bool enabled);     // PriorBonus (V2): su fail-low, bonus alla mossa precedente (conthist/main + capture-hist se cattura)
+extern void set_lowply(bool enabled);          // LowPlyHistory (#5): history per-ply near-root nell'ordering quiet
 
 // SPSA-tunable search parameters: set one by name (UCI spin option). Returns true
 // if the name matched a known tunable. Used by an external SPSA tuner (fastchess).

@@ -1,0 +1,101 @@
+=============================================================================
+ TRIUMVIRATUS 3.6 — READY TO COMMIT (working tree, not yet committed)
+=============================================================================
+Date: 2026-06-07
+This repo's working tree (source/ + build/) holds the 3.6 release candidate.
+The user does the actual `git commit` (in English). Everything below is the
+prepared commit + the scope audited from the FULL diff vs f49c92e (~21h of work).
+
+-----------------------------------------------------------------------------
+STRENGTH (build-neutral, pure CODE delta)
+-----------------------------------------------------------------------------
+SPRT  T_3.6_new  vs  T_old (= commit f49c92e "Revert SmallNetThreshold 782->1050")
+  Elo:   +42.48  +/- 14.82      nElo: +80.55 +/- 27.80
+  LOS:   100.00 %               Games: 600  (W176 L103 D321)
+  Ptnml(0-2): [1, 45, 141, 106, 7]     LLR 1.83 (toward 2.94)  TC 12+0.08, 1t, 256MB
+  Both exes = MSVC AVX512 *plain* (same compiler, no PGO), identical networks
+  (nn-b1a57edbea57 + nn-baff1ede1f90) => isolates the pure code delta.
+The release build uses clang-PGO (+~9% NPS) => stronger than this neutral figure.
+
+-----------------------------------------------------------------------------
+FULL SCOPE vs f49c92e (audited from the diff, +1167/-154 over 17 files)
+-----------------------------------------------------------------------------
+DEFAULT-ON, validated (this is the +42):
+  - Search FULL co-tune: MainHistWeight 209 / ContHistWeight 134, PawnHistory (2x),
+    CorrHistMulti, ContHistMulti, CaptureHist (div14 + correct malus),
+    HistBonusSF (169/84/1720).
+  - LMR refinement: StatScoreLMR + ContHistLMR (continuous butterfly/conthist
+    reduction, replacing the +/-1 clamp; fixes under-reduction vs SF).
+  - Move ordering Phase-2: ThreatOrdering, CheckOrdering, ContHist36.
+  - Correction history: pawn + minor + major material keys.
+  - SINGLE-BOARD NNUE bridge (consolidated, no toggle): the dual board is gone;
+    the net is fed from our 12-bitboard set via vflip (byteswap) of the
+    occupancies. Eval BIT-IDENTICAL, ~+3% NPS.
+  - INCREMENTAL OCCUPANCIES (consolidated, no toggle): XOR self-inverse update
+    vs 11-OR recompute. Node-identical, ~+3% NPS.
+  - Eval-blend + time-management controls exposed/retuned.
+  - ucinewgame now clears pawn_history + lowply_history (were carried across games).
+
+DEFAULT-OFF, dormant (byte-identical; scaffolding for future co-tunes):
+  - PriorBonus (V2), LowPlyHistory (#5), CutNodeLMR.
+  - PolicySeed (Tier F): offline policy -> butterfly-history seeding, 0 per-node cost.
+  - PEXT sliding attacks (USE_PEXT).
+
+INFRA:
+  - vcxproj ClangCL group (PGO) + build/ scripts (build_pgo_clang.ps1, build_pgo.ps1,
+    pgo_train.py) — all RELATIVE paths (portable). + source/Triumviratus_3.0.rc.
+
+-----------------------------------------------------------------------------
+*** PRE-COMMIT ACTION (recommended) ***
+-----------------------------------------------------------------------------
+UCI advertised-default mismatch: uci_mt.cpp prints `default false` for
+ThreatOrdering / CheckOrdering / ContHist36 / PawnHistory / StatScoreLMR /
+ContHistLMR, but the real defaults are g_..._ = true (BAKED). The SPRT used the
+baked true (fastchess does not send the options), so +42 is valid. BUT a public
+GUI that initializes options to their advertised default would send `value false`
+and DISABLE these validated features. Fix: change those advertised defaults to
+`true` (byte-identical to the validated behavior). Decide before the public commit.
+
+-----------------------------------------------------------------------------
+FINAL COMMIT MESSAGE (English)
+-----------------------------------------------------------------------------
+Title:
+  Triumviratus 3.6: search co-tune + single-board NNUE + correction history (+42 Elo)
+
+Body:
+  Build-neutral SPRT vs 3.5 (commit f49c92e): same compiler (MSVC AVX512, no PGO)
+  and identical networks on both sides to isolate the pure code delta —
+  +42.48 +/- 14.82 Elo, LOS 100%, 600 games, 12+0.08, 1 thread. The release build
+  (clang-cl + ThinLTO + PGO) is faster still (~+9% NPS), so stronger than this figure.
+
+  Search (default-on, validated):
+  - Full history/LMR/pruning co-tune: main/continuation history weights (209/134),
+    pawn-structure history (2x), capture history (div 14 + correct malus), SF-style
+    linear-clamped history bonus (169/84/1720).
+  - Continuous butterfly- and continuation-history LMR reductions (replacing the
+    +/-1 clamp; fixes under-reduction).
+  - Threat-aware and direct-check move ordering, plus 3/6-ply continuation history.
+  - Correction history: pawn + minor + major material-keyed static-eval correction.
+
+  Speed (node/eval-identical, default-on):
+  - Single-board NNUE bridge: the dual board is removed; the network is fed from the
+    engine's native 12-bitboard set via a vertical flip (byteswap) of the occupancies,
+    reconstructed once per eval. Eval bit-identical, ~+3% NPS.
+  - Incremental occupancy update (XOR self-inverse) instead of an 11-way OR recompute
+    on every make/unmake. Node-identical, ~+3% NPS.
+
+  Eval / time / correctness:
+  - Exposed and retuned eval-blend and time-management controls.
+  - Clear pawn-history and low-ply history on ucinewgame.
+
+  Dormant (default-off, byte-identical; scaffolding for future co-tunes):
+  - PriorBonus, LowPlyHistory, CutNodeLMR, PolicySeed (offline policy -> butterfly-
+    history seeding, zero per-node cost), PEXT sliding attacks.
+
+  Build:
+  - Add the PGO-capable Visual Studio project (ClangCL configuration group) and the
+    build/ scripts (build_pgo_clang.ps1, build_pgo.ps1, pgo_train.py); paths relative
+    so the tree is portable.
+
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+=============================================================================

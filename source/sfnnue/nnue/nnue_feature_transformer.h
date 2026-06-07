@@ -28,6 +28,7 @@
 #include <iosfwd>
 #include <utility>
 
+#include "../bitboard.h"
 #include "../position.h"
 #include "../types.h"
 #include "nnue_accumulator.h"
@@ -249,10 +250,19 @@ class FeatureTransformer {
         return !stream.fail();
     }
 
-    // Convert input features
-    std::int32_t transform(const Position& pos, OutputType* output, int bucket) const {
-        update_accumulator<WHITE>(pos);
-        update_accumulator<BLACK>(pos);
+    // Accessor to the bias table, used to (re)initialise an AccumulatorCaches
+    // entry to "empty board" (biases only).
+    const BiasType* bias_table() const { return biases; }
+
+    // Convert input features. When cache != nullptr the full-refresh path uses
+    // the per-thread AccumulatorCaches ("finny tables"); when nullptr it falls
+    // back to the plain refresh (byte-identical to the pre-finny behaviour).
+    std::int32_t transform(const Position&                          pos,
+                           OutputType*                              output,
+                           int                                      bucket,
+                           AccumulatorCaches::Cache<HalfDimensions>* cache = nullptr) const {
+        update_accumulator<WHITE>(pos, cache);
+        update_accumulator<BLACK>(pos, cache);
 
         const Color perspectives[2]  = {pos.side_to_move(), ~pos.side_to_move()};
         const auto& accumulation     = (pos.state()->*accPtr).accumulation;
@@ -312,9 +322,10 @@ class FeatureTransformer {
         return psqt;
     }  // end of function transform()
 
-    void hint_common_access(const Position& pos) const {
-        hint_common_access_for_perspective<WHITE>(pos);
-        hint_common_access_for_perspective<BLACK>(pos);
+    void hint_common_access(const Position&                          pos,
+                            AccumulatorCaches::Cache<HalfDimensions>* cache = nullptr) const {
+        hint_common_access_for_perspective<WHITE>(pos, cache);
+        hint_common_access_for_perspective<BLACK>(pos, cache);
     }
 
    private:
@@ -655,8 +666,150 @@ class FeatureTransformer {
 #endif
     }
 
+    // Full refresh using the AccumulatorCaches ("finny tables"). Instead of
+    // rebuilding from biases over all active features, we diff against the
+    // cached accumulation for this (king square, perspective) and apply only the
+    // pieces that changed, then store the result back into the cache and copy it
+    // into the position accumulator. Produces bit-identical accumulator values
+    // to update_accumulator_refresh(), only faster.
     template<Color Perspective>
-    void hint_common_access_for_perspective(const Position& pos) const {
+    void update_accumulator_refresh_cache(const Position&                          pos,
+                                          AccumulatorCaches::Cache<HalfDimensions>* cache) const {
+        assert(cache != nullptr);
+
+#ifdef VECTOR
+        vec_t      acc[NumRegs];
+        psqt_vec_t psqt[NumPsqtRegs];
+#endif
+
+        const Square ksq   = pos.square<KING>(Perspective);
+        auto&        entry = (*cache)[ksq][Perspective];
+
+        FeatureSet::IndexList removed, added;
+
+        for (Color c : {WHITE, BLACK})
+            for (PieceType pt = PAWN; pt <= KING; ++pt)
+            {
+                const Piece    piece    = make_piece(c, pt);
+                const Bitboard oldBB     = entry.byColorBB[c] & entry.byTypeBB[pt];
+                const Bitboard newBB     = pos.pieces(c, pt);
+                Bitboard       toRemove  = oldBB & ~newBB;
+                Bitboard       toAdd      = newBB & ~oldBB;
+
+                while (toRemove)
+                {
+                    Square sq = pop_lsb(toRemove);
+                    removed.push_back(FeatureSet::make_index<Perspective>(sq, piece, ksq));
+                }
+                while (toAdd)
+                {
+                    Square sq = pop_lsb(toAdd);
+                    added.push_back(FeatureSet::make_index<Perspective>(sq, piece, ksq));
+                }
+            }
+
+        auto& accumulator                 = pos.state()->*accPtr;
+        accumulator.computed[Perspective] = true;
+
+#ifdef VECTOR
+        for (IndexType j = 0; j < HalfDimensions / TileHeight; ++j)
+        {
+            auto* entryTile = reinterpret_cast<vec_t*>(&entry.accumulation[j * TileHeight]);
+            for (IndexType k = 0; k < NumRegs; ++k)
+                acc[k] = vec_load(&entryTile[k]);
+
+            for (std::size_t i = 0; i < removed.size(); ++i)
+            {
+                const IndexType index  = removed[i];
+                const IndexType offset = HalfDimensions * index + j * TileHeight;
+                auto            column = reinterpret_cast<const vec_t*>(&weights[offset]);
+                for (IndexType k = 0; k < NumRegs; ++k)
+                    acc[k] = vec_sub_16(acc[k], column[k]);
+            }
+            for (std::size_t i = 0; i < added.size(); ++i)
+            {
+                const IndexType index  = added[i];
+                const IndexType offset = HalfDimensions * index + j * TileHeight;
+                auto            column = reinterpret_cast<const vec_t*>(&weights[offset]);
+                for (IndexType k = 0; k < NumRegs; ++k)
+                    acc[k] = vec_add_16(acc[k], column[k]);
+            }
+
+            for (IndexType k = 0; k < NumRegs; ++k)
+                vec_store(&entryTile[k], acc[k]);
+            auto* accTile =
+              reinterpret_cast<vec_t*>(&accumulator.accumulation[Perspective][j * TileHeight]);
+            for (IndexType k = 0; k < NumRegs; ++k)
+                vec_store(&accTile[k], acc[k]);
+        }
+
+        for (IndexType j = 0; j < PSQTBuckets / PsqtTileHeight; ++j)
+        {
+            auto* entryTilePsqt =
+              reinterpret_cast<psqt_vec_t*>(&entry.psqtAccumulation[j * PsqtTileHeight]);
+            for (std::size_t k = 0; k < NumPsqtRegs; ++k)
+                psqt[k] = vec_load_psqt(&entryTilePsqt[k]);
+
+            for (std::size_t i = 0; i < removed.size(); ++i)
+            {
+                const IndexType index  = removed[i];
+                const IndexType offset = PSQTBuckets * index + j * PsqtTileHeight;
+                auto columnPsqt        = reinterpret_cast<const psqt_vec_t*>(&psqtWeights[offset]);
+                for (std::size_t k = 0; k < NumPsqtRegs; ++k)
+                    psqt[k] = vec_sub_psqt_32(psqt[k], columnPsqt[k]);
+            }
+            for (std::size_t i = 0; i < added.size(); ++i)
+            {
+                const IndexType index  = added[i];
+                const IndexType offset = PSQTBuckets * index + j * PsqtTileHeight;
+                auto columnPsqt        = reinterpret_cast<const psqt_vec_t*>(&psqtWeights[offset]);
+                for (std::size_t k = 0; k < NumPsqtRegs; ++k)
+                    psqt[k] = vec_add_psqt_32(psqt[k], columnPsqt[k]);
+            }
+
+            for (std::size_t k = 0; k < NumPsqtRegs; ++k)
+                vec_store_psqt(&entryTilePsqt[k], psqt[k]);
+            auto* accTilePsqt = reinterpret_cast<psqt_vec_t*>(
+              &accumulator.psqtAccumulation[Perspective][j * PsqtTileHeight]);
+            for (std::size_t k = 0; k < NumPsqtRegs; ++k)
+                vec_store_psqt(&accTilePsqt[k], psqt[k]);
+        }
+#else
+        for (const auto index : removed)
+        {
+            const IndexType offset = HalfDimensions * index;
+            for (IndexType j = 0; j < HalfDimensions; ++j)
+                entry.accumulation[j] -= weights[offset + j];
+            for (std::size_t k = 0; k < PSQTBuckets; ++k)
+                entry.psqtAccumulation[k] -= psqtWeights[index * PSQTBuckets + k];
+        }
+        for (const auto index : added)
+        {
+            const IndexType offset = HalfDimensions * index;
+            for (IndexType j = 0; j < HalfDimensions; ++j)
+                entry.accumulation[j] += weights[offset + j];
+            for (std::size_t k = 0; k < PSQTBuckets; ++k)
+                entry.psqtAccumulation[k] += psqtWeights[index * PSQTBuckets + k];
+        }
+
+        std::memcpy(accumulator.accumulation[Perspective], entry.accumulation,
+                    HalfDimensions * sizeof(std::int16_t));
+        std::memcpy(accumulator.psqtAccumulation[Perspective], entry.psqtAccumulation,
+                    PSQTBuckets * sizeof(std::int32_t));
+#endif
+
+        // Record the current piece configuration so the next refresh against this
+        // entry diffs from here.
+        for (Color c : {WHITE, BLACK})
+            entry.byColorBB[c] = pos.pieces(c);
+        for (PieceType pt = PAWN; pt <= KING; ++pt)
+            entry.byTypeBB[pt] = pos.pieces(pt);
+    }
+
+    template<Color Perspective>
+    void hint_common_access_for_perspective(const Position&                          pos,
+                                            AccumulatorCaches::Cache<HalfDimensions>* cache
+                                            = nullptr) const {
 
         // Works like update_accumulator, but performs less work.
         // Updates ONLY the accumulator for pos.
@@ -675,12 +828,15 @@ class FeatureTransformer {
             StateInfo* states_to_update[2] = {pos.state(), nullptr};
             update_accumulator_incremental<Perspective, 2>(pos, oldest_st, states_to_update);
         }
+        else if (cache)
+            update_accumulator_refresh_cache<Perspective>(pos, cache);
         else
             update_accumulator_refresh<Perspective>(pos);
     }
 
     template<Color Perspective>
-    void update_accumulator(const Position& pos) const {
+    void update_accumulator(const Position&                          pos,
+                            AccumulatorCaches::Cache<HalfDimensions>* cache = nullptr) const {
 
         auto [oldest_st, next] = try_find_computed_accumulator<Perspective>(pos);
 
@@ -697,10 +853,17 @@ class FeatureTransformer {
             StateInfo* states_to_update[3] = {next, next == pos.state() ? nullptr : pos.state(),
                                               nullptr};
 
+            ++g_dbg_incremental;
             update_accumulator_incremental<Perspective, 3>(pos, oldest_st, states_to_update);
+        }
+        else if (cache)
+        {
+            ++g_dbg_refresh;
+            update_accumulator_refresh_cache<Perspective>(pos, cache);
         }
         else
         {
+            ++g_dbg_refresh;
             update_accumulator_refresh<Perspective>(pos);
         }
     }

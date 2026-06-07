@@ -12,11 +12,60 @@
 #include "sfnnue/position.h"
 #include "sfnnue/evaluate.h"
 #include "sfnnue/types.h"
+#include "sfnnue/nnue/nnue_accumulator.h"
 
 #include <vector>
 #include <cassert>
+#include <cstdio>
+#include <cstdint>
+#if defined(_MSC_VER)
+    #include <cstdlib>   // _byteswap_uint64
+#endif
 
 using namespace Stockfish;
+
+// Vertical flip of a bitboard (swap the 8 rank-bytes). The engine uses a8=0..
+// h1=63 (BBC layout) while Stockfish uses a1=0..h8=63, and nnue_squares[] maps
+// one to the other as sq ^ 56 == a per-rank reversal == byteswap. So an engine
+// bitboard becomes the equivalent Stockfish bitboard via a single byteswap.
+static inline std::uint64_t vflip(std::uint64_t b) {
+#if defined(_MSC_VER)
+    return _byteswap_uint64(b);
+#else
+    return __builtin_bswap64(b);
+#endif
+}
+
+// DIAGNOSTIC (finny-tables analysis): print refresh vs incremental counts and
+// the refresh fraction accumulated since the last call, then reset. If the
+// refresh fraction is small, the finny cache cannot speed up the engine.
+void sf_acc_stats(void) {
+    unsigned long long r   = Stockfish::Eval::NNUE::g_dbg_refresh;
+    unsigned long long inc = Stockfish::Eval::NNUE::g_dbg_incremental;
+    unsigned long long tot = r + inc;
+    double             pct = tot ? (100.0 * (double) r / (double) tot) : 0.0;
+    printf("info string AccStats refresh=%llu incremental=%llu total=%llu refresh_pct=%.3f%%\n",
+           r, inc, tot, pct);
+    fflush(stdout);
+    Stockfish::Eval::NNUE::g_dbg_refresh     = 0;
+    Stockfish::Eval::NNUE::g_dbg_incremental = 0;
+}
+
+// FinnyTables (accumulator refresh cache) toggle. ON => each thread's cache
+// turns a full refresh into a cheap piece diff. OFF => rebuild from biases
+// (byte-identical to the pre-finny engine). Pure NPS lever; eval bit-identical
+// either way, validated with an interleaved A/B NPS test (not SPRT).
+// BAKED ON (2026-06-05): +6.9% NPS median (6/6 round positivi +4..+14%) +
+// node-identity verificata (startpos d19 ON==OFF = 911516 nodi). Toggle tenuto A/B.
+static bool g_finny = true;
+void        sf_set_finny(int on) { g_finny = on != 0; }
+
+// SINGLE-BOARD design (consolidated 2026-06-07, +2.9% NPS, eval BIT-IDENTICAL):
+// the SF Position board is NOT maintained piece-by-piece on do/undo; only the
+// StateInfo/dirtyPiece chain is kept, and the few board bitboards the NNUE reads
+// are reconstructed from the engine's own bitboards once per evaluate() (see
+// sf_pos_eval). The old dual-board path and its toggle were removed after the
+// node-identity validation.
 
 void sf_init(const char* big_net, const char* small_net) {
     Stockfish::Probe::init(big_net, small_net);
@@ -41,6 +90,9 @@ struct SfPos {
     std::vector<SfMove>    undo;  // how to reverse each pushed move
     std::vector<bool>      isNull;
     int                    ply;
+    // Per-thread "finny tables" cache (~0.7 MB). Heap-allocated with the SfPos
+    // (handles are created with new), never shared between threads.
+    Stockfish::Eval::NNUE::AccumulatorCaches caches;
 
     SfPos() : st(SF_STACK), undo(SF_STACK), isNull(SF_STACK, false), ply(0) {}
 };
@@ -70,6 +122,11 @@ void sf_pos_set(void* handle, int side_white, const int* pieces,
     // set() memsets the Position and the root StateInfo (computed=false,
     // previous=nullptr), so the first evaluate() does a full refresh.
     p->pos.set(pieces, squares, count, side_white != 0, rule50, &p->st[0]);
+    // Reset the finny-table cache to "empty board" at each search root. Cheap
+    // (a memset) and keeps the cache correct without relying on cross-search
+    // state; it warms up again within the search. Nets are loaded by now.
+    if (g_finny)
+        Stockfish::Eval::NNUE::clear_accumulator_caches(p->caches);
 }
 
 void sf_pos_do(void* handle, const struct SfMove* m) {
@@ -111,16 +168,9 @@ void sf_pos_do(void* handle, const struct SfMove* m) {
 
     p->pos.st         = ns;
     p->pos.sideToMove = flip(p->pos.sideToMove);
-
-    // Apply the board change in a capture-safe order.
-    if (m->capturedPiece)
-        p->pos.remove_piece(Square(m->capturedSq));
-    p->pos.remove_piece(Square(m->from));
-    p->pos.put_piece(Piece(m->promoPiece ? m->promoPiece : m->movedPiece), Square(m->to));
-    if (m->rookPiece) {
-        p->pos.remove_piece(Square(m->rookFrom));
-        p->pos.put_piece(Piece(m->rookPiece), Square(m->rookTo));
-    }
+    // Single-board: the SF board is NOT mutated here; it is reconstructed from the
+    // engine bitboards in sf_pos_eval. Only the StateInfo/dirtyPiece chain (above)
+    // is needed for the lazy accumulator.
 
     // Keep non-pawn material exact (eval uses it for net selection + scaling).
     if (m->capturedPiece) {
@@ -130,9 +180,6 @@ void sf_pos_do(void* handle, const struct SfMove* m) {
     }
     if (m->promoPiece)
         ns->nonPawnMaterial[color_of(Piece(m->promoPiece))] += PieceValue[m->promoPiece];
-
-    p->undo[p->ply]   = *m;
-    p->isNull[p->ply] = false;
 }
 
 void sf_pos_do_null(void* handle, int rule50) {
@@ -147,31 +194,61 @@ void sf_pos_do_null(void* handle, int rule50) {
 
     p->pos.st         = ns;
     p->pos.sideToMove = flip(p->pos.sideToMove);
-    p->isNull[p->ply] = true;
 }
 
 void sf_pos_undo(void* handle) {
     SfPos* p = static_cast<SfPos*>(handle);
 
     p->pos.sideToMove = flip(p->pos.sideToMove);
-
-    if (!p->isNull[p->ply]) {
-        const SfMove& m = p->undo[p->ply];
-        if (m.rookPiece) {
-            p->pos.remove_piece(Square(m.rookTo));
-            p->pos.put_piece(Piece(m.rookPiece), Square(m.rookFrom));
-        }
-        p->pos.remove_piece(Square(m.to));                            // mover or promoted piece
-        p->pos.put_piece(Piece(m.movedPiece), Square(m.from));        // restore the (un-promoted) mover
-        if (m.capturedPiece)
-            p->pos.put_piece(Piece(m.capturedPiece), Square(m.capturedSq));
-    }
+    // Single-board: no SF board to restore (it is rebuilt from the engine bitboards
+    // at the next eval); just pop the StateInfo chain.
 
     --p->ply;
     p->pos.st = &p->st[p->ply];
 }
 
-int sf_pos_eval(void* handle) {
+int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ) {
     SfPos* p = static_cast<SfPos*>(handle);
-    return Stockfish::Eval::evaluate(p->pos);
+
+    {
+        // Rebuild the board fields the NNUE reads, from the engine's own bitboards.
+        // Engine piece order: P,N,B,R,Q,K (0..5) white, p,n,b,r,q,k (6..11) black.
+        // SF PieceType PAWN..KING = 1..6, ALL_PIECES = 0; Color WHITE=0,BLACK=1.
+        // SF bitboard = byteswap(engine bitboard) (sq ^ 56 rank flip).
+        Position& pos = p->pos;
+        pos.byColorBB[WHITE]     = vflip(occ[0]);                 // white occupancy
+        pos.byColorBB[BLACK]     = vflip(occ[1]);                 // black occupancy
+        pos.byTypeBB[ALL_PIECES] = vflip(occ[2]);                 // ALL_PIECES == 0
+        pos.byTypeBB[PAWN]       = vflip(bb[0]  | bb[6]);
+        pos.byTypeBB[KNIGHT]     = vflip(bb[1]  | bb[7]);
+        pos.byTypeBB[BISHOP]     = vflip(bb[2]  | bb[8]);
+        pos.byTypeBB[ROOK]       = vflip(bb[3]  | bb[9]);
+        pos.byTypeBB[QUEEN]      = vflip(bb[4]  | bb[10]);
+        pos.byTypeBB[KING]       = vflip(bb[5]  | bb[11]);
+        // Only count<PAWN>(c) and count<ALL_PIECES>() are read at runtime (release
+        // strips the square<>() asserts), i.e. pieceCount[W_PAWN/B_PAWN] and
+        // pieceCount[make_piece(c,ALL_PIECES)].
+        pos.pieceCount[W_PAWN]                       = popcount(bb[0]);
+        pos.pieceCount[B_PAWN]                       = popcount(bb[6]);
+        pos.pieceCount[make_piece(WHITE, ALL_PIECES)] = popcount(occ[0]);
+        pos.pieceCount[make_piece(BLACK, ALL_PIECES)] = popcount(occ[1]);
+        // The mailbox board[] is only read by the non-finny refresh (piece_on()).
+        // With the finny cache on (default) it is never touched, so rebuild it
+        // only when finny is off.
+        if (!g_finny) {
+            for (int s = 0; s < SQUARE_NB; ++s) pos.board[s] = NO_PIECE;
+            static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
+                                        B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING};
+            for (int i = 0; i < 12; ++i) {
+                std::uint64_t b = bb[i];
+                while (b) {
+                    int s = lsb(Bitboard(b));     // engine square (bit index)
+                    b &= b - 1;
+                    pos.board[s ^ 56] = Piece(sfc[i]);
+                }
+            }
+        }
+    }
+
+    return Stockfish::Eval::evaluate(p->pos, g_finny ? &p->caches : nullptr);
 }
