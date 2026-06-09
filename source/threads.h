@@ -98,6 +98,15 @@ struct ThreadData {
     int corr_hist_minor[2][1 << 14];
     int corr_hist_major[2][1 << 14];
 
+    // Continuation correction history (CorrHistCont, default OFF): SF-style learned
+    // (search - static_eval) gap keyed by the TWO moves that led INTO this node —
+    // the move 1-ply back and 2-ply back: [piece2ply][to2ply][piece1ply][to1ply].
+    // Same shape as continuation_history but BOTH coords are already-played moves
+    // (the path into the node), because it corrects the node's static eval, not a
+    // candidate move. Stored in cp*CORR_GRAIN like the other corr tables; int16
+    // keeps it ~1.1 MB/thread (clamp g_corr_cap*CORR_GRAIN < 32767 fits int16).
+    int16_t cont_corr_hist[12][64][12][64];
+
     // Pawn history (PawnHistory toggle, default off): quiet-move ordering keyed by
     // pawn structure -> [pawn-key bucket][piece][to]. SF weights this 2x (as much as
     // main history); it was a whole missing dimension for us. int16 keeps it ~12.6
@@ -189,6 +198,16 @@ extern void set_use_policy(bool enabled);
 extern void set_policy_seed(bool enabled);
 extern int  g_policy_seed_scale;   // PolicySeedScale spin: bonus = scale*(logit-mean)
 
+// EntropyTM (UCI "EntropyTM") — scale the time budget by the root policy ENTROPY
+// (learned position complexity), NOT by move ranking. Default off (byte-identical).
+//   td_policy_entropy: normalized entropy [0,1] (+ top1 prob, move count) of the
+//   current position; -1 if no policy net. Used by the `policyentropy` diagnostic.
+//   policy_entropy_time_factor: the time multiplier (1.0 when off / no policy).
+extern void   set_entropy_tm(bool enabled);
+extern bool   g_entropy_tm;
+extern double td_policy_entropy(ThreadData& td, double* out_top1, int* out_n);
+extern double policy_entropy_time_factor(ThreadData& td);
+
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);
 
@@ -226,6 +245,10 @@ extern void set_corr_hist(bool enabled);
 // Multi-table correction history on/off (UCI option "CorrHistMulti") — adds minor
 // (N/B) and major (R/Q) material-keyed correction tables. Default off.
 extern void set_corr_multi(bool enabled);
+
+// Continuation correction history on/off (UCI option "CorrHistCont") — corrects the
+// static eval by the learned gap keyed by the last two moves into the node. Default off.
+extern void set_corr_cont(bool enabled);
 
 // Pawn history on/off (UCI option "PawnHistory") — quiet-move ordering term keyed by
 // pawn structure (SF-style, weighted 2x). Default off (byte-identical when off).

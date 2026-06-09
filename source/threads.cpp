@@ -23,6 +23,9 @@
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
+#ifndef _WIN32
+#include <unistd.h>   // getpid() (su Windows il pid arriva da GetCurrentProcessId in windows.h)
+#endif
 #include <fstream>
 #include <string>
 #include "io.h"
@@ -71,6 +74,16 @@ void set_use_policy(bool v) { g_use_policy = v; }
 static bool g_policy_seed = false;
 void set_policy_seed(bool v) { g_policy_seed = v; }
 int  g_policy_seed_scale = 300;   // bonus = scale * (logit - mean_logit), gravity-applied
+
+// EntropyTM (UCI "EntropyTM", default OFF = byte-identical). NOVEL policy use that
+// does NOT compete with move ordering: not WHICH move, but the SHAPE of the policy
+// distribution (normalized entropy) as a learned position-COMPLEXITY signal, used to
+// scale the TIME budget (low entropy = obvious move -> less time; high = complex ->
+// more). One forward pass at root, zero per-node cost. Tunables EntropyTMScale/Center.
+bool g_entropy_tm = false;
+void set_entropy_tm(bool v) { g_entropy_tm = v; }
+static int g_entropy_tm_scale  = 60;   // /100 ampiezza scaling: factor = 1 + scale/100*(Hnorm - center/100)
+static int g_entropy_tm_center = 50;   // /100 entropia "neutra" (factor 1); settare ~media misurata dal diag
 
 // Eval-off DIAGNOSTIC toggle (UCI option "EvalOff", default false). Replaces the
 // NNUE forward in td_evaluate() with a trivial material count, so an NPS test can
@@ -123,23 +136,32 @@ void set_corr_hist(bool v) { g_corr_hist = v; }
 static bool g_corr_multi = true;   // BAKED ON (2026-06-05): HM compound +6.2 LOS87.6% @1338
 void set_corr_multi(bool v) { g_corr_multi = v; }
 
+// Continuation correction history on/off (UCI option "CorrHistCont"). Default OFF =
+// byte-identical (the cont_corr_hist table is never read/written when off). When ON,
+// adds the SF continuation-correction term — keyed by the last two moves INTO the
+// node (path-dependent static-eval correction) — to the corr sum. Its contribution is
+// co-tunable via CorrContWeight (lets a co-tune balance cont vs pawn/minor/major).
+static bool g_corr_cont = false;
+void set_corr_cont(bool v) { g_corr_cont = v; }
+int g_corr_cont_weight = 100;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
+
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di ordering
 // per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale. Tabella per-thread
 // in ThreadData (SMP-safe). Indice ricalcolato in td_score_move dal board CORRENTE
 // (durante lo scoring il board e' sempre quello del nodo -> niente staleness da ricorsione).
 static bool g_pawn_hist = true;     // BAKED #1 2026-06-07 (era false): co-tune neutro@8 / +3@20+0.08
 void set_pawn_hist(bool v) { g_pawn_hist = v; }
-int g_pawn_hist_weight = 195;   // peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
+int g_pawn_hist_weight = 83;   // [3.7 BAKE 195->83] peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
 // Peso della main (butterfly) history nello scoring quiet. SF la pesa 2x (come la pawn);
 // noi storicamente 1x -> con pawn a 2x la pawn DOMINA la main = sbilanciato. Spin
 // MainHistWeight per copiare il rapporto SF (main 2x, pawn 2x). Default 1 = byte-identico.
-int g_mainhist_weight = 209;   // /100 (100 = 1.0x; SF usa 2.0x=200)
+int g_mainhist_weight = 131;   // [3.7 BAKE 209->131] /100 (100 = 1.0x; SF usa 2.0x=200)
 // Peso della continuation-history nello scoring quiet (ordering). Default 1 = invariato.
 // Manopola del CO-TUNE: bilancia conthist vs main/pawn. NON tocca conthist in LMR/pruning.
-int g_conthist_weight = 134;   // /100 (100 = 1.0x)
+int g_conthist_weight = 150;   // [3.7 BAKE 134->150] /100 (100 = 1.0x)
 // Scala % della soglia LMP (late-move-pruning). Default 100 = invariato. <100 pota prima
 // (albero più stretto), >100 pota dopo. Co-tune: si ri-equilibra con l'ordering nuovo.
-int g_lmp_scale = 93;
+int g_lmp_scale = 116;   // [3.7 BAKE 93->116]
 // Forward-decl: td_corr_index (pawn-only Zobrist bucket) e' definita piu' sotto, ma
 // serve qui sopra in td_score_move per la pawn-key.
 static inline int td_corr_index(ThreadData& td);
@@ -329,7 +351,7 @@ int g_rfp_margin = 21;    // reverse futility: static_eval - g*depth >= beta   [
 int g_razor_base = 300;   // razoring: base + mult*depth below alpha -> qsearch
 int g_razor_mult = 139;   // [SPSA-tuned: 102->139]
 int g_fut_base = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
-int g_fut_mult = 53;    // [SPSA-tuned; BAKED #1 2026-06-07: 66->53]
+int g_fut_mult = 41;    // [3.7 BAKE 53->41; BAKED #1 66->53]
 int g_fut_improving = 93;    // extra futility margin when improving                [SPSA-tuned: 60->93]
 int g_singular_dmargin = 43;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
 int g_hist_red_div = 1041;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
@@ -395,9 +417,9 @@ int g_prior_bonus_scale = 100;   // /100 del td_stat_bonus(depth). Spin PriorBon
 static bool g_lowply = false;
 void set_lowply(bool v) { g_lowply = v; }
 int g_lowply_weight = 30;    // contributo ordering = g_lowply_weight * lowply / (100*(1+2*ply)) (SF-style decay). Spin LowPlyWeight.
-int g_lmr_ss_div    = 12104;  // BAKED #1 (era 7000). StatScoreLMR: reduction -= (2*butterfly - offset) / div
-int g_lmr_ss_offset = 2668;   // BAKED #1 (era 4600). StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
-int g_lmr_ch_div    = 4437;   // BAKED #1 (era 10000). ContHistLMR: reduction -= (conthist1+2+4) / div
+int g_lmr_ss_div    = 7585;  // [3.7 BAKE 12104->7585; BAKED #1 era 7000]. StatScoreLMR: reduction -= (2*butterfly - offset) / div
+int g_lmr_ss_offset = 2435;   // [3.7 BAKE 2668->2435; BAKED #1 era 4600]. StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
+int g_lmr_ch_div    = 3506;   // [3.7 BAKE 4437->3506; BAKED #1 era 10000]. ContHistLMR: reduction -= (conthist1+2+4) / div
 int g_cutnode_lmr_extra = 1;  // CutNodeLMR: ply extra di riduzione sui cut-node (sopra il +1 esistente)
 // NMP + LMR-enrichment tunables.
 int g_nmp_base = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
@@ -405,14 +427,14 @@ int g_nmp_div = 4;
 int g_lmr_eval_margin = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
 int g_lmr_ttdepth = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
 // CORE LMR formula coefficients (*100).
-int g_lmr_base_x100 = 41;    // baseline reduction floor [SPSA 75->47; BAKED #1 47->41]
-int g_lmr_div_x100 = 345;   // bigger divisor = LESS reduction [SPSA 225->270; BAKED #1 270->345]
-int g_histprune_margin = 1602;  // BAKED #1 (era 1000). history pruning: prune late quiet if combined hist < -margin*depth
+int g_lmr_base_x100 = 37;    // baseline reduction floor [3.7 BAKE 41->37; SPSA 75->47; BAKED #1 47->41]
+int g_lmr_div_x100 = 310;   // bigger divisor = LESS reduction [3.7 BAKE 345->310; SPSA 225->270; BAKED #1 270->345]
+int g_histprune_margin = 1691;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune late quiet if combined hist < -margin*depth
 // SEE-pruning margins (ALSO the Phase-2 skip_bad_caps lever): a move is SEE-pruned at
 // low depth if SEE < -g_see_cap_margin*depth (captures) or < -g_see_quiet_margin*depth*depth
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
 int g_see_cap_margin   = 90;
-int g_see_quiet_margin = 98;    // BAKED #1 2026-06-07 (era 50)
+int g_see_quiet_margin = 96;    // [3.7 BAKE 98->96; BAKED #1 era 50]
 // DeeperShallower margins (attivi solo con DeeperShallower on): la re-search a piena
 // profondità va +1 ply se reduced-score > best + g_deeper_margin, -1 ply se
 // < best + g_shallower_margin. Per il test "doDeeper-only" metti g_shallower_margin
@@ -447,6 +469,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "ProbCutMargin"))       { g_probcut_margin   = value; return true; }
     if (!strcmp(name, "CorrCap"))             { g_corr_cap         = value; return true; }
     if (!strcmp(name, "CorrLearnDiv"))        { g_corr_lr_div      = value; return true; }
+    if (!strcmp(name, "CorrContWeight"))      { g_corr_cont_weight = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
     if (!strcmp(name, "HistPruneMargin"))     { g_histprune_margin = value; return true; }
     if (!strcmp(name, "SEECaptureMargin"))    { g_see_cap_margin   = value; return true; }
@@ -462,6 +485,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMInstab"))            { g_tm_instab          = value; return true; }
     if (!strcmp(name, "TMDropDiv"))           { g_tm_drop_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "PolicySeedScale"))     { g_policy_seed_scale  = value; return true; }
+    if (!strcmp(name, "EntropyTMScale"))      { g_entropy_tm_scale  = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "EntropyTMCenter"))     { g_entropy_tm_center = value < 0 ? 0 : (value > 100 ? 100 : value); return true; }
     if (!strcmp(name, "LMRStatScoreDiv"))     { g_lmr_ss_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "LMRStatScoreOffset"))  { g_lmr_ss_offset      = value; return true; }
     if (!strcmp(name, "LMRContHistDiv"))      { g_lmr_ch_div = value < 1 ? 1 : value; return true; }
@@ -510,7 +535,12 @@ void set_data_log_file(const char* path) { if (path && *path) g_data_log_file = 
 static void log_search_record(int best_move, int score, int depth) {
     // Per-process file (".<pid>") so parallel self-play instances never
     // interleave/corrupt one another. Merge later: cat <DataFile>.* > all.txt
-    std::string path = g_data_log_file + "." + std::to_string((unsigned long)GetCurrentProcessId());
+#ifdef _WIN32
+    unsigned long tri_pid = (unsigned long)GetCurrentProcessId();
+#else
+    unsigned long tri_pid = (unsigned long)getpid();
+#endif
+    std::string path = g_data_log_file + "." + std::to_string(tri_pid);
     std::ofstream out(path, std::ios::app | std::ios::binary);  // pure '\n'
     if (!out) return;
     out << board_to_fen() << '\t' << move_to_uci(best_move)
@@ -607,6 +637,7 @@ void init_threads(int thread_count) {
         memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
         memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
         memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+        memset(thread_data[i].cont_corr_hist, 0, sizeof(thread_data[i].cont_corr_hist));
         memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));
     }
 }
@@ -1988,6 +2019,20 @@ static inline int td_corr_index_major(ThreadData& td) {
     return td_corr_index_pieces(td, pcs, 4);
 }
 
+// Continuation-correction bucket for the current node: keyed by the move 2-ply back
+// and the move 1-ply back (the path INTO this node). Returns nullptr if either is
+// missing (root / null move / ply<2). Only touched when g_corr_cont is on. NB:
+// move_stack[td.ply] is the move that led to THIS node (1-ply back), so 2-ply back
+// is move_stack[td.ply-1] (same convention as the conthist-multi tables).
+static inline int16_t* td_cont_corr_bucket(ThreadData& td) {
+    if (td.ply < 1) return nullptr;
+    int m1 = td.move_stack[td.ply];          // 1-ply back (move into this node)
+    int m2 = td.move_stack[td.ply - 1];      // 2-ply back
+    if (!m1 || !m2) return nullptr;
+    return &td.cont_corr_hist[get_move_piece(m2)][get_move_target(m2)]
+                             [get_move_piece(m1)][get_move_target(m1)];
+}
+
 // Correction (cp) to add to the raw static eval for this position. Sums the pawn
 // table with the minor/major material tables when CorrHistMulti is on, then clamps
 // the TOTAL correction to g_corr_cap.
@@ -1996,6 +2041,10 @@ static inline int td_corr_value(ThreadData& td, int idx) {
     if (g_corr_multi) {
         sum += td.corr_hist_minor[td.side][td_corr_index_minor(td)];
         sum += td.corr_hist_major[td.side][td_corr_index_major(td)];
+    }
+    if (g_corr_cont) {
+        if (int16_t* cc = td_cont_corr_bucket(td))
+            sum += g_corr_cont_weight * (int)(*cc) / 100;
     }
     int corr = sum / CORR_GRAIN;
     if (corr >  g_corr_cap) corr =  g_corr_cap;
@@ -2029,6 +2078,13 @@ static inline void td_corr_update(ThreadData& td, int idx, int static_eval,
     if (g_corr_multi) {
         td_corr_bucket_update(td.corr_hist_minor[td.side][td_corr_index_minor(td)], target, w, lim);
         td_corr_bucket_update(td.corr_hist_major[td.side][td_corr_index_major(td)], target, w, lim);
+    }
+    if (g_corr_cont) {
+        if (int16_t* cc = td_cont_corr_bucket(td)) {
+            int cv = *cc;                       // gravity update on the int16 bucket
+            td_corr_bucket_update(cv, target, w, lim);
+            *cc = (int16_t)cv;                  // lim < 32767 -> always fits int16
+        }
     }
 }
 
@@ -2920,6 +2976,68 @@ static void td_policy_seed_history(ThreadData& td) {
         int bonus = (int)(g_policy_seed_scale * (pscores[cs * 64 + ct] - mean));
         td_update_history(td.history_moves[get_move_piece(m)][get_move_target(m)], bonus);
     }
+}
+
+// ----------------------------------------------------------------------------
+// Policy ENTROPY of the current position, normalized to [0,1]: a learned
+// "complexity / obviousness" signal. Low = one obvious move (peaked policy);
+// high = many plausible moves (flat policy). DISTINCT from move ORDERING (where a
+// weak policy loses to our history): a weak ranker can still gauge complexity.
+// out_top1 = max softmax prob over the (pseudo-legal) moves; out_n = move count.
+// Returns -1.0 if no policy net is loaded.
+double td_policy_entropy(ThreadData& td, double* out_top1, int* out_n) {
+    if (out_top1) *out_top1 = -1.0;
+    if (out_n)    *out_n    = 0;
+    if (!policy_loaded()) return -1.0;
+
+    static thread_local float pscores[4096];
+    evaluate_policy(td, pscores);   // canonical STM logits, index = from*64 + to
+
+    moves ml[1];
+    td_generate_moves(td, ml, false);
+    const bool wtm = (td.side == white);
+
+    double logit[256];
+    int n = 0;
+    for (int i = 0; i < ml->count && n < 256; i++) {
+        int m  = ml->moves[i];
+        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
+        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
+        logit[n++] = (double)pscores[cs * 64 + ct];
+    }
+    if (n <= 1) { if (out_top1) *out_top1 = 1.0; if (out_n) *out_n = n; return 0.0; }
+
+    // numerically-stable softmax over the move logits
+    double mx = logit[0];
+    for (int i = 1; i < n; i++) if (logit[i] > mx) mx = logit[i];
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) { logit[i] = exp(logit[i] - mx); sum += logit[i]; }
+
+    double H = 0.0, top1 = 0.0;
+    for (int i = 0; i < n; i++) {
+        double p = logit[i] / sum;
+        if (p > top1) top1 = p;
+        if (p > 1e-12) H -= p * log(p);
+    }
+    double Hnorm = H / log((double)n);   // / max entropy log(n) -> [0,1]
+    if (Hnorm < 0.0) Hnorm = 0.0; else if (Hnorm > 1.0) Hnorm = 1.0;
+    if (out_top1) *out_top1 = top1;
+    if (out_n)    *out_n    = n;
+    return Hnorm;
+}
+
+// Time-budget multiplier from the root policy entropy (EntropyTM). 1.0 when off or no
+// policy net (-> byte-identical when off). factor = 1 + scale*(Hnorm - center), clamped
+// to [0.5, 2.0]: complex positions (high entropy) get more time, obvious ones less.
+double policy_entropy_time_factor(ThreadData& td) {
+    if (!g_entropy_tm) return 1.0;
+    double top1; int nm;
+    double Hn = td_policy_entropy(td, &top1, &nm);
+    if (Hn < 0.0) return 1.0;
+    double center = g_entropy_tm_center / 100.0;
+    double f = 1.0 + (g_entropy_tm_scale / 100.0) * (Hn - center);
+    if (f < 0.5) f = 0.5; else if (f > 2.0) f = 2.0;
+    return f;
 }
 
 static void thread_search(int thread_id, int max_depth) {

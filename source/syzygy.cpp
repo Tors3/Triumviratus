@@ -12,7 +12,9 @@
  */
 // Fathom FIRST, before the engine headers: defs.h does `#define U64 ...`, and
 // pulling Fathom in ahead of that keeps the macro from touching its headers.
+#if defined(_MSC_VER)
 #include <intrin.h>           // _byteswap_uint64 (MSVC)
+#endif
 #include "fathom/tbprobe.h"   // tb_init/tb_free/tb_probe_wdl/tb_probe_root, TB_*
 
 #include "syzygy.h"
@@ -30,7 +32,13 @@ static const int TB_VALUE_WIN = mate_score - max_ply;   // 30000 - 64 = 29936
 // so a re-init can release the previous set first.
 static bool g_tb_initialized = false;
 
-static inline U64 flip_vertical(U64 b) { return _byteswap_uint64(b); }
+static inline U64 flip_vertical(U64 b) {
+#if defined(_MSC_VER)
+    return _byteswap_uint64(b);
+#else
+    return __builtin_bswap64(b);
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // init / shutdown

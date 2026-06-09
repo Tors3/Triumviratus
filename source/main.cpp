@@ -27,6 +27,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>        // readlink (/proc/self/exe) per risolvere la dir dell'eseguibile
+#include <sys/resource.h>  // setrlimit(RLIMIT_STACK): stack grande per i thread di ricerca
 #endif
 
 // Resolve an NNUE net filename to a path that exists, INDEPENDENT of the current
@@ -38,7 +41,8 @@
 //   2) <exe dir>\..\..\<name>    (project root, when exe sits in x64\Release)
 //   3) <name>                    (current working directory; legacy fallback)
 // Returns the first existing path, or an empty string if none is found.
-static std::string resolve_net_path(const std::string& name)
+// NON-static: also used by uci_mt.cpp to resolve a UCI "EvalFile" path at runtime.
+std::string resolve_net_path(const std::string& name)
 {
 #ifdef _WIN32
     char buf[MAX_PATH];
@@ -56,6 +60,27 @@ static std::string resolve_net_path(const std::string& name)
             {
                 std::ifstream f(c, std::ios::binary);
                 if (f.good()) return c;
+            }
+        }
+    }
+#else
+    {
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0)
+        {
+            std::string exePath(buf, (size_t)n);
+            size_t slash = exePath.find_last_of('/');
+            if (slash != std::string::npos)
+            {
+                std::string exeDir = exePath.substr(0, slash);
+                const std::string cands[] = { exeDir + "/" + name,
+                                              exeDir + "/../../" + name };
+                for (const std::string& c : cands)
+                {
+                    std::ifstream f(c, std::ios::binary);
+                    if (f.good()) return c;
+                }
             }
         }
     }
@@ -80,12 +105,43 @@ static std::string default_syzygy_dir()
         if (slash != std::string::npos)
             return exePath.substr(0, slash) + "\\Syzygy";
     }
+#else
+    {
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0)
+        {
+            std::string exePath(buf, (size_t)n);
+            size_t slash = exePath.find_last_of('/');
+            if (slash != std::string::npos)
+                return exePath.substr(0, slash) + "/Syzygy";
+        }
+    }
 #endif
     return std::string("Syzygy");
 }
 
 int main()
 {
+#ifndef _WIN32
+    // Linux: i thread di ricerca (std::thread = pthread) nascono con stack pari a
+    // RLIMIT_STACK (default ~8 MB). La ricorsione di td_negamax (depth + qsearch +
+    // estensioni, fino a ply 64) con frame grandi lo sfora -> stack-overflow/SEGV.
+    // MSVC linka l'exe con uno stack grande, per questo su Windows non si vede.
+    // Alziamo il soft limit a 256 MB PRIMA di creare qualunque thread (i pthread
+    // creati dopo ereditano lo stack grande).
+    {
+        struct rlimit rl;
+        if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+            const rlim_t want = (rlim_t)256 * 1024 * 1024;
+            if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < want) {
+                rl.rlim_cur = (rl.rlim_max == RLIM_INFINITY || rl.rlim_max >= want)
+                              ? want : rl.rlim_max;
+                setrlimit(RLIMIT_STACK, &rl);
+            }
+        }
+    }
+#endif
     // Banner di presentazione (appena si apre il motore)
     ascii_art();
 
@@ -98,18 +154,29 @@ int main()
     // Resolve the NNUE nets relative to the executable so the engine works from
     // ANY working directory. A missing net used to cause a SILENT eval=0 (junk
     // moves under cutechess); now we fail loudly instead of playing garbage.
-    const std::string bigNet   = resolve_net_path("nn-b1a57edbea57.nnue");
+    // Big net: default to OUR rubicon net; fall back to the SF-named net if the
+    // rubicon file is absent. The SPRT harness renames the candidate to
+    // nn-b1a57edbea57.nnue, so test folders (no nn-rubicon-v1.nnue) keep working
+    // unchanged via the fallback. Overridable at runtime via UCI "EvalFile".
+    std::string bigNet = resolve_net_path("nn-rubicon-v1.nnue");
+    const bool usingRubicon = !bigNet.empty();
+    if (bigNet.empty())
+        bigNet = resolve_net_path("nn-b1a57edbea57.nnue");
     const std::string smallNet = resolve_net_path("nn-baff1ede1f90.nnue");
     if (bigNet.empty() || smallNet.empty())
     {
-        std::cerr << "FATAL: NNUE net not found. Place nn-b1a57edbea57.nnue and "
-                     "nn-baff1ede1f90.nnue next to the executable (or in the "
-                     "project root) and restart." << std::endl;
+        std::cerr << "FATAL: NNUE net not found. Place nn-rubicon-v1.nnue (or the "
+                     "fallback nn-b1a57edbea57.nnue) and nn-baff1ede1f90.nnue next "
+                     "to the executable (or in the project root) and restart." << std::endl;
         return 1;
     }
 
     // Initialize the Stockfish HalfKAv2_hm NNUE probe (big + small nets).
     sf_init(bigNet.c_str(), smallNet.c_str());
+    printf("info string Big net: %s\n",
+           usingRubicon ? "nn-rubicon-v1.nnue (rubicon, default)"
+                        : "nn-b1a57edbea57.nnue (SF fallback)");
+    fflush(stdout);
 
     // Azzera i buffer in memoria allineati a 32-byte per l'AVX2
     init_policy();

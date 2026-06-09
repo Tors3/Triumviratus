@@ -8,6 +8,8 @@
 // sf_eval() builds a fresh local Position + thread_local scratch per call.
 
 #include "sf_bridge.h"
+#include <string>
+#include <fstream>
 #include "sfnnue/probe.h"
 #include "sfnnue/position.h"
 #include "sfnnue/evaluate.h"
@@ -67,8 +69,23 @@ void        sf_set_finny(int on) { g_finny = on != 0; }
 // sf_pos_eval). The old dual-board path and its toggle were removed after the
 // node-identity validation.
 
+// Remember the small-net path so a runtime big-net reload (UCI "EvalFile") can
+// re-init with the same small net (Probe::init takes both).
+static std::string g_small_net_path;
+
 void sf_init(const char* big_net, const char* small_net) {
+    g_small_net_path = small_net ? small_net : "";
     Stockfish::Probe::init(big_net, small_net);
+}
+
+int sf_reload_big(const char* big_net_path) {
+    if (!big_net_path || !*big_net_path) return 0;
+    {
+        std::ifstream f(big_net_path, std::ios::binary);
+        if (!f.good()) return 0;   // don't blow away the loaded net for a bad path
+    }
+    Stockfish::Probe::init(big_net_path, g_small_net_path.c_str());
+    return 1;
 }
 
 int sf_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
@@ -94,7 +111,13 @@ struct SfPos {
     // (handles are created with new), never shared between threads.
     Stockfish::Eval::NNUE::AccumulatorCaches caches;
 
-    SfPos() : st(SF_STACK), undo(SF_STACK), isNull(SF_STACK, false), ply(0) {}
+    SfPos() : st(SF_STACK), undo(SF_STACK), isNull(SF_STACK, false), ply(0) {
+        // Position non inizializza pos.st nel suo ctor: se un do/rescue gira PRIMA
+        // di sf_pos_set, begin_state legge prev=pos.st garbage -> SEGV (su Linux;
+        // su Windows il garbage era benigno). Puntiamo a st[0] (il vector e'
+        // value-initialized = zero) cosi' la lettura e' sempre valida.
+        pos.st = &st[0];
+    }
 };
 
 inline Color flip(Color c) { return c == WHITE ? BLACK : WHITE; }

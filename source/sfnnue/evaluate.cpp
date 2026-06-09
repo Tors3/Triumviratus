@@ -65,7 +65,7 @@ int g_small_net_threshold = 1050;  // RIPRISTINATO 782->1050 (2026-06-06): A/B d
 // vanno ri-tunate per noi (SPSA). Global namespace + extern in threads.cpp via
 // set_search_param. NON toccano la forward-pass SIMD (Elo, non NPS). Default =
 // valori SF (engine identico finche' non tunato). Devono combaciare coi default UCI.
-int g_eval_optimism      = 600;    // BAKED 2026-06-06: 600 vs 915 = +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 troppo ottimista per la NOSTRA ricerca. Optimum forse <600 (2nd SPSA pass). v = nnue*(EvalOptimism + npm + EvalPawnScale*pawns)/1024
+int g_eval_optimism      = 395;    // [3.7 BAKE 600->395, SPSA-37 su over_last] BAKED 2026-06-06: 600 vs 915 = +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 troppo ottimista per la NOSTRA ricerca. v = nnue*(EvalOptimism + npm + EvalPawnScale*pawns)/1024
 int g_eval_pawn_scale    = 9;      // peso del conteggio pedoni nell'optimism
 int g_eval_complexity_div= 32768;  // divisore del damping di complessita'
 // EvalBlendDelta (psqt vs positional) vive in evaluate_nnue.cpp (namespace NNUE) -> qui sotto.

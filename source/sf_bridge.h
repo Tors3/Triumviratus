@@ -9,6 +9,12 @@
 // Load the two networks (big + small). Call once at startup.
 void sf_init(const char* big_net, const char* small_net);
 
+// Reload ONLY the big net at runtime (UCI option "EvalFile"). The small net keeps
+// the path given to sf_init(). Safe to call when no search is running: the next
+// search root clears the finny cache and does a full refresh, so no stale state.
+// Returns 1 on success (file opened + loaded), 0 if the path could not be opened.
+int sf_reload_big(const char* big_net_path);
+
 // Toggle the per-thread accumulator refresh cache ("finny tables"). on != 0
 // enables it. Default OFF => byte-identical to the pre-finny engine. Pure NPS
 // optimisation: the evaluation value is bit-identical with it on or off.

@@ -12,6 +12,11 @@
 // when stored/read from the TT. Stockfish uses the same idea (VALUE_MATE well
 // under 32767). The gap mate_value - mate_score (1000) exceeds max_ply, so
 // real (non-mate) evaluations never reach the mate band.
+// GCC/libstdc++: <cmath> include <bits/specfun.h> che usa
+// numeric_limits<T>::infinity(); preincludiamo QUI (prima del #define infinity)
+// cosi' le loro include-guard impediscono che la macro li "avveleni" piu' avanti.
+#include <cmath>
+#include <limits>
 #define infinity 32000
 #define mate_value 31000
 #define mate_score 30000

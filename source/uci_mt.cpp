@@ -24,6 +24,12 @@
 extern "C" int __llvm_profile_write_file(void);
 #endif
 #include <string.h>
+#include <string>
+
+// Defined in main.cpp: resolve an NNUE filename/path to an existing path
+// (tries the path as given, then next to the exe, then cwd). Used by the UCI
+// "EvalFile" handler to load a big net specified at runtime.
+std::string resolve_net_path(const std::string& name);
 
 // parse user/GUI move string input (e.g. "e7e8q")
 int parse_move(char* move_string)
@@ -188,6 +194,13 @@ void parse_go(char* command)
         {
             int mtg = (movestogo > 0) ? movestogo : g_tm_movestogo;  // assunzione moves-to-go (tunable)
             optimum = remaining / mtg + inc * g_tm_inc_frac / 100;    // quota base + % incremento (tunable)
+            // EntropyTM (default off -> byte-identico): scala l'optimum per l'entropia
+            // della policy al root (complessita' appresa). Una forward, costo per-nodo 0.
+            if (g_entropy_tm) {
+                copy_board_to_thread(thread_data[0]);
+                optimum = (int)(optimum * policy_entropy_time_factor(thread_data[0]));
+                if (optimum < 1) optimum = 1;
+            }
             maximum = optimum * g_tm_max_mult / 100;                   // burst su posizioni difficili (tunable)
             int cap = remaining * 4 / 5;                    // never risk more than ~80% of the clock
             if (maximum > cap) maximum = cap;
@@ -267,7 +280,11 @@ void uci_loop()
             printf("option name UsePolicy type check default false\n");
             printf("option name PolicySeed type check default false\n");                  // offline ordering: seed butterfly history dal prior policy (costo per-nodo 0)
             printf("option name PolicySeedScale type spin default 300 min 0 max 2000\n");  // magnitudine seed = scale*(logit-mean)
+            printf("option name EntropyTM type check default false\n");                    // NOVEL: tempo scalato dall'entropia policy al root (complessita' appresa)
+            printf("option name EntropyTMScale type spin default 60 min 0 max 400\n");      // /100 ampiezza scaling tempo; co-tunabile
+            printf("option name EntropyTMCenter type spin default 50 min 0 max 100\n");     // /100 entropia neutra (factor 1); settare ~media misurata dal diag
             printf("option name EvalOff type check default false\n");
+            printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // big net runtime-selezionabile; default rubicon, fallback nn-b1a57edbea57 (SF)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)
@@ -279,8 +296,10 @@ void uci_loop()
             printf("option name ContHistPrune type check default true\n");
             printf("option name TT4Way type check default false\n");
             printf("option name CorrHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
+            printf("option name CorrHistCont type check default false\n");    // continuation correction history (SF): corregge la static eval per le ultime 2 mosse nel cammino
+            printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
-            printf("option name PawnHistoryWeight type spin default 200 min 0 max 800\n");  // peso pawn-history /100 (200=2.0x SF; SPSA-friendly, permette <1)
+            printf("option name PawnHistoryWeight type spin default 83 min 0 max 800\n");  // [3.7] peso pawn-history /100
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
             printf("option name ThreatScale type spin default 300 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
@@ -291,9 +310,9 @@ void uci_loop()
             printf("option name PriorBonusScale type spin default 100 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
             printf("option name LowPlyHistory type check default false\n");    // #5: history per-ply near-root nell'ordering quiet
             printf("option name LowPlyWeight type spin default 30 min 0 max 200\n");  // contributo lowply; co-tunabile
-            printf("option name MainHistWeight type spin default 100 min 50 max 400\n");    // peso main history /100 (100=1.0x; SF=200=2.0x)
-            printf("option name ContHistWeight type spin default 100 min 50 max 400\n");    // peso continuation-history /100 (100=1.0x)
-            printf("option name LMPScale type spin default 100 min 30 max 250\n");     // scala % soglia LMP (co-tune con l'ordering)
+            printf("option name MainHistWeight type spin default 131 min 50 max 400\n");    // [3.7] peso main history /100
+            printf("option name ContHistWeight type spin default 150 min 50 max 400\n");    // [3.7] peso continuation-history /100
+            printf("option name LMPScale type spin default 116 min 30 max 250\n");     // [3.7] scala % soglia LMP
             printf("option name ContHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
             printf("option name MovePicker type check default true\n");
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
@@ -323,21 +342,21 @@ void uci_loop()
             printf("option name StatScoreLMR type check default true\n");                          // LMR butterfly continua (fix sotto-riduzione vs SF15.1)
             printf("option name ContHistLMR type check default true\n");                           // conthist 1/2/4 ply nella LMR
             printf("option name CutNodeLMR type check default false\n");                            // riduzione extra sui cut-node
-            printf("option name LMRStatScoreDiv type spin default 7000 min 1000 max 30000\n");      // StatScoreLMR: divisore butterfly
-            printf("option name LMRStatScoreOffset type spin default 4600 min -4000 max 12000\n");    // StatScoreLMR: offset punto neutro (SF ~4600)
-            printf("option name LMRContHistDiv type spin default 10000 min 1000 max 40000\n");       // ContHistLMR: divisore conthist
+            printf("option name LMRStatScoreDiv type spin default 7585 min 1000 max 30000\n");      // [3.7] StatScoreLMR: divisore butterfly
+            printf("option name LMRStatScoreOffset type spin default 2435 min -4000 max 12000\n");    // [3.7] StatScoreLMR: offset punto neutro
+            printf("option name LMRContHistDiv type spin default 3506 min 1000 max 40000\n");       // [3.7] ContHistLMR: divisore conthist
             printf("option name CutNodeLMRExtra type spin default 1 min 0 max 3\n");                 // CutNodeLMR: ply extra
             printf("option name NMPBase type spin default 3 min 1 max 6\n");
             printf("option name NMPDiv type spin default 4 min 2 max 8\n");
             printf("option name LMREvalMargin type spin default 100 min 0 max 400\n");
             printf("option name LMRTTDepth type spin default 2 min 0 max 3\n");
-            printf("option name LMRBase type spin default 47 min 0 max 200\n");
-            printf("option name LMRDiv type spin default 270 min 100 max 500\n");
+            printf("option name LMRBase type spin default 37 min 0 max 200\n");   // [3.7]
+            printf("option name LMRDiv type spin default 310 min 100 max 500\n");   // [3.7]
             printf("option name RFPMargin type spin default 21 min 20 max 200\n");        // bakato: 30->21
             printf("option name RazorBase type spin default 300 min 100 max 600\n");
             printf("option name RazorMult type spin default 139 min 20 max 250\n");       // bakato: 102->139
             printf("option name FutilityBase type spin default 111 min 20 max 300\n");
-            printf("option name FutilityMult type spin default 66 min 20 max 200\n");
+            printf("option name FutilityMult type spin default 41 min 20 max 200\n");   // [3.7]
             printf("option name FutilityImproving type spin default 93 min 0 max 200\n"); // bakato: 60->93
             printf("option name SingularDoubleMargin type spin default 43 min 0 max 200\n"); // bakato: 63->43
             printf("option name HistReductionDiv type spin default 1041 min 500 max 8000\n"); // bakato: 3500->1041
@@ -347,13 +366,13 @@ void uci_loop()
             printf("option name CorrCap type spin default 32 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 512 min 64 max 2048\n");
             printf("option name ContHistDiv type spin default 6595 min 1000 max 12000\n");
-            printf("option name HistPruneMargin type spin default 1000 min 200 max 4000\n");
+            printf("option name HistPruneMargin type spin default 1691 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 90 min 20 max 300\n");
-            printf("option name SEEQuietMargin type spin default 50 min 10 max 200\n");
+            printf("option name SEEQuietMargin type spin default 96 min 10 max 200\n");   // [3.7]
             printf("option name DeeperMargin type spin default 52 min 0 max 30000\n");  // max alto: 30000 = doDeeper OFF (mai > mate)
             printf("option name ShallowerMargin type spin default 9 min -1000 max 200\n");  // -1000 = doShallower OFF
             printf("option name SmallNetThreshold type spin default 1050 min 300 max 2000\n"); // RIPRISTINATO 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau)
-            printf("option name EvalOptimism type spin default 600 min 200 max 1200\n");        // eval-wrapper: BAKED 600 (+51.8 Elo vs SF-default 915); min 200 per 2nd SPSA pass sotto 600
+            printf("option name EvalOptimism type spin default 395 min 200 max 1200\n");        // [3.7] eval-wrapper: BAKED 395 (SPSA-37 su over_last); era 600
             printf("option name EvalPawnScale type spin default 9 min 0 max 40\n");
             printf("option name EvalComplexityDiv type spin default 32768 min 8192 max 65536\n");
             printf("option name EvalBlendDelta type spin default 24 min 0 max 96\n");
@@ -382,6 +401,19 @@ void uci_loop()
             sf_acc_stats();
         }
 
+        // DIAGNOSTIC: "policyentropy" -> normalized policy entropy [0,1] of the
+        // current position (+ top1 prob, move count). For the entropy-vs-difficulty
+        // correlation test (does policy entropy track position complexity?).
+        else if (strncmp(input, "policyentropy", 13) == 0)
+        {
+            copy_board_to_thread(thread_data[0]);
+            double top1; int nm;
+            double Hn = td_policy_entropy(thread_data[0], &top1, &nm);
+            if (Hn < 0.0) printf("info string policyentropy: no policy net loaded\n");
+            else printf("info string policyentropy Hnorm %.4f top1 %.4f moves %d\n", Hn, top1, nm);
+            fflush(stdout);
+        }
+
 
 
        // UCI command: "ucinewgame"
@@ -399,6 +431,7 @@ void uci_loop()
                 memset(thread_data[i].capture_history, 0, sizeof(thread_data[i].capture_history));
                 memset(thread_data[i].counter_moves, 0, sizeof(thread_data[i].counter_moves));
                 memset(thread_data[i].continuation_history, 0, sizeof(thread_data[i].continuation_history));
+                memset(thread_data[i].cont_corr_hist, 0, sizeof(thread_data[i].cont_corr_hist));   // move-context corr table: un pattern di un'altra partita = rumore (come continuation_history)
                 memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));   // mancava: si trascinava tra partite (SF la azzera su ucinewgame)
                 memset(thread_data[i].lowply_history, 0, sizeof(thread_data[i].lowply_history));
             }
@@ -452,6 +485,26 @@ void uci_loop()
             if (mb < 1) mb = 1;
             if (mb > max_hash) mb = max_hash;
             init_hash_table(mb);
+        }
+
+        // UCI command: "setoption name EvalFile value <path>" -> reload the big net.
+        // Default at startup is nn-rubicon-v1.nnue (fallback nn-b1a57edbea57.nnue).
+        else if (strncmp(input, "setoption name EvalFile value ", 30) == 0)
+        {
+            // Swapping the net under a running search would read half-loaded
+            // weights; stop first (mirrors the Hash/Threads handlers). The next
+            // search root clears the finny cache + full-refreshes, so it's clean.
+            stop_search_threads();
+            wait_for_search_done();
+            const char* val = input + 30;
+            std::string resolved = resolve_net_path(val);
+            if (resolved.empty())
+                printf("info string EvalFile: '%s' not found (kept current net)\n", val);
+            else if (sf_reload_big(resolved.c_str()))
+                printf("info string EvalFile: loaded %s\n", resolved.c_str());
+            else
+                printf("info string EvalFile: failed to open %s (kept current net)\n", resolved.c_str());
+            fflush(stdout);
         }
 
         // UCI command: "setoption name Threads value X"
@@ -509,6 +562,13 @@ void uci_loop()
         {
             const char* v = input + 32;
             set_policy_seed(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // EntropyTM (NOVEL): A/B toggle. Gli spin EntropyTMScale/Center cadono nel
+        // gestore generico (nome piu' lungo, niente collisione col " value " a idx 31).
+        else if (strncmp(input, "setoption name EntropyTM value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_entropy_tm(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // DIAGNOSTIC: "setoption name EvalOff value <true|false>" (NPS profiling)
@@ -738,6 +798,13 @@ void uci_loop()
         {
             const char* v = input + 32;
             set_conthist36(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // CorrHistCont (continuation correction history, SF): A/B toggle. Lo spin
+        // "CorrContWeight" cade nel gestore generico (nome diverso, nessuna collisione).
+        else if (strncmp(input, "setoption name CorrHistCont value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_corr_cont(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         // V2 PriorBonus + #5 LowPlyHistory: A/B toggle. Gli spin (PriorBonusScale/LowPlyWeight)
         // cadono nel gestore generico (25esimo/22esimo char != ' ' di " value ").
