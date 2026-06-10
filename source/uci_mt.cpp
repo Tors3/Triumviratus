@@ -15,6 +15,7 @@
 #include "syzygy.h"
 #include "perft.h"
 #include "sf_bridge.h"   // sf_acc_stats (diagnostic "accstats" command)
+#include "policy_bridge.h"   // load_policy (handler "PolicyFile")
 #include <thread>
 
 #ifdef CLANG_PGO_GEN
@@ -282,7 +283,12 @@ void uci_loop()
             printf("option name PolicySeedScale type spin default 300 min 0 max 2000\n");  // magnitudine seed = scale*(logit-mean)
             printf("option name EntropyTM type check default false\n");                    // NOVEL: tempo scalato dall'entropia policy al root (complessita' appresa)
             printf("option name EntropyTMScale type spin default 60 min 0 max 400\n");      // /100 ampiezza scaling tempo; co-tunabile
-            printf("option name EntropyTMCenter type spin default 50 min 0 max 100\n");     // /100 entropia neutra (factor 1); settare ~media misurata dal diag
+            printf("option name EntropyTMCenter type spin default 50 min 0 max 100\n");     // /100 entropia neutra (factor 1); seed dell'EMA in modalita' adattiva
+            printf("option name EntropyTMAdaptive type check default true\n");               // v2: center = EMA per-partita (no calibrazione per-rete)
+            printf("option name PolicyEasyMove type check default false\n");                 // TM reduce-only: search conferma top-move policy -> stop prima
+            printf("option name PolicyEasyTop1 type spin default 40 min 0 max 100\n");       // /100 prob minima del prior per "mossa ovvia"
+            printf("option name PolicyEasyScale type spin default 85 min 10 max 100\n");     // /100 moltiplicatore durata quando conferma
+            printf("option name PolicyFile type string default triumviratus_policy.bin\n");  // policy net runtime-selezionabile (A/B reti, stesso exe)
             printf("option name EvalOff type check default false\n");
             printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // big net runtime-selezionabile; default rubicon, fallback nn-b1a57edbea57 (SF)
             printf("option name EvalCache type check default true\n");
@@ -295,6 +301,14 @@ void uci_loop()
             printf("option name ProbCut type check default true\n");
             printf("option name ContHistPrune type check default true\n");
             printf("option name TT4Way type check default false\n");
+            printf("option name TTEvalImprove type check default true\n");   // P1.1: tt_score come eval migliorata nelle decisioni di pruning
+            printf("option name UpcomingRep type check default true\n");     // P1.2: ripetizione imminente (cuckoo) -> alpha >= 0
+            // Toggle di ablazione dei fix 3.8 (OFF = comportamento 3.7) — night tournament
+            printf("option name TTMove24 type check default true\n");        // P0.1 TT move 24 bit
+            printf("option name SeeFix type check default true\n");          // P0.2 SEE quiet + e.p.
+            printf("option name KillerLMRFix type check default true\n");    // P0.3 sconto LMR killer
+            printf("option name QsearchCorr type check default true\n");     // P0.4 corr in qsearch
+            printf("option name ImprovingFix type check default true\n");    // P0.6 sentinel improving
             printf("option name CorrHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
             printf("option name CorrHistCont type check default false\n");    // continuation correction history (SF): corregge la static eval per le ultime 2 mosse nel cammino
             printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
@@ -303,7 +317,7 @@ void uci_loop()
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
             printf("option name ThreatScale type spin default 300 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
-            printf("option name CheckBonus type spin default 8000 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile
+            printf("option name CheckBonus type spin default 4201 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
             printf("option name ContHist36Weight type spin default 100 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
             printf("option name PriorBonus type check default false\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)
@@ -434,7 +448,20 @@ void uci_loop()
                 memset(thread_data[i].cont_corr_hist, 0, sizeof(thread_data[i].cont_corr_hist));   // move-context corr table: un pattern di un'altra partita = rumore (come continuation_history)
                 memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));   // mancava: si trascinava tra partite (SF la azzera su ucinewgame)
                 memset(thread_data[i].lowply_history, 0, sizeof(thread_data[i].lowply_history));
+                // FIX P0.5 (2026-06-09): mancavano le conthist multi-ply e le TRE
+                // correction history -> si trascinavano tra partite (stessa classe
+                // di contaminazione dello sweep HistBonusMult). SF azzera tutto.
+                memset(thread_data[i].cont_hist_2, 0, sizeof(thread_data[i].cont_hist_2));
+                memset(thread_data[i].cont_hist_3, 0, sizeof(thread_data[i].cont_hist_3));
+                memset(thread_data[i].cont_hist_4, 0, sizeof(thread_data[i].cont_hist_4));
+                memset(thread_data[i].cont_hist_6, 0, sizeof(thread_data[i].cont_hist_6));
+                memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
+                memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
+                memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
             }
+            // EntropyTM v2: l'EMA dell'entropia e' per-partita -> azzerala qui
+            // (un residuo della partita precedente falserebbe il center adattivo).
+            reset_entropy_tm_state();
         }
 
         // UCI command: "position"
@@ -569,6 +596,35 @@ void uci_loop()
         {
             const char* v = input + 31;
             set_entropy_tm(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // EntropyTM v2: center adattivo (EMA per-partita) on/off.
+        else if (strncmp(input, "setoption name EntropyTMAdaptive value ", 39) == 0)
+        {
+            const char* v = input + 39;
+            set_entropy_tm_adaptive(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // PolicyEasyMove: TM reduce-only (search conferma la top-move del prior ->
+        // stop prima). Gli spin PolicyEasyTop1/Scale cadono nel gestore generico.
+        else if (strncmp(input, "setoption name PolicyEasyMove value ", 36) == 0)
+        {
+            const char* v = input + 36;
+            set_policy_easy(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // "setoption name PolicyFile value <path>" -> ricarica la policy net a runtime
+        // (A/B fra .bin diversi con lo STESSO exe, come EvalFile per la NNUE).
+        else if (strncmp(input, "setoption name PolicyFile value ", 32) == 0)
+        {
+            // Swapping weights under a running search would read half-loaded data.
+            stop_search_threads();
+            wait_for_search_done();
+            const char* val = input + 32;
+            std::string resolved = resolve_net_path(val);
+            if (resolved.empty()) resolved = val;   // path assoluto/relativo cosi' com'e'
+            if (load_policy(resolved.c_str()))
+                printf("info string PolicyFile: loaded %s\n", resolved.c_str());
+            else
+                printf("info string PolicyFile: failed to open %s (kept current net)\n", resolved.c_str());
+            fflush(stdout);
         }
 
         // DIAGNOSTIC: "setoption name EvalOff value <true|false>" (NPS profiling)
@@ -719,6 +775,47 @@ void uci_loop()
         {
             const char* v = input + 28;
             set_tt_4way(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // "setoption name TTEvalImprove value <true|false>" (P1.1: tt_score come eval)
+        else if (strncmp(input, "setoption name TTEvalImprove value ", 35) == 0)
+        {
+            const char* v = input + 35;
+            set_tt_eval_improve(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // "setoption name UpcomingRep value <true|false>" (P1.2: cuckoo anti-shuffling)
+        else if (strncmp(input, "setoption name UpcomingRep value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_upcoming_rep(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // Toggle di ablazione dei fix 3.8 (night tournament; OFF = comportamento 3.7)
+        else if (strncmp(input, "setoption name TTMove24 value ", 30) == 0)
+        {
+            const char* v = input + 30;
+            set_ttmove24(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name SeeFix value ", 28) == 0)
+        {
+            const char* v = input + 28;
+            set_see_fix(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name KillerLMRFix value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_killer_lmr_fix(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name QsearchCorr value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_qsearch_corr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name ImprovingFix value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_improving_fix(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // "setoption name CorrHistMulti value <true|false>" (A/B multi-table corrhist)

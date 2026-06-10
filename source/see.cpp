@@ -67,6 +67,11 @@ static inline int get_lva(U64 bb[12], U64 occ[3], int square, int side, int* fro
     return -1;
 }
 
+// SeeFix (UCI "SeeFix", default ON) — ablazione del FIX P0.2: quando OFF, le mosse
+// quiet tornano a SEE=0 (come 3.7: quiet-SEE-pruning e filtro CheckOrdering inerti)
+// e l'en-passant torna a rimuovere il pedone dalla casa sbagliata. Definita in threads.cpp.
+extern bool g_see_fix;
+
 // SEE implementation
 int td_see(ThreadData& td, int move) {
     int from = get_move_source(move);
@@ -85,35 +90,49 @@ int td_see(ThreadData& td, int move) {
         }
     }
     
-    // En passant
+    // En passant: il pedone catturato NON sta su `to` ma su to±8.
+    int captured_sq = to;
     if (get_move_enpassant(move)) {
         captured = (td.side == white) ? p : P;
+        if (g_see_fix)
+            captured_sq = (td.side == white) ? to + 8 : to - 8;   // FIX P0.2b: era rimosso da `to`
     }
-    
-    // Not a capture
-    if (captured == -1) return 0;
-    
+
+    // Ablazione P0.2 (SeeFix off): comportamento 3.7 = SEE 0 per le quiet.
+    if (captured == -1 && !g_see_fix) return 0;
+
+    // FIX P0.2 (2026-06-09): SEE anche per le mosse QUIET (prima: return 0).
+    // Per una quiet lo scambio inizia con la cattura avversaria meno cara su `to`
+    // (gain[0] = 0). Con il vecchio "return 0": (a) il SEE-pruning dei quiet
+    // (threads.cpp, SEEQuietMargin) non scattava MAI; (b) il filtro SEE>=-75 del
+    // CheckOrdering era un no-op. NB: le promozioni restano fuori scope (il
+    // chiamante le esclude gia' dal SEE-pruning).
+
     // Local copy for simulation
     U64 bb[12], occ[3];
     memcpy(bb, td.bitboards, sizeof(td.bitboards));
     memcpy(occ, td.occupancies, sizeof(td.occupancies));
-    
+
     int gain[32];
     int depth = 0;
     int current_side = td.side;
-    
-    // Initial gain
-    gain[0] = see_piece_values[captured];
-    
+
+    // Initial gain (0 per le quiet: nessun pezzo incassato dalla mossa stessa)
+    gain[0] = (captured != -1) ? see_piece_values[captured] : 0;
+
     // Remove attacker from source
     pop_bit(bb[piece], from);
     pop_bit(occ[current_side], from);
     pop_bit(occ[both], from);
-    
-    // Remove captured from target
-    pop_bit(bb[captured], to);
-    pop_bit(occ[current_side ^ 1], to);
-    
+
+    // Remove captured from its square (== `to` salvo en passant)
+    if (captured != -1) {
+        pop_bit(bb[captured], captured_sq);
+        pop_bit(occ[current_side ^ 1], captured_sq);
+        if (captured_sq != to)                     // e.p.: libera anche occ[both]
+            pop_bit(occ[both], captured_sq);
+    }
+
     // Attacker now on target
     set_bit(bb[piece], to);
     set_bit(occ[current_side], to);

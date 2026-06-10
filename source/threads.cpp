@@ -85,6 +85,29 @@ void set_entropy_tm(bool v) { g_entropy_tm = v; }
 static int g_entropy_tm_scale  = 60;   // /100 ampiezza scaling: factor = 1 + scale/100*(Hnorm - center/100)
 static int g_entropy_tm_center = 50;   // /100 entropia "neutra" (factor 1); settare ~media misurata dal diag
 
+// EntropyTM v2 (2026-06-10): center ADATTIVO. Un center fisso e' net-dependent (ogni
+// .bin ha la sua entropia media) e drifta con la fase di gioco (l'entropia cala via
+// via che il materiale esce) -> un center statico accorcerebbe sistematicamente il
+// tempo di una fase. Col center = EMA per-partita dell'Hnorm misurata, il segnale
+// diventa "piu'/meno complessa del TIPICO di questa partita" e non richiede nessuna
+// calibrazione per-rete. La prima mossa usa il center statico come seed. Reset su
+// ucinewgame (reset_entropy_tm_state). Scritta solo dal thread UCI (parse_go).
+bool g_entropy_tm_adaptive = true;
+void set_entropy_tm_adaptive(bool v) { g_entropy_tm_adaptive = v; }
+static double g_entropy_ema = -1.0;    // <0 = nessun campione ancora
+void reset_entropy_tm_state() { g_entropy_ema = -1.0; }
+
+// PolicyEasyMove (2026-06-10, UCI "PolicyEasyMove", default OFF = byte-identico).
+// TM REDUCE-ONLY: una forward al root da' la top-move della policy + la sua prob;
+// se il best move della SEARCH e' quella stessa mossa e il prior e' confidente, due
+// giudici INDIPENDENTI concordano che la mossa e' ovvia -> ferma prima (come NodeTM,
+// ma con un segnale appreso e search-independent). Non estende mai -> non puo'
+// bruciare il clock. NON tocca il move ordering (i 3 blocchi non si applicano).
+bool g_policy_easy = false;
+void set_policy_easy(bool v) { g_policy_easy = v; }
+static int g_policy_easy_top1  = 40;   // /100: prob softmax minima per dire "mossa ovvia"
+static int g_policy_easy_scale = 85;   // /100: moltiplicatore della durata quando la search conferma
+
 // Eval-off DIAGNOSTIC toggle (UCI option "EvalOff", default false). Replaces the
 // NNUE forward in td_evaluate() with a trivial material count, so an NPS test can
 // measure how much per-node time is spent in evaluation (NNUE forward) vs the
@@ -165,6 +188,11 @@ int g_lmp_scale = 116;   // [3.7 BAKE 93->116]
 // Forward-decl: td_corr_index (pawn-only Zobrist bucket) e' definita piu' sotto, ma
 // serve qui sopra in td_score_move per la pawn-key.
 static inline int td_corr_index(ThreadData& td);
+// Forward-decl: td_corr_value serve anche in td_quiescence (P0.4), definita dopo.
+static inline int td_corr_value(ThreadData& td, int idx);
+// Forward-decl: init tabelle cuckoo/between per l'upcoming-repetition (P1.2),
+// chiamata da init_threads (Zobrist + magic gia' inizializzati a quel punto).
+static void init_cuckoo();
 
 // ProbCut on/off (UCI option "ProbCut"). Default ON: validated +Elo (SPRT @8+0.08,
 // LOS ~83% / leaning +6, textbook technique). When on: at sufficient depth, if a
@@ -310,6 +338,38 @@ int g_caphist_div = 14;   // bakato SPSA 16->14 (rock-solid in convergenza)
 // the TT. Toggle for a clean A/B.
 bool g_tt_4way = false;
 void set_tt_4way(bool v) { g_tt_4way = v; }
+
+// Sentinella "nessuna static eval a questo ply" per eval_stack (FIX P0.6): scritta
+// ai nodi in scacco quando LazyEval salta la NNUE. Fuori dal range eval reale.
+#define EVAL_NONE (-32100)
+
+// TTEvalImprove (UCI "TTEvalImprove", default ON — P1.1 2026-06-09): usa tt_score
+// (se il bound e' coerente) al posto della static eval nelle decisioni di pruning.
+// E' informazione di qualita'-search gia' pagata: SF lo fa da sempre. Toggle per A/B.
+static bool g_tt_eval_improve = true;
+void set_tt_eval_improve(bool v) { g_tt_eval_improve = v; }
+
+// UpcomingRep (UCI "UpcomingRep", default ON — P1.2 2026-06-09): rilevazione
+// "ripetizione imminente" (cuckoo, Kervinck/SF has_game_cycle): ai nodi non-root con
+// alpha < 0, se esiste una mossa reversibile che riporta in una posizione gia' vista,
+// alza alpha a 0 (lato anti-shuffling). Tabelle cuckoo inizializzate in init_threads.
+static bool g_upcoming_rep = true;
+void set_upcoming_rep(bool v) { g_upcoming_rep = v; }
+
+// ---- TOGGLE DI ABLAZIONE dei fix 3.8 (night tournament, 2026-06-09) ----------
+// Ogni fix P0 incondizionato della 3.8 e' gated da un toggle default ON: UN solo
+// exe isola ogni fix via fastchess `option.X=false`. Tutti OFF (+ TTEvalImprove e
+// UpcomingRep OFF) = search-identico alla 3.7 (node-identity verificabile).
+bool g_ttmove24 = true;               // P0.1: TT move 24 bit (OFF = troncamento 21-bit come 3.7). extern in tt.h.
+void set_ttmove24(bool v) { g_ttmove24 = v; }
+bool g_see_fix = true;                // P0.2: SEE sui quiet + casa e.p. corretta (OFF = SEE=0 sui quiet). extern in see.cpp.
+void set_see_fix(bool v) { g_see_fix = v; }
+static bool g_killer_lmr_fix = true;  // P0.3: sconto LMR killer al ply del nodo (OFF = nessuno sconto, come il dead-code 3.7)
+void set_killer_lmr_fix(bool v) { g_killer_lmr_fix = v; }
+static bool g_qsearch_corr = true;    // P0.4: corr-history sullo stand-pat di qsearch (OFF = solo nodi interni)
+void set_qsearch_corr(bool v) { g_qsearch_corr = v; }
+static bool g_improving_fix = true;   // P0.6: sentinel EVAL_NONE + fallback ply-4 (OFF = confronto col vecchio 0)
+void set_improving_fix(bool v) { g_improving_fix = v; }
 
 // Lazy eval on/off (UCI option "LazyEval"). Default ON (CONFIRMED: combined with
 // TimeMgmt, +9.1 Elo LOS 96% @1+0.01, estimate held over 3k+ games). Skips the
@@ -487,6 +547,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "PolicySeedScale"))     { g_policy_seed_scale  = value; return true; }
     if (!strcmp(name, "EntropyTMScale"))      { g_entropy_tm_scale  = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "EntropyTMCenter"))     { g_entropy_tm_center = value < 0 ? 0 : (value > 100 ? 100 : value); return true; }
+    if (!strcmp(name, "PolicyEasyTop1"))      { g_policy_easy_top1  = value < 0 ? 0 : (value > 100 ? 100 : value); return true; }
+    if (!strcmp(name, "PolicyEasyScale"))     { g_policy_easy_scale = value < 10 ? 10 : (value > 100 ? 100 : value); return true; }
     if (!strcmp(name, "LMRStatScoreDiv"))     { g_lmr_ss_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "LMRStatScoreOffset"))  { g_lmr_ss_offset      = value; return true; }
     if (!strcmp(name, "LMRContHistDiv"))      { g_lmr_ch_div = value < 1 ? 1 : value; return true; }
@@ -614,6 +676,14 @@ void init_threads(int thread_count) {
     if (!lmr_initialized) {
         init_lmr_table();
         lmr_initialized = true;
+    }
+
+    // P1.2: tabelle cuckoo + between per l'upcoming-repetition. Qui Zobrist e
+    // magic sono gia' pronti (init_bitboards gira prima in main). Una volta sola.
+    static bool cuckoo_initialized = false;
+    if (!cuckoo_initialized) {
+        init_cuckoo();
+        cuckoo_initialized = true;
     }
 
     for (int i = 0; i < num_threads; i++) {
@@ -1817,6 +1887,98 @@ static int mp_next(ThreadData& td, MovePicker& mp) {
 // REPETITION DETECTION
 // ============================================================================
 
+// ============================================================================
+// UPCOMING REPETITION (P1.2, 2026-06-09) — cuckoo, Kervinck / SF has_game_cycle
+// ============================================================================
+// cuckoo_key[i] = piece_keys[pc][s1] ^ piece_keys[pc][s2] ^ side_key per OGNI
+// mossa reversibile (pezzi non-pedone, coppie raggiungibili su board vuota; 3668
+// in tutto, come SF). cuckoo_move[i] = s1 | (s2 << 6). between_tbl[s1][s2] =
+// case STRETTAMENTE tra s1 e s2 (0 per cavallo / case non allineate).
+static U64 cuckoo_key[8192];
+static int cuckoo_move[8192];
+static U64 between_tbl[64][64];
+
+static inline int cuckoo_h1(U64 h) { return (int)(h & 0x1FFF); }
+static inline int cuckoo_h2(U64 h) { return (int)((h >> 16) & 0x1FFF); }
+
+static void init_cuckoo() {
+    memset(cuckoo_key,  0, sizeof(cuckoo_key));
+    memset(cuckoo_move, 0, sizeof(cuckoo_move));
+
+    for (int s1 = 0; s1 < 64; s1++)
+        for (int s2 = 0; s2 < 64; s2++) {
+            between_tbl[s1][s2] = 0;
+            if (s1 == s2) continue;
+            // Intersezione dei raggi con l'altra casa come unica occupazione =
+            // case strettamente comprese (gli estremi si elidono da soli).
+            if (get_rook_attacks(s1, 0ULL) & (1ULL << s2))
+                between_tbl[s1][s2] = get_rook_attacks(s1, 1ULL << s2) &
+                                      get_rook_attacks(s2, 1ULL << s1);
+            else if (get_bishop_attacks(s1, 0ULL) & (1ULL << s2))
+                between_tbl[s1][s2] = get_bishop_attacks(s1, 1ULL << s2) &
+                                      get_bishop_attacks(s2, 1ULL << s1);
+        }
+
+    static const int rev_pieces[10] = { N, B, R, Q, K, n, b, r, q, k };
+    for (int pi = 0; pi < 10; pi++) {
+        const int pc = rev_pieces[pi];
+        for (int s1 = 0; s1 < 64; s1++) {
+            U64 att;
+            switch (pc % 6) {                  // 1=N 2=B 3=R 4=Q 5=K (mai pedoni)
+                case 1:  att = knight_attacks[s1];               break;
+                case 2:  att = get_bishop_attacks(s1, 0ULL);     break;
+                case 3:  att = get_rook_attacks(s1, 0ULL);       break;
+                case 4:  att = get_queen_attacks(s1, 0ULL);      break;
+                default: att = king_attacks[s1];                 break;
+            }
+            for (int s2 = s1 + 1; s2 < 64; s2++) {
+                if (!(att & (1ULL << s2))) continue;
+                U64 key = piece_keys[pc][s1] ^ piece_keys[pc][s2] ^ side_key;
+                int mv  = s1 | (s2 << 6);
+                int i   = cuckoo_h1(key);
+                while (true) {                 // inserimento cuckoo (2 sedi possibili)
+                    U64 tk = cuckoo_key[i];  cuckoo_key[i]  = key; key = tk;
+                    int tm = cuckoo_move[i]; cuckoo_move[i] = mv;  mv  = tm;
+                    if (key == 0) break;       // slot era vuoto: catena chiusa
+                    i = (i == cuckoo_h1(key)) ? cuckoo_h2(key) : cuckoo_h1(key);
+                }
+            }
+        }
+    }
+}
+
+// True se il lato al tratto ha una mossa reversibile che chiude un ciclo verso una
+// posizione gia' vista nelle ultime `fifty` semimosse (port di SF has_game_cycle
+// sulla nostra repetition_table piatta: [repetition_index] = posizione 1 ply fa,
+// [repetition_index-1] = 2 ply fa, ...). Le entry create dalle NULL move sono
+// inerti: la loro moveKey differisce solo per side/ep, mai per due piece-key, e
+// non puo' combaciare con una chiave cuckoo -> nessun falso positivo.
+static bool td_upcoming_repetition(ThreadData& td) {
+    int end = td.fifty;
+    if (end > td.repetition_index) end = td.repetition_index;
+    if (end < 3) return false;
+    const U64 orig = td.hash_key;
+    for (int i = 3; i <= end; i += 2) {
+        const U64 prev     = td.repetition_table[td.repetition_index - (i - 1)];
+        const U64 move_key = orig ^ prev;
+        int j;
+        if ((j = cuckoo_h1(move_key), cuckoo_key[j] == move_key) ||
+            (j = cuckoo_h2(move_key), cuckoo_key[j] == move_key)) {
+            const int s1 = cuckoo_move[j] & 63, s2 = (cuckoo_move[j] >> 6) & 63;
+            if (between_tbl[s1][s2] & td.occupancies[both]) continue;   // percorso bloccato
+            if (td.ply > i) return true;              // ciclo tutto dentro il search path
+            // Ciclo che pesca dietro la radice: vale solo se la mossa e' del lato al
+            // tratto E la vecchia posizione era gia' una ripetizione (regola SF).
+            const int occ_sq = get_bit(td.occupancies[both], s1) ? s1 : s2;
+            if (!get_bit(td.occupancies[td.side], occ_sq)) continue;
+            for (int k2 = i + 2; k2 <= end; k2 += 2)
+                if (td.repetition_table[td.repetition_index - (k2 - 1)] == prev)
+                    return true;
+        }
+    }
+    return false;
+}
+
 static inline int td_is_repetition(ThreadData& td) {
     // NB: la repetition_table contiene ANCHE le null-move (NMP), che pushano un'entry
     // ma flippano il lato senza mossa reale e senza toccare `fifty`. Questo ROMPE sia
@@ -1880,6 +2042,18 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     }
     else {
         int stand_pat = td_evaluate(td);
+        // FIX P0.4 (2026-06-09): la correction history ora corregge ANCHE lo
+        // stand-pat di quiescence (dove avviene la maggioranza delle eval);
+        // prima si fermava ai nodi interni. Gated QsearchCorr per l'ablazione.
+        if (g_qsearch_corr && g_corr_hist) stand_pat += td_corr_value(td, td_corr_index(td));
+        // P1.1: tt_score con bound coerente = stima di qualita'-search migliore
+        // dello stand-pat statico (stesso adjustment del negamax).
+        if (g_tt_eval_improve && tt_hit &&
+            tt_score > -mate_score && tt_score < mate_score &&
+            (tt_flag == hash_flag_exact ||
+             (tt_flag == hash_flag_beta  && tt_score > stand_pat) ||
+             (tt_flag == hash_flag_alpha && tt_score < stand_pat)))
+            stand_pat = tt_score;
         best_score = stand_pat;
         if (stand_pat >= beta) return stand_pat;
 
@@ -2139,6 +2313,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
     if (td.ply && (td_is_repetition(td) || td.fifty >= 100)) return 0;
 
+    // P1.2 (2026-06-09): ripetizione IMMINENTE (cuckoo). Se esiste una mossa
+    // reversibile che riporta in una posizione gia' vista, il lato al tratto puo'
+    // forzare la patta senza che la search debba scoprirlo: con alpha sotto la
+    // patta, alza alpha a 0 (anti-shuffling, come SF step 2).
+    if (g_upcoming_rep && td.ply && alpha < 0 && td.fifty >= 3 &&
+        td_upcoming_repetition(td)) {
+        alpha = 0;
+        if (alpha >= beta) return alpha;
+    }
+
     bool pv_node = (beta - alpha > 1);
     int tt_move = 0;
     int tt_score = 0;
@@ -2219,11 +2403,28 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // In check, no forward-pruning rule reads static_eval (all gated
         // !in_check) and corr-update is skipped -> don't pay for the NNUE eval.
         static_eval = 0;
+        // FIX P0.6: marcare lo slot come "nessuna eval" invece di 0: i discendenti
+        // a ply+2/ply+4 non devono confrontare la loro eval con uno 0 fittizio.
+        // (ImprovingFix OFF = vecchio comportamento: slot a 0.)
+        td.eval_stack[td.ply] = g_improving_fix ? EVAL_NONE : 0;
     } else {
         static_eval = td_evaluate(td);
         if (g_corr_hist) static_eval += td_corr_value(td, corr_idx);
+        td.eval_stack[td.ply] = static_eval;
     }
-    td.eval_stack[td.ply] = static_eval;
+
+    // P1.1 (2026-06-09): "improved eval" stile SF — se la TT ha uno score il cui
+    // bound e' coerente, e' una stima di qualita'-search migliore della static eval:
+    // usala per le DECISIONI DI PRUNING (RFP/NMP/razor/futility/probcut/LMR-margin).
+    // static_eval resta la base di eval_stack/improving/corr-update (come SF, che
+    // tiene ss->staticEval puro e adatta solo `eval`). Toggle TTEvalImprove per A/B.
+    int eval = static_eval;
+    if (g_tt_eval_improve && !in_check && tt_hit &&
+        tt_score > -mate_score && tt_score < mate_score &&
+        (tt_flag == hash_flag_exact ||
+         (tt_flag == hash_flag_beta  && tt_score > eval) ||
+         (tt_flag == hash_flag_alpha && tt_score < eval)))
+        eval = tt_score;
 
     // "Improving": is our static eval higher than it was two plies ago (our own
     // previous turn)? A rising trend means the position is going our way, so we
@@ -2231,8 +2432,19 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // Meaningless in check (eval is noisy there) and at ply<2 (no history) ->
     // treated as not-improving. g_improving gates the whole heuristic so that,
     // when off, every consumer below collapses to the original search exactly.
-    bool improving = !in_check && td.ply >= 2 &&
-                     static_eval > td.eval_stack[td.ply - 2];
+    // FIX P0.6: se a ply-2 non c'era eval (nodo in scacco con LazyEval), fallback
+    // a ply-4 (come SF); se nemmeno quella esiste -> not-improving (= comportamento
+    // storico, senza pero' il confronto col vecchio 0 fittizio).
+    bool improving = false;
+    if (!in_check && td.ply >= 2) {
+        int e2 = td.eval_stack[td.ply - 2];
+        if (!g_improving_fix)
+            improving = static_eval > e2;            // legacy 3.7 (confronto anche col 0 fittizio)
+        else if (e2 != EVAL_NONE)
+            improving = static_eval > e2;
+        else if (td.ply >= 4 && td.eval_stack[td.ply - 4] != EVAL_NONE)
+            improving = static_eval > td.eval_stack[td.ply - 4];
+    }
 
     // Reverse futility pruning (skip when beta is a mate bound: don't cut a
     // potential mate search short based on a static evaluation). When improving,
@@ -2240,12 +2452,12 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // to hold above beta.
     if (!pv_node && !in_check && depth <= (g_rfp_depth8 ? 8 : 6) && beta < mate_score) {
         int rfp_depth = depth - ((g_improving && improving) ? 1 : 0);
-        if (static_eval - g_rfp_margin * rfp_depth >= beta)
-            return static_eval - g_rfp_margin * rfp_depth;
+        if (eval - g_rfp_margin * rfp_depth >= beta)
+            return eval - g_rfp_margin * rfp_depth;
     }
 
     // Null move pruning (not when beta is a mate score)
-    if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score && static_eval >= beta) {
+    if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score && eval >= beta) {
         U64 our_pieces = (td.side == white) ?
             (td.bitboards[N] | td.bitboards[B] | td.bitboards[R] | td.bitboards[Q]) :
             (td.bitboards[n] | td.bitboards[b] | td.bitboards[r] | td.bitboards[q]);
@@ -2269,7 +2481,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             int R = g_nmp_base + depth / g_nmp_div;
             // (1) NMPEvalScale: più sopra beta = riduzione maggiore (cap +3). OFF = invariato.
             if (g_nmp_eval_scale) {
-                int e = (static_eval - beta) / g_nmp_eval_div;
+                int e = (eval - beta) / g_nmp_eval_div;
                 if (e > 3) e = 3;
                 if (e > 0) R += e;
             }
@@ -2294,7 +2506,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // Razoring
     if (!pv_node && !in_check && depth <= (g_razor_depth4 ? 4 : 3)) {
         int razor_margin = g_razor_base + g_razor_mult * depth;
-        if (static_eval + razor_margin < alpha) {
+        if (eval + razor_margin < alpha) {
             score = td_quiescence(td, alpha, beta);
             if (score < alpha) return score;
         }
@@ -2333,9 +2545,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 int move = pc_list->moves[count];
 
                 if (!get_move_capture(move)) continue;
-                // The capture's material swing must be able to bridge static_eval
+                // The capture's material swing must be able to bridge the eval
                 // up to probcut_beta, else it can't plausibly cause the cutoff.
-                if (td_see(td, move) < probcut_beta - static_eval) continue;
+                if (td_see(td, move) < probcut_beta - eval) continue;
 
                 UndoInfo undo;
                 td.ply++;
@@ -2498,7 +2710,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // improving, the base margin prunes more.
         if (!pv_node && !in_check && depth <= 6 && is_quiet && best_score > -mate_score) {
             int futility_margin = g_fut_base + g_fut_mult * depth + ((g_improving && improving) ? g_fut_improving : 0);
-            if (static_eval + futility_margin <= alpha) {
+            if (eval + futility_margin <= alpha) {
                 // Phase-2: once futility fires, ALL remaining quiets at this node
                 // fail the same static-eval test -> skip the entire stage.
                 if (use_picker) { mp.skip_quiets = true; }
@@ -2585,6 +2797,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             }
         }
 
+        // FIX P0.3 (2026-06-09): catturare lo stato "killer" PRIMA di incrementare
+        // td.ply. Il vecchio check nel blocco LMR (`move == killer_moves[..][td.ply]`)
+        // leggeva i killer del ply FIGLIO (mosse dell'avversario: il campo piece
+        // differisce sempre) -> non era MAI vero -> lo sconto LMR per i killer era
+        // dead code.
+        bool is_killer = is_quiet &&
+            (move == td.killer_moves[0][td.ply] || move == td.killer_moves[1][td.ply]);
+
         UndoInfo undo;
         td.ply++;
         td.repetition_table[++td.repetition_index] = td.hash_key;
@@ -2627,9 +2847,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // (i veri PV node hanno già lo sconto via il !pv_node qui sopra). È il
                 // segnale nuovo dello Step ttPv di SF. OFF (g_ttpv=false) = nessun effetto.
                 if (g_ttpv && tt_hit && tt_pv && !pv_node) reduction--;
-                if (move == td.killer_moves[0][td.ply] || move == td.killer_moves[1][td.ply])
+                if (g_killer_lmr_fix && is_killer)   // FIX P0.3: killer del ply del NODO (vedi sopra)
                     reduction--;
-                if (static_eval + g_lmr_eval_margin < alpha) reduction++;
+                if (eval + g_lmr_eval_margin < alpha) reduction++;
                 if (is_cut_node) reduction++;
                 // CutNodeLMR (default OFF): SF riduce i cut-node piu' di noi. Aggiunge
                 // g_cutnode_lmr_extra ply SOPRA il +1 qui sopra. OFF = byte-identico.
@@ -3035,9 +3255,51 @@ double policy_entropy_time_factor(ThreadData& td) {
     double Hn = td_policy_entropy(td, &top1, &nm);
     if (Hn < 0.0) return 1.0;
     double center = g_entropy_tm_center / 100.0;
+    // v2: center adattivo = EMA per-partita dell'entropia (vedi g_entropy_tm_adaptive).
+    // L'EMA si aggiorna DOPO l'uso come center, cosi' il campione corrente non si
+    // confronta con se stesso; la prima mossa usa il center statico come seed.
+    if (g_entropy_tm_adaptive) {
+        if (g_entropy_ema >= 0.0) center = g_entropy_ema;
+        g_entropy_ema = (g_entropy_ema < 0.0) ? Hn : (0.8 * g_entropy_ema + 0.2 * Hn);
+    }
     double f = 1.0 + (g_entropy_tm_scale / 100.0) * (Hn - center);
     if (f < 0.5) f = 0.5; else if (f > 2.0) f = 2.0;
     return f;
+}
+
+// Top-move della policy al root (from/to nelle NOSTRE coordinate) + la sua prob
+// softmax sulle mosse pseudo-legali. Consumata da PolicyEasyMove nel soft-TM.
+// NOTA: pseudo-legali -> in rari casi l'argmax e' una mossa illegale, che la search
+// non confermera' mai -> l'easy-move semplicemente non scatta (reduce-only = innocuo).
+// Ritorna false se nessuna policy net e' caricata o non ci sono mosse.
+static bool td_policy_root_top(ThreadData& td, int* out_from, int* out_to, double* out_p) {
+    if (!policy_loaded()) return false;
+    static thread_local float pscores[4096];
+    evaluate_policy(td, pscores);   // canonical STM logits, index = from*64 + to
+
+    moves ml[1];
+    td_generate_moves(td, ml, false);
+    if (ml->count < 1) return false;
+    const bool wtm = (td.side == white);
+
+    double logit[256];
+    int n = 0, best_i = 0;
+    double best_l = -1e30;
+    for (int i = 0; i < ml->count && n < 256; i++) {
+        int m  = ml->moves[i];
+        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
+        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
+        double l = (double)pscores[cs * 64 + ct];
+        if (l > best_l) { best_l = l; best_i = i; }
+        logit[n++] = l;
+    }
+    // softmax del logit massimo: exp(0) / sum(exp(l - max)) = 1 / sum
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) sum += exp(logit[i] - best_l);
+    *out_from = get_move_source(ml->moves[best_i]);
+    *out_to   = get_move_target(ml->moves[best_i]);
+    *out_p    = 1.0 / sum;
+    return true;
 }
 
 static void thread_search(int thread_id, int max_depth) {
@@ -3063,6 +3325,13 @@ static void thread_search(int thread_id, int max_depth) {
     // OFFLINE policy ordering (PolicySeed): nudge butterfly history from the root
     // policy prior before iterative deepening. Default OFF -> no-op (byte-identical).
     if (g_policy_seed) td_policy_seed_history(td);
+
+    // PolicyEasyMove: una forward al root (solo thread 0, solo con clock attivo).
+    // pe_from < 0 = segnale non disponibile -> il check nel soft-TM non scatta.
+    int    pe_from = -1, pe_to = -1;
+    double pe_top1 = 0.0;
+    if (g_policy_easy && thread_id == 0 && timeset)
+        if (!td_policy_root_top(td, &pe_from, &pe_to, &pe_top1)) pe_from = -1;
 
     int prev_score = 0;
     int prev_best_move = 0;
@@ -3187,6 +3456,19 @@ static void thread_search(int thread_id, int max_depth) {
                 int dur = soft - starttime;                // current optimum duration (ms)
                 if (dur < 0) dur = 0;
                 soft = starttime + (int)(dur * scale);
+            }
+
+            // PolicyEasyMove (reduce-only, come NodeTM): se il best move della search
+            // E' la top-move del prior policy con prob alta, due segnali indipendenti
+            // concordano che la mossa e' ovvia -> accorcia l'optimum. Mai estensione.
+            // Default OFF (g_policy_easy) -> nessun lavoro extra = byte-identico.
+            if (g_policy_easy && pe_from >= 0 && current_depth >= 6 &&
+                pe_top1 >= g_policy_easy_top1 / 100.0 &&
+                get_move_source(td.best_move) == pe_from &&
+                get_move_target(td.best_move) == pe_to) {
+                int dur = soft - starttime;
+                if (dur < 0) dur = 0;
+                soft = starttime + dur * g_policy_easy_scale / 100;
             }
             if (soft > stoptime) soft = stoptime;          // never exceed the hard cap
 

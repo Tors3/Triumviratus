@@ -207,6 +207,14 @@ extern void   set_entropy_tm(bool enabled);
 extern bool   g_entropy_tm;
 extern double td_policy_entropy(ThreadData& td, double* out_top1, int* out_n);
 extern double policy_entropy_time_factor(ThreadData& td);
+// EntropyTM v2: center adattivo (EMA per-partita) — "EntropyTMAdaptive", default true.
+// reset_entropy_tm_state() va chiamata su ucinewgame (azzera l'EMA).
+extern void   set_entropy_tm_adaptive(bool enabled);
+extern void   reset_entropy_tm_state();
+
+// PolicyEasyMove (UCI "PolicyEasyMove") — reduce-only TM: la search conferma la
+// top-move del prior policy -> stop prima. Spins PolicyEasyTop1/Scale. Default off.
+extern void   set_policy_easy(bool enabled);
 
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);
@@ -310,6 +318,24 @@ extern void set_capture_hist(bool enabled);
 // 4-way set-associative TT on/off (UCI option "TT4Way") — bucket of 4 entries
 // with age-aware replacement, vs the direct-mapped default. Default off.
 extern void set_tt_4way(bool enabled);
+
+// TTEvalImprove (UCI "TTEvalImprove") — P1.1: use a bound-consistent tt_score in
+// place of the static eval for pruning decisions (RFP/NMP/razor/futility/probcut/
+// LMR-margin + qsearch stand-pat). Default ON.
+extern void set_tt_eval_improve(bool enabled);
+
+// UpcomingRep (UCI "UpcomingRep") — P1.2: cuckoo upcoming-repetition detection
+// (SF has_game_cycle): raise alpha to draw when a reversible move can repeat a
+// known position. Default ON.
+extern void set_upcoming_rep(bool enabled);
+
+// Toggle di ABLAZIONE dei fix 3.8 (default ON; OFF = comportamento 3.7). Con tutti
+// OFF (incluso TTEvalImprove/UpcomingRep) la search e' identica alla 3.7.
+extern void set_ttmove24(bool enabled);        // P0.1 TT move 24 bit
+extern void set_see_fix(bool enabled);         // P0.2 SEE quiet + e.p.
+extern void set_killer_lmr_fix(bool enabled);  // P0.3 sconto LMR killer
+extern void set_qsearch_corr(bool enabled);    // P0.4 corr in qsearch
+extern void set_improving_fix(bool enabled);   // P0.6 sentinel improving
 
 // Lazy eval (UCI "LazyEval") — skip the NNUE static eval while in check. Default off.
 extern void set_lazy_eval(bool enabled);

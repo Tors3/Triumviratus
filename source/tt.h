@@ -37,24 +37,30 @@ struct alignas(16) tt_entry {
 };
 
 // Data packing/unpacking.
-// Bit layout of `data` (64 bit): move[0..20] score[21..36] depth[37..44]
-// flag[45..46] busy[47..54] age[55..62] pv[63]. Bit 63 (ttPv) era libero.
-// `pv` ha default 0 -> i chiamanti che non lo passano impacchettano IDENTICO a prima.
+// Bit layout of `data` (64 bit): move[0..23] score[24..39] depth[40..47]
+// flag[48..49] busy[50..54] age[55..62] pv[63].
+// FIX P0.1 (2026-06-09): la mossa ora occupa 24 bit (prima 21). L'encoding mossa
+// usa i bit 21/22/23 per double-push / en-passant / castling (movegen.h): con la
+// vecchia maschera 0x1FFFFF quei flag venivano PERSI nello store -> la TT move di
+// un doppio passo / e.p. / arrocco non combaciava mai con la mossa generata
+// (niente hash-move-first, niente singular su quelle mosse; td_is_pseudo_legal la
+// rigettava). I 3 bit servono al campo `busy` (ABDADA, MORTO: tt_busy non e' mai
+// letto dalla search) che scende da 8 a 5 bit. `pv` ha default 0.
 inline U64 pack_tt_data(int move, int score, int depth, int flag, int busy, int age, int pv = 0) {
-    return ((U64)(move & 0x1FFFFF)) |
-        ((U64)((score + 32768) & 0xFFFF) << 21) |
-        ((U64)(depth & 0xFF) << 37) |
-        ((U64)(flag & 0x3) << 45) |
-        ((U64)(busy & 0xFF) << 47) |
+    return ((U64)(move & 0xFFFFFF)) |
+        ((U64)((score + 32768) & 0xFFFF) << 24) |
+        ((U64)(depth & 0xFF) << 40) |
+        ((U64)(flag & 0x3) << 48) |
+        ((U64)(busy & 0x1F) << 50) |
         ((U64)(age & 0xFF) << 55) |
         ((U64)(pv & 0x1) << 63);
 }
 
-inline int unpack_move(U64 data) { return data & 0x1FFFFF; }
-inline int unpack_score(U64 data) { return ((data >> 21) & 0xFFFF) - 32768; }
-inline int unpack_depth(U64 data) { return (data >> 37) & 0xFF; }
-inline int unpack_flag(U64 data) { return (data >> 45) & 0x3; }
-inline int unpack_busy(U64 data) { return (data >> 47) & 0xFF; }
+inline int unpack_move(U64 data) { return data & 0xFFFFFF; }
+inline int unpack_score(U64 data) { return ((data >> 24) & 0xFFFF) - 32768; }
+inline int unpack_depth(U64 data) { return (data >> 40) & 0xFF; }
+inline int unpack_flag(U64 data) { return (data >> 48) & 0x3; }
+inline int unpack_busy(U64 data) { return (data >> 50) & 0x1F; }
 inline int unpack_age(U64 data) { return (data >> 55) & 0xFF; }
 inline int unpack_pv(U64 data) { return (data >> 63) & 0x1; }
 
@@ -68,6 +74,11 @@ extern int current_age;
 // maps to a bucket of 4 consecutive entries; probe scans the bucket, store picks
 // an age-aware victim (prefer empty -> oldest -> shallowest).
 extern bool g_tt_4way;
+
+// TTMove24 (UCI "TTMove24", default ON) — ablazione del FIX P0.1: quando OFF lo
+// store tronca la mossa a 21 bit come la 3.7 (i flag double/ep/castling si perdono
+// di nuovo). Definita in threads.cpp.
+extern bool g_ttmove24;
 
 // External variables needed for compatibility functions
 extern U64 hash_key;
@@ -220,7 +231,7 @@ inline void mark_busy(U64 hash_key, int depth) {
     if (entry) {
         U64 old_data = entry->data;
         int old_busy = unpack_busy(old_data);
-        if (old_busy < 255) {
+        if (old_busy < 31) {       // busy ora a 5 bit (vedi pack_tt_data)
             U64 new_data = pack_tt_data(
                 unpack_move(old_data),
                 unpack_score(old_data),
@@ -278,6 +289,9 @@ inline void unmark_busy(U64 hash_key) {
  * 3. Replace if old entry is from different age
  */
 inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false) {
+    // Ablazione P0.1 (TTMove24 off): emula il troncamento 21-bit della 3.7.
+    if (!g_ttmove24) move &= 0x1FFFFF;
+
     // Normalize mate scores to be relative to THIS node before storing
     // (value_to_tt). The probe side performs the inverse adjustment. Without
     // this, a "mate in N from the root" would be cached as if it were "mate in
