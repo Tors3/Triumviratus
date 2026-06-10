@@ -15,7 +15,6 @@
 #include "syzygy.h"
 #include "perft.h"
 #include "sf_bridge.h"   // sf_acc_stats (diagnostic "accstats" command)
-#include "policy_bridge.h"   // load_policy (handler "PolicyFile")
 #include <thread>
 
 #ifdef CLANG_PGO_GEN
@@ -195,13 +194,6 @@ void parse_go(char* command)
         {
             int mtg = (movestogo > 0) ? movestogo : g_tm_movestogo;  // assunzione moves-to-go (tunable)
             optimum = remaining / mtg + inc * g_tm_inc_frac / 100;    // quota base + % incremento (tunable)
-            // EntropyTM (default off -> byte-identico): scala l'optimum per l'entropia
-            // della policy al root (complessita' appresa). Una forward, costo per-nodo 0.
-            if (g_entropy_tm) {
-                copy_board_to_thread(thread_data[0]);
-                optimum = (int)(optimum * policy_entropy_time_factor(thread_data[0]));
-                if (optimum < 1) optimum = 1;
-            }
             maximum = optimum * g_tm_max_mult / 100;                   // burst su posizioni difficili (tunable)
             int cap = remaining * 4 / 5;                    // never risk more than ~80% of the clock
             if (maximum > cap) maximum = cap;
@@ -278,17 +270,13 @@ void uci_loop()
             printf("option name Depth type spin default 0 min 0 max 64\n");
             printf("option name DataLog type check default false\n");
             printf("option name DataFile type string default triumviratus_dataset.txt\n");
-            printf("option name UsePolicy type check default false\n");
-            printf("option name PolicySeed type check default false\n");                  // offline ordering: seed butterfly history dal prior policy (costo per-nodo 0)
-            printf("option name PolicySeedScale type spin default 300 min 0 max 2000\n");  // magnitudine seed = scale*(logit-mean)
-            printf("option name EntropyTM type check default false\n");                    // NOVEL: tempo scalato dall'entropia policy al root (complessita' appresa)
-            printf("option name EntropyTMScale type spin default 60 min 0 max 400\n");      // /100 ampiezza scaling tempo; co-tunabile
-            printf("option name EntropyTMCenter type spin default 50 min 0 max 100\n");     // /100 entropia neutra (factor 1); seed dell'EMA in modalita' adattiva
-            printf("option name EntropyTMAdaptive type check default true\n");               // v2: center = EMA per-partita (no calibrazione per-rete)
-            printf("option name PolicyEasyMove type check default false\n");                 // TM reduce-only: search conferma top-move policy -> stop prima
-            printf("option name PolicyEasyTop1 type spin default 40 min 0 max 100\n");       // /100 prob minima del prior per "mossa ovvia"
-            printf("option name PolicyEasyScale type spin default 85 min 10 max 100\n");     // /100 moltiplicatore durata quando conferma
-            printf("option name PolicyFile type string default triumviratus_policy.bin\n");  // policy net runtime-selezionabile (A/B reti, stesso exe)
+            // Bundle 3.9 (micro-fix dietro toggle, ablazione stile 3.8)
+            printf("option name MateDistPruning type check default true\n");   // P1.4
+            printf("option name DrawDither type check default true\n");        // P1.11 patte = ±1cp
+            printf("option name TTCutBonus type check default true\n");        // P1.13 history bonus al ttMove su TT-cutoff
+            printf("option name TTCutBonusScale type spin default 100 min 0 max 400\n");  // /100 del stat_bonus; SPSA
+            printf("option name TTAgeRefresh type check default true\n");      // P1.10a probe-hit rinfresca l'age
+            printf("option name PawnKeyIncr type check default true\n");       // P2.1 pawn key incrementale (node-identical)
             printf("option name EvalOff type check default false\n");
             printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // big net runtime-selezionabile; default rubicon, fallback nn-b1a57edbea57 (SF)
             printf("option name EvalCache type check default true\n");
@@ -331,10 +319,7 @@ void uci_loop()
             printf("option name MovePicker type check default true\n");
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
             printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
-            printf("option name TripleExt type check default false\n");
             printf("option name MultiCut type check default true\n");
-            printf("option name LMREnrich type check default false\n");
-            printf("option name DeeperShallower type check default false\n");
             printf("option name TTPv type check default false\n");
             printf("option name NMPEvalScale type check default false\n");
             printf("option name RFPDepth8 type check default false\n");
@@ -383,8 +368,6 @@ void uci_loop()
             printf("option name HistPruneMargin type spin default 1691 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 90 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 96 min 10 max 200\n");   // [3.7]
-            printf("option name DeeperMargin type spin default 52 min 0 max 30000\n");  // max alto: 30000 = doDeeper OFF (mai > mate)
-            printf("option name ShallowerMargin type spin default 9 min -1000 max 200\n");  // -1000 = doShallower OFF
             printf("option name SmallNetThreshold type spin default 1050 min 300 max 2000\n"); // RIPRISTINATO 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau)
             printf("option name EvalOptimism type spin default 395 min 200 max 1200\n");        // [3.7] eval-wrapper: BAKED 395 (SPSA-37 su over_last); era 600
             printf("option name EvalPawnScale type spin default 9 min 0 max 40\n");
@@ -415,21 +398,6 @@ void uci_loop()
             sf_acc_stats();
         }
 
-        // DIAGNOSTIC: "policyentropy" -> normalized policy entropy [0,1] of the
-        // current position (+ top1 prob, move count). For the entropy-vs-difficulty
-        // correlation test (does policy entropy track position complexity?).
-        else if (strncmp(input, "policyentropy", 13) == 0)
-        {
-            copy_board_to_thread(thread_data[0]);
-            double top1; int nm;
-            double Hn = td_policy_entropy(thread_data[0], &top1, &nm);
-            if (Hn < 0.0) printf("info string policyentropy: no policy net loaded\n");
-            else printf("info string policyentropy Hnorm %.4f top1 %.4f moves %d\n", Hn, top1, nm);
-            fflush(stdout);
-        }
-
-
-
        // UCI command: "ucinewgame"
         else if (strncmp(input, "ucinewgame", 10) == 0)
         {
@@ -459,9 +427,6 @@ void uci_loop()
                 memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                 memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
             }
-            // EntropyTM v2: l'EMA dell'entropia e' per-partita -> azzerala qui
-            // (un residuo della partita precedente falserebbe il center adattivo).
-            reset_entropy_tm_state();
         }
 
         // UCI command: "position"
@@ -577,54 +542,31 @@ void uci_loop()
             set_data_log_file(path);
         }
 
-        // UCI command: "setoption name UsePolicy value <true|false>" (A/B test)
-        else if (strncmp(input, "setoption name UsePolicy value ", 31) == 0)
+        // ---- Bundle 3.9: toggle A/B (gli spin cadono nel gestore generico) ----
+        else if (strncmp(input, "setoption name MateDistPruning value ", 37) == 0)
         {
-            const char* v = input + 31;
-            set_use_policy(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+            const char* v = input + 37;
+            set_mate_dist(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
-
-        // UCI command: "setoption name PolicySeed value <true|false>" (offline ordering A/B)
-        else if (strncmp(input, "setoption name PolicySeed value ", 32) == 0)
+        else if (strncmp(input, "setoption name DrawDither value ", 32) == 0)
         {
             const char* v = input + 32;
-            set_policy_seed(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+            set_draw_dither(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
-        // EntropyTM (NOVEL): A/B toggle. Gli spin EntropyTMScale/Center cadono nel
-        // gestore generico (nome piu' lungo, niente collisione col " value " a idx 31).
-        else if (strncmp(input, "setoption name EntropyTM value ", 31) == 0)
+        else if (strncmp(input, "setoption name TTCutBonus value ", 32) == 0)
         {
-            const char* v = input + 31;
-            set_entropy_tm(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+            const char* v = input + 32;
+            set_ttcut_bonus(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
-        // EntropyTM v2: center adattivo (EMA per-partita) on/off.
-        else if (strncmp(input, "setoption name EntropyTMAdaptive value ", 39) == 0)
+        else if (strncmp(input, "setoption name TTAgeRefresh value ", 34) == 0)
         {
-            const char* v = input + 39;
-            set_entropy_tm_adaptive(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+            const char* v = input + 34;
+            set_tt_age_refresh(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
-        // PolicyEasyMove: TM reduce-only (search conferma la top-move del prior ->
-        // stop prima). Gli spin PolicyEasyTop1/Scale cadono nel gestore generico.
-        else if (strncmp(input, "setoption name PolicyEasyMove value ", 36) == 0)
+        else if (strncmp(input, "setoption name PawnKeyIncr value ", 33) == 0)
         {
-            const char* v = input + 36;
-            set_policy_easy(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
-        // "setoption name PolicyFile value <path>" -> ricarica la policy net a runtime
-        // (A/B fra .bin diversi con lo STESSO exe, come EvalFile per la NNUE).
-        else if (strncmp(input, "setoption name PolicyFile value ", 32) == 0)
-        {
-            // Swapping weights under a running search would read half-loaded data.
-            stop_search_threads();
-            wait_for_search_done();
-            const char* val = input + 32;
-            std::string resolved = resolve_net_path(val);
-            if (resolved.empty()) resolved = val;   // path assoluto/relativo cosi' com'e'
-            if (load_policy(resolved.c_str()))
-                printf("info string PolicyFile: loaded %s\n", resolved.c_str());
-            else
-                printf("info string PolicyFile: failed to open %s (kept current net)\n", resolved.c_str());
-            fflush(stdout);
+            const char* v = input + 33;
+            set_pawn_key_incr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // DIAGNOSTIC: "setoption name EvalOff value <true|false>" (NPS profiling)
@@ -701,26 +643,10 @@ void uci_loop()
             set_diverse_smp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
-        // Search bundle #3 toggles (A/B; default off = behaviour-preserving).
-        else if (strncmp(input, "setoption name TripleExt value ", 31) == 0)
-        {
-            const char* v = input + 31;
-            set_triple_ext(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
         else if (strncmp(input, "setoption name MultiCut value ", 30) == 0)
         {
             const char* v = input + 30;
             set_multicut(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
-        else if (strncmp(input, "setoption name LMREnrich value ", 31) == 0)
-        {
-            const char* v = input + 31;
-            set_lmr_enrich(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
-        else if (strncmp(input, "setoption name DeeperShallower value ", 37) == 0)
-        {
-            const char* v = input + 37;
-            set_deeper_shallower(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name TTPv value ", 26) == 0)
         {

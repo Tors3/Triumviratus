@@ -21,8 +21,13 @@
 #define mate_value 31000
 #define mate_score 30000
 
-// max ply that we can reach within a search
-#define max_ply 64
+// max ply that we can reach within a search.
+// P1.5 (2026-06-11): 64 -> 128. Con check-extension incondizionata + singular +2 le
+// linee lunghe dei finali a LTC sbattevano sul tetto 64 e tornavano static-eval a
+// meta' variante (SF usa 246). Sbloccato dalla rimozione della policy (l'array TLS
+// policy_scores_by_ply[max_ply][4096] = 1MB/thread che lo rendeva costoso e' stato
+// rimosso). Il gap mate_value - mate_score (1000) resta >> max_ply: nessun overlap.
+#define max_ply 128
 
 // MVV LVA [attacker][victim]
 extern int mvv_lva[12][12];

@@ -11,7 +11,6 @@
 #include "sf_bridge.h"
 
 //Added for policy network
-#include "policy_bridge.h"
 
 // Syzygy tablebase probing (Fathom)
 #include "syzygy.h"
@@ -178,16 +177,7 @@ int main()
                         : "nn-b1a57edbea57.nnue (SF fallback)");
     fflush(stdout);
 
-    // Azzera i buffer in memoria allineati a 32-byte per l'AVX2
-    init_policy();
-
-    // Carica i pesi della policy, risolti relativi all'EXE (come le reti) cosi'
-    // Lucas Chess li trova da qualunque working directory.
-    std::string polPath = resolve_net_path("triumviratus_policy.bin");
-    if (polPath.empty()) polPath = "triumviratus_policy.bin";
-    if (!load_policy(polPath.c_str())) {
-        printf("info string ATTENZIONE: Impossibile caricare triumviratus_policy.bin!\n");
-    }
+    // (Policy-net: rimossa 2026-06-11 — capitolo chiuso, vedi notes/ §P5.)
 
     // Auto-load Syzygy tablebases from a "Syzygy" folder next to the exe
     // (x64\Release\Syzygy). The "SyzygyPath" UCI option overrides this at runtime.

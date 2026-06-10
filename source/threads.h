@@ -23,6 +23,7 @@ struct ThreadData {
     int enpassant;
     int castle;
     U64 hash_key;
+    U64 pawn_key;   // P2.1: Zobrist solo-pedoni, mantenuta incrementale in make/unmake
     int fifty;
     
     // Repetition detection
@@ -190,31 +191,16 @@ extern int soft_time_limit;
 extern void set_data_log_enabled(bool enabled);
 extern void set_data_log_file(const char* path);
 
-// Policy on/off (UCI option "UsePolicy") — A/B the hybrid policy vs pure NNUE.
-extern void set_use_policy(bool enabled);
+// (Policy-net: RIMOSSA 2026-06-11 — capitolo chiuso con misure conclusive, vedi
+//  notes/ANALISI_CODICE_OTTIMIZZAZIONI.md §P5. Il codice vive nella storia git.)
 
-// OFFLINE policy ordering (UCI option "PolicySeed") — seed butterfly history from
-// the root policy prior, once per search, zero per-node cost. Default off.
-extern void set_policy_seed(bool enabled);
-extern int  g_policy_seed_scale;   // PolicySeedScale spin: bonus = scale*(logit-mean)
-
-// EntropyTM (UCI "EntropyTM") — scale the time budget by the root policy ENTROPY
-// (learned position complexity), NOT by move ranking. Default off (byte-identical).
-//   td_policy_entropy: normalized entropy [0,1] (+ top1 prob, move count) of the
-//   current position; -1 if no policy net. Used by the `policyentropy` diagnostic.
-//   policy_entropy_time_factor: the time multiplier (1.0 when off / no policy).
-extern void   set_entropy_tm(bool enabled);
-extern bool   g_entropy_tm;
-extern double td_policy_entropy(ThreadData& td, double* out_top1, int* out_n);
-extern double policy_entropy_time_factor(ThreadData& td);
-// EntropyTM v2: center adattivo (EMA per-partita) — "EntropyTMAdaptive", default true.
-// reset_entropy_tm_state() va chiamata su ucinewgame (azzera l'EMA).
-extern void   set_entropy_tm_adaptive(bool enabled);
-extern void   reset_entropy_tm_state();
-
-// PolicyEasyMove (UCI "PolicyEasyMove") — reduce-only TM: la search conferma la
-// top-move del prior policy -> stop prima. Spins PolicyEasyTop1/Scale. Default off.
-extern void   set_policy_easy(bool enabled);
+// ---- Bundle 3.9 (2026-06-11): micro-fix dietro toggle default ON --------------
+extern void set_mate_dist(bool enabled);       // P1.4  mate-distance pruning
+extern void set_draw_dither(bool enabled);     // P1.11 draw = ±1cp (anti shuffle-blindness)
+extern void set_ttcut_bonus(bool enabled);     // P1.13 history bonus al ttMove sul TT-cutoff
+extern int  g_ttcut_bonus_scale;               //       spin TTCutBonusScale (/100, SPSA)
+extern void set_tt_age_refresh(bool enabled);  // P1.10a age refresh al probe-hit (def. threads.cpp, usato in tt.h)
+extern void set_pawn_key_incr(bool enabled);   // P2.1  pawn key incrementale (node-identical)
 
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);
@@ -285,18 +271,8 @@ extern void set_move_picker(bool enabled);
 // Default off (behaviour-preserving). Magnitude = DiverseSMPAmount spin.
 extern void set_diverse_smp(bool enabled);
 
-// Search bundle #3 — three small standard enrichments, each default off:
-//  TripleExt  (+3-ply singular when hyper-forced), MultiCut (prune when the singular
-//  exclusion search fails high >= beta), LMREnrich (extra LMR on ttCapture / cut-node).
-extern void set_triple_ext(bool enabled);     // bundle #3 dead-end (dormant, default off)
+// (TripleExt −75 / LMREnrich −25 / DeeperShallower: morti, RIMOSSI 2026-06-11.)
 extern void set_multicut(bool enabled);       // BAKED on: conservative singular multi-cut
-extern void set_lmr_enrich(bool enabled);     // bundle #3 dead-end (dormant, default off)
-
-// doDeeper/doShallower (UCI "DeeperShallower") — SF Step-17 LMR refinement: the
-// full-depth re-search runs +/-1 ply from how strongly the reduced search beat
-// bestValue (deeper if score>best+52, shallower if score<best+9). Default off
-// (behaviour-preserving = the plain fixed depth-1 re-search).
-extern void set_deeper_shallower(bool enabled);
 
 // ttPv (UCI "TTPv") — bit PV nella TT (bit 63): i nodi non-PV ricordati ex-PV vengono
 // ridotti meno in LMR. Default off (behaviour-preserving = bit 0 + LMR invariata).

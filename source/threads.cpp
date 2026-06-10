@@ -31,7 +31,6 @@
 #include "io.h"
 #include "defs.h"
 
-#include "policy_bridge.h"
 #include "syzygy.h"
 
  // ============================================================================
@@ -45,68 +44,47 @@ tt_entry* hash_table = nullptr;
 //   (before td_make_move) so the make-move NNUE mirror hook can use it too.
 static const int sf_piece_code[12] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 };
 
-// Policy on/off toggle (UCI option "UsePolicy"). Lets a cutechess match A/B the
-// hybrid (policy) build against pure NNUE using the SAME binary, to measure
-// whether the policy actually adds Elo over the existing move ordering.
-//
-// DEFAULT = false (SHIPPING): match testing concluded the policy net is NOT an
-// Elo gain in this alpha-beta engine. Verdict by configuration:
-//   * root-only ordering (the supported mode, see policy gate below): ~0 Elo
-//     (ID+TT already order the root near-optimally, so the net has no room).
-//   * root rank-based LMR (POLICY_ROOT_LMR): net-NEGATIVE -> disabled.
-//   * interior PV-node ordering (POLICY_INTERIOR, depth>=12): -85 Elo over an
-//     SPRT run (CNN per-node cost craters nps ~22%, and the 28%-top1 ranking is
-//     not more accurate than the existing TT/killer/history ordering, so it
-//     reshuffles good moves) -> disabled.
-// The root-only ordering path is kept as the best (least-harmful) supported
-// integration if anyone re-enables UsePolicy, but the net is OFF by default and
-// the engine ships as pure NNUE. This default MUST match the advertised UCI
-// "option name UsePolicy type check default false" in uci_mt.cpp.
-static bool g_use_policy = false;
-void set_use_policy(bool v) { g_use_policy = v; }
+// POLICY-NET: RIMOSSA dal motore (2026-06-11). Il capitolo e' stato chiuso con tre
+// misure conclusive (notes/ANALISI_CODICE_OTTIMIZZAZIONI.md §P5): ordering −8.7,
+// EntropyTM −16.7 LOS5%, PolicyEasyMove −14.35 LOS0.1% @2520g — la CNN (top1 ~24%)
+// non ha segnali Elo-utili ne' per l'ordering (saturo, prior statico vs history
+// adattiva) ne' per il time management (la confidenza di una rete debole non e'
+// affidabilita'; l'entropia misura l'ignoranza della rete, non la complessita').
+// Il codice vive nella storia git (tag 3.8) per l'eventuale R&D futuro (MCTS@root).
 
-// OFFLINE policy ordering (UCI "PolicySeed", default OFF). Distinct from the dead
-// in-search UsePolicy (-30 Elo): the policy is NEVER evaluated inside the search.
-// Instead, ONCE per search the root policy prior seeds the butterfly history table
-// (centered: above-mean moves nudged +, below-mean -), then the normal online
-// history overwrites it -> zero per-node cost, transient prior. Magnitude =
-// PolicySeedScale (SPSA-tunable). OFF = byte-identical (no policy eval, no seed).
-static bool g_policy_seed = false;
-void set_policy_seed(bool v) { g_policy_seed = v; }
-int  g_policy_seed_scale = 300;   // bonus = scale * (logit - mean_logit), gravity-applied
+// ---- Bundle 3.9 (2026-06-11): micro-fix "correttezza/gratis" (P1.4/P1.11/P1.13/
+// P1.10a/P2.1 dell'analisi). Ognuno dietro toggle default ON, ablazione stile 3.8.
 
-// EntropyTM (UCI "EntropyTM", default OFF = byte-identical). NOVEL policy use that
-// does NOT compete with move ordering: not WHICH move, but the SHAPE of the policy
-// distribution (normalized entropy) as a learned position-COMPLEXITY signal, used to
-// scale the TIME budget (low entropy = obvious move -> less time; high = complex ->
-// more). One forward pass at root, zero per-node cost. Tunables EntropyTMScale/Center.
-bool g_entropy_tm = false;
-void set_entropy_tm(bool v) { g_entropy_tm = v; }
-static int g_entropy_tm_scale  = 60;   // /100 ampiezza scaling: factor = 1 + scale/100*(Hnorm - center/100)
-static int g_entropy_tm_center = 50;   // /100 entropia "neutra" (factor 1); settare ~media misurata dal diag
+// P1.4 Mate-distance pruning: stringe [alpha,beta] coi matti gia' provati piu'
+// corti (un matto piu' lungo non puo' migliorare il risultato). 3 righe, rischio ~0.
+static bool g_mate_dist = true;
+void set_mate_dist(bool v) { g_mate_dist = v; }
 
-// EntropyTM v2 (2026-06-10): center ADATTIVO. Un center fisso e' net-dependent (ogni
-// .bin ha la sua entropia media) e drifta con la fase di gioco (l'entropia cala via
-// via che il materiale esce) -> un center statico accorcerebbe sistematicamente il
-// tempo di una fase. Col center = EMA per-partita dell'Hnorm misurata, il segnale
-// diventa "piu'/meno complessa del TIPICO di questa partita" e non richiede nessuna
-// calibrazione per-rete. La prima mossa usa il center statico come seed. Reset su
-// ucinewgame (reset_entropy_tm_state). Scritta solo dal thread UCI (parse_go).
-bool g_entropy_tm_adaptive = true;
-void set_entropy_tm_adaptive(bool v) { g_entropy_tm_adaptive = v; }
-static double g_entropy_ema = -1.0;    // <0 = nessun campione ancora
-void reset_entropy_tm_state() { g_entropy_ema = -1.0; }
+// P1.11 Draw dither (SF value_draw): le patte per ripetizione/50-mosse ritornano
+// ±1cp in funzione del node-count invece di 0 secco -> rompe la cecita' da
+// ripetizione (evita oscillazioni 0.00 premature fra linee "ugualmente patte").
+static bool g_draw_dither = true;
+void set_draw_dither(bool v) { g_draw_dither = v; }
 
-// PolicyEasyMove (2026-06-10, UCI "PolicyEasyMove", default OFF = byte-identico).
-// TM REDUCE-ONLY: una forward al root da' la top-move della policy + la sua prob;
-// se il best move della SEARCH e' quella stessa mossa e il prior e' confidente, due
-// giudici INDIPENDENTI concordano che la mossa e' ovvia -> ferma prima (come NodeTM,
-// ma con un segnale appreso e search-independent). Non estende mai -> non puo'
-// bruciare il clock. NON tocca il move ordering (i 3 blocchi non si applicano).
-bool g_policy_easy = false;
-void set_policy_easy(bool v) { g_policy_easy = v; }
-static int g_policy_easy_top1  = 40;   // /100: prob softmax minima per dire "mossa ovvia"
-static int g_policy_easy_scale = 85;   // /100: moltiplicatore della durata quando la search conferma
+// P1.13 History bonus al ttMove quiet su TT-cutoff (SF): un cutoff servito dalla TT
+// non passa dal loop mosse -> senza questo la history del ttMove si raffredda anche
+// se la mossa continua a tagliare. Scala SPSA-tunable (TTCutBonusScale /100).
+static bool g_ttcut_bonus = true;
+void set_ttcut_bonus(bool v) { g_ttcut_bonus = v; }
+int g_ttcut_bonus_scale = 100;   // /100 del td_stat_bonus(depth); spin "TTCutBonusScale"
+
+// P1.10a TT age-refresh al probe-hit: un hit rinfresca l'age dell'entry, cosi' le
+// posizioni CALDE ma scritte in search vecchie non vengono evictate per anzianita'
+// (SF fa lo stesso). Definito qui, extern in tt.h (usato da probe_tt).
+bool g_tt_age_refresh = true;
+void set_tt_age_refresh(bool v) { g_tt_age_refresh = v; }
+
+// P2.1 Pawn key INCREMENTALE: td.pawn_key mantenuta in make/unmake (XOR dei soli
+// pedoni mossi/catturati/promossi, self-inverse come OccIncr) al posto del rescan
+// delle bitboard pedoni a OGNI td_corr_index (corr 1x/nodo + pawn_history ~30
+// quiet/nodo). NODE-IDENTICAL per costruzione -> misura NPS a depth fissa.
+static bool g_pawn_key_incr = true;
+void set_pawn_key_incr(bool v) { g_pawn_key_incr = v; }
 
 // Eval-off DIAGNOSTIC toggle (UCI option "EvalOff", default false). Replaces the
 // NNUE forward in td_evaluate() with a trivial material count, so an NPS test can
@@ -246,21 +224,10 @@ static int g_diverse_smp_amount = 1;   // max |bias| in plies (SPSA-tunable: Div
 //  * TripleExt  — +3-ply singular: -75 Elo (tree blow-up). DEAD, kept default-off dormant.
 //  * LMREnrich  — extra LMR on ttCapture/cut-node: -25 Elo (over-reduction). DEAD, dormant.
 //  * MultiCutAggr (SF gate s>=beta): -13 Elo (half-depth fail-high too weak). REMOVED.
-static bool g_triple_ext = false;
-void set_triple_ext(bool v) { g_triple_ext = v; }
-static bool g_lmr_enrich = false;
-void set_lmr_enrich(bool v) { g_lmr_enrich = v; }
+// (TripleExt −75, LMREnrich −25, DeeperShallower: misurati NEGATIVI/morti —
+//  RIMOSSI nella pulizia 2026-06-11, vivono nella storia git.)
 static bool g_multicut = true;   // BAKED ON: conservative singular multi-cut (+10.4 Elo @1100)
 void set_multicut(bool v) { g_multicut = v; }
-
-// doDeeper/doShallower (UCI option "DeeperShallower"). Default OFF. Stockfish
-// Step-17 LMR refinement: after a reduced search beats alpha, the full-depth
-// re-search depth is adjusted by +/-1 ply based on how strongly the reduced score
-// beat bestValue — DEEPER (+1) when the move looks clearly best (score > best+52),
-// SHALLOWER (-1) when it barely cleared alpha (score < best+9). OFF reproduces the
-// plain fixed depth-1 re-search (behaviour-preserving for a clean A/B).
-static bool g_deeper_shallower = false;
-void set_deeper_shallower(bool v) { g_deeper_shallower = v; }
 
 // ttPv (UCI option "TTPv"). Default OFF. SF: un bit della TT (bit 63 del data, era
 // libero) ricorda se un nodo è/è stato PV. I nodi non-PV che la TT marca come ex-PV
@@ -495,12 +462,6 @@ int g_histprune_margin = 1691;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. his
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
 int g_see_cap_margin   = 90;
 int g_see_quiet_margin = 96;    // [3.7 BAKE 98->96; BAKED #1 era 50]
-// DeeperShallower margins (attivi solo con DeeperShallower on): la re-search a piena
-// profondità va +1 ply se reduced-score > best + g_deeper_margin, -1 ply se
-// < best + g_shallower_margin. Per il test "doDeeper-only" metti g_shallower_margin
-// molto negativo (ShallowerMargin=-1000) -> la condizione non è mai vera -> doShallower OFF.
-int g_deeper_margin    = 52;   // SF default (doDeeper)
-int g_shallower_margin = 9;    // SF default (doShallower)
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
@@ -544,11 +505,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMMaxMult"))           { g_tm_max_mult = value < 100 ? 100 : value; return true; }
     if (!strcmp(name, "TMInstab"))            { g_tm_instab          = value; return true; }
     if (!strcmp(name, "TMDropDiv"))           { g_tm_drop_div = value < 1 ? 1 : value; return true; }
-    if (!strcmp(name, "PolicySeedScale"))     { g_policy_seed_scale  = value; return true; }
-    if (!strcmp(name, "EntropyTMScale"))      { g_entropy_tm_scale  = value < 0 ? 0 : value; return true; }
-    if (!strcmp(name, "EntropyTMCenter"))     { g_entropy_tm_center = value < 0 ? 0 : (value > 100 ? 100 : value); return true; }
-    if (!strcmp(name, "PolicyEasyTop1"))      { g_policy_easy_top1  = value < 0 ? 0 : (value > 100 ? 100 : value); return true; }
-    if (!strcmp(name, "PolicyEasyScale"))     { g_policy_easy_scale = value < 10 ? 10 : (value > 100 ? 100 : value); return true; }
+    if (!strcmp(name, "TTCutBonusScale"))     { g_ttcut_bonus_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRStatScoreDiv"))     { g_lmr_ss_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "LMRStatScoreOffset"))  { g_lmr_ss_offset      = value; return true; }
     if (!strcmp(name, "LMRContHistDiv"))      { g_lmr_ch_div = value < 1 ? 1 : value; return true; }
@@ -571,8 +528,6 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRBase"))             { g_lmr_base_x100 = value; init_lmr_table(); return true; }
     if (!strcmp(name, "LMRDiv"))              { g_lmr_div_x100  = value; init_lmr_table(); return true; }
     if (!strcmp(name, "DiverseSMPAmount"))    { g_diverse_smp_amount = value; return true; }
-    if (!strcmp(name, "DeeperMargin"))        { g_deeper_margin    = value; return true; }
-    if (!strcmp(name, "ShallowerMargin"))     { g_shallower_margin = value; return true; }
     if (!strcmp(name, "NMPEvalDiv"))          { g_nmp_eval_div     = value; return true; }
     if (!strcmp(name, "QFutMargin"))          { g_qfut_margin      = value; return true; }
     if (!strcmp(name, "HistBonusMult"))       { g_hist_bonus_mult  = value; return true; }
@@ -720,6 +675,13 @@ void copy_board_to_thread(ThreadData& td) {
     td.castle = castle;
     td.hash_key = hash_key;
     td.fifty = fifty;
+    // P2.1: pawn key incrementale — full init dal board di root, poi mantenuta
+    // in make/unmake da td_pawn_key_update (XOR self-inverse, stile OccIncr).
+    td.pawn_key = 0;
+    for (int pc = P; pc <= p; pc += (p - P)) {
+        U64 bb = td.bitboards[pc];
+        while (bb) { int sq = get_ls1b_index(bb); td.pawn_key ^= piece_keys[pc][sq]; pop_bit(bb, sq); }
+    }
     memcpy(td.repetition_table, repetition_table, sizeof(repetition_table));
     td.repetition_index = repetition_index;
     td.ply = 0;
@@ -781,6 +743,21 @@ static inline void td_occ_update(ThreadData& td, int us, int source, int target,
 // ============================================================================
 // MAKE MOVE (returns 1 if legal)
 // ============================================================================
+
+// P2.1: aggiorna td.pawn_key (Zobrist solo-pedoni) via XOR. Self-inverse -> stessa
+// chiamata (stessi argomenti) nei 3 siti di td_occ_update: make-forward, rollback
+// della mossa illegale, unmake. Pedone mosso: via da source, atterra su target solo
+// se NON promuove. Pedone catturato (anche e.p.): via da captured_square. Castling
+// e null move non toccano pedoni. Consumata da td_corr_index (g_pawn_key_incr).
+static inline void td_pawn_key_update(ThreadData& td, int piece, int source, int target,
+                                      int promoted, int captured_piece, int captured_square) {
+    if (piece == P || piece == p) {
+        td.pawn_key ^= piece_keys[piece][source];
+        if (!promoted) td.pawn_key ^= piece_keys[piece][target];
+    }
+    if (captured_piece == P || captured_piece == p)
+        td.pawn_key ^= piece_keys[captured_piece][captured_square];
+}
 
 static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     undo.old_castle = td.castle;
@@ -882,6 +859,8 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     td.hash_key ^= castle_keys[td.castle];
 
     td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
+    if (g_pawn_key_incr)
+        td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
 
     td.side ^= 1;
     td.hash_key ^= side_key;
@@ -918,6 +897,8 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
         td.hash_key = undo.old_hash;
 
         td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
+        if (g_pawn_key_incr)
+            td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
 
         return 0;
     }
@@ -998,6 +979,8 @@ static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
     td.hash_key = undo.old_hash;
 
     td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
+    if (g_pawn_key_incr)
+        td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
 }
 
 // ============================================================================
@@ -1516,32 +1499,12 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     return h;
 }
 
-// Aggiunti i parametri opzionali per la Policy
-static inline void td_sort_moves(ThreadData& td, moves* move_list, int tt_move, float* policy_scores = nullptr, bool policy_used = false) {
+static inline void td_sort_moves(ThreadData& td, moves* move_list, int tt_move) {
     int scores[256];
 
-    // Codifica indici policy CANONICA sul lato che muove (deve combaciare con
-    // evaluate_policy / chess_encoding.py): Bianco -> (sq ^ 56), Nero -> sq.
-    const bool wtm = (td.side == white);
-
     for (int i = 0; i < move_list->count; i++) {
-        int move = move_list->moves[i];
-
         // Punteggio base (TT, catture, history, killer)
-        scores[i] = td_score_move(td, move, tt_move);
-
-        // Se la Policy   attiva e la mossa   tranquilla, aggiungiamo il super-potere!
-        if (policy_used && policy_scores != nullptr && !get_move_capture(move) && move != tt_move) {
-            int src = get_move_source(move), tgt = get_move_target(move);
-            int cs = wtm ? (src ^ 56) : src;
-            int ct = wtm ? (tgt ^ 56) : tgt;
-            int p_idx = cs * 64 + ct;
-            // Peso ridotto (era *500, tarato sulla VECCHIA rete col pooling).
-            // La rete nuova ha logit ~[-8,+11]: *50 rende il bonus una spinta
-            // che asseconda la history senza dominarla.
-            int policy_bonus = (int)(policy_scores[p_idx] * 250.0f);
-            scores[i] += policy_bonus;
-        }
+        scores[i] = td_score_move(td, move_list->moves[i], tt_move);
     }
 
     // --- Ordinamento standard (Selection Sort) ---
@@ -1562,22 +1525,10 @@ static inline void td_sort_moves(ThreadData& td, moves* move_list, int tt_move, 
     }
 }
 
-// Nuova funzione che calcola solo gli score ma NON ordina
-static inline void td_score_all_moves(ThreadData& td, moves* move_list, int tt_move, int* scores, float* policy_scores = nullptr, bool policy_used = false) {
-    const bool wtm = (td.side == white);
-    for (int i = 0; i < move_list->count; i++) {
-        int move = move_list->moves[i];
-        scores[i] = td_score_move(td, move, tt_move);
-
-        // (La logica della tua policy rimane identica qui)
-        if (policy_used && policy_scores != nullptr && !get_move_capture(move) && move != tt_move) {
-            int src = get_move_source(move), tgt = get_move_target(move);
-            int cs = wtm ? (src ^ 56) : src;
-            int ct = wtm ? (tgt ^ 56) : tgt;
-            int p_idx = cs * 64 + ct;
-            scores[i] += (int)(policy_scores[p_idx] * 250.0f);
-        }
-    }
+// Calcola solo gli score ma NON ordina (la selezione e' pick-next).
+static inline void td_score_all_moves(ThreadData& td, moves* move_list, int tt_move, int* scores) {
+    for (int i = 0; i < move_list->count; i++)
+        scores[i] = td_score_move(td, move_list->moves[i], tt_move);
 }
 
 // ============================================================================
@@ -2067,9 +2018,8 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     // Se non siamo sotto scacco (!in_check), passa true per generare SOLO le catture!
     td_generate_moves(td, move_list, !in_check);
 
-    // --- NUOVA FASE: Calcola punteggi senza ordinare (Pick-Next) ---
+    // Calcola punteggi senza ordinare (selezione pick-next).
     int move_scores[256];
-    // Chiamiamo la funzione senza Policy, tanto in Q-Search esploriamo perlopi  catture
     td_score_all_moves(td, move_list, tt_move, move_scores);
 
     int best_move = 0;
@@ -2179,7 +2129,11 @@ static inline int td_corr_index_pieces(ThreadData& td, const int* pcs, int n) {
 }
 
 // Bucket index from the pawn-only Zobrist key (white pawns P, black pawns p).
+// P2.1: con PawnKeyIncr (default ON) usa la chiave INCREMENTALE mantenuta in
+// make/unmake invece di riscansionare le bitboard a ogni chiamata (corr 1x/nodo +
+// pawn_history ~30 quiet/nodo). Stessa chiave per costruzione = node-identical.
 static inline int td_corr_index(ThreadData& td) {
+    if (g_pawn_key_incr) return (int)(td.pawn_key & CORR_MASK);
     const int pcs[2] = { P, p };
     return td_corr_index_pieces(td, pcs, 2);
 }
@@ -2311,7 +2265,20 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             return mate_value - td.ply;
     }
 
-    if (td.ply && (td_is_repetition(td) || td.fifty >= 100)) return 0;
+    // P1.11 draw dither (SF value_draw): ±1cp dal node-count invece di 0 secco,
+    // rompe la cecita' da ripetizione fra linee "ugualmente patte".
+    if (td.ply && (td_is_repetition(td) || td.fifty >= 100))
+        return g_draw_dither ? (1 - (int)(td.nodes & 2)) : 0;
+
+    // P1.4 mate-distance pruning: un matto trovato a questa profondita' non puo'
+    // battere uno gia' provato piu' corto -> stringe la finestra e taglia subito.
+    // Bound conservativi (mate_value - ply, senza il -1: il check cattura-re sopra
+    // puo' restituire un matto a ply+0, vedi return mate_value - td.ply).
+    if (g_mate_dist && td.ply) {
+        if (alpha < -mate_value + td.ply) alpha = -mate_value + td.ply;
+        if (beta  >  mate_value - td.ply) beta  =  mate_value - td.ply;
+        if (alpha >= beta) return alpha;
+    }
 
     // P1.2 (2026-06-09): ripetizione IMMINENTE (cuckoo). Se esiste una mossa
     // reversibile che riporta in una posizione gia' vista, il lato al tratto puo'
@@ -2346,6 +2313,15 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (tt_depth >= depth && !pv_node) {
             if (tt_score < -mate_score) tt_score += td.ply;
             if (tt_score > mate_score) tt_score -= td.ply;
+
+            // P1.13 (SF): il cutoff servito dalla TT non passa dal loop mosse ->
+            // senza questo bonus la history del ttMove quiet si raffredda anche se
+            // la mossa continua a tagliare. Scala SPSA-tunable (TTCutBonusScale).
+            if (g_ttcut_bonus && tt_move && tt_score >= beta &&
+                tt_flag != hash_flag_alpha && !get_move_capture(tt_move)) {
+                int bonus = td_stat_bonus(depth) * g_ttcut_bonus_scale / 100;
+                td_update_history(td.history_moves[get_move_piece(tt_move)][get_move_target(tt_move)], bonus);
+            }
 
             if (tt_flag == hash_flag_exact) return tt_score;
             if (tt_flag == hash_flag_alpha && tt_score <= alpha) return tt_score; // fail-soft
@@ -2580,85 +2556,19 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
     // ---- Move generation & ordering ------------------------------------------
     // Staged MovePicker (g_move_picker) produces moves lazily by stage, so an early
-    // cutoff never pays to generate/score the quiet moves. Policy ordering is
-    // root-only; whenever it may run we keep the legacy full-sort path (picker and
-    // policy don't mix). Default OFF -> legacy path -> byte-identical search.
-    const bool node_policy = g_use_policy && (td.ply == 0);
-    const bool use_picker  = g_move_picker && !node_policy;
+    // cutoff never pays to generate/score the quiet moves. Legacy path: generate
+    // everything and score up-front (pick-next selection).
+    const bool use_picker = g_move_picker;
 
     moves move_list[1];        // legacy: all moves | staged: quiet-stage buffer
     int   move_scores[256];
     moves cap_buf[1];          // staged: capture/promotion-stage buffer
     int   cap_score_buf[256];
 
-    static thread_local float policy_scores_by_ply[max_ply][4096];
-    float* current_policy_scores = policy_scores_by_ply[td.ply];
-    bool   policy_used   = false;
-    float  policy_hi_cut = 1e9f;    // default: nessuna mossa "alta"
-    float  policy_lo_cut = -1e9f;   // default: nessuna mossa "bassa"
-
     if (!use_picker) {
-        // Generiamo le mosse PRIMA, cosi' possiamo decidere se la CNN serve.
         td_generate_moves(td, move_list);
-
-        // Conta le mosse tranquille: in posizioni puramente tattiche la policy non
-        // aggiunge ordinamento utile, quindi saltiamo la forward CNN.
-        int quiet_count = 0;
-        for (int i = 0; i < move_list->count; i++)
-            if (!get_move_capture(move_list->moves[i])) quiet_count++;
-
-        // HYBRID: policy net SOLO a ply==0 (root). I nodi PV interni la pagavano
-        // troppo (POLICY_INTERIOR, A/B 2026-05-29: -85 Elo); resta il root-only
-        // ordering (~0 Elo). Rimettere POLICY_INTERIOR a true per ri-sperimentare.
-        constexpr bool POLICY_INTERIOR  = false;  // A/B flag (provato: -85 Elo)
-        constexpr int  POLICY_MIN_DEPTH = 12;     // solo nodi PV profondi
-
-        bool policy_gate = g_use_policy && quiet_count >= 3 &&
-            ( td.ply == 0 ||
-              (POLICY_INTERIOR && pv_node && depth >= POLICY_MIN_DEPTH) );
-
-        if (policy_gate) {
-            // Cache per chiave Zobrist: una sola forward CNN per posizione distinta.
-            static constexpr int PCACHE_SIZE = 1 << 10;
-            struct PolicyCacheEntry { U64 key; bool valid; float scores[4096]; };
-            static thread_local PolicyCacheEntry pcache[PCACHE_SIZE] = {};
-            PolicyCacheEntry& slot = pcache[td.hash_key & (PCACHE_SIZE - 1)];
-            if (slot.valid && slot.key == td.hash_key) {
-                memcpy(current_policy_scores, slot.scores, sizeof(slot.scores));
-            }
-            else {
-                evaluate_policy(td, current_policy_scores);
-                slot.key = td.hash_key;
-                slot.valid = true;
-                memcpy(slot.scores, current_policy_scores, sizeof(slot.scores));
-            }
-            policy_used = true;
-        }
-
         // Assegna punteggi senza ordinare l'array (la selezione e' pick-next).
-        td_score_all_moves(td, move_list, tt_move, move_scores, current_policy_scores, policy_used);
-
-        // Soglie RANK-BASED per la (disattivata) LMR guidata dalla policy.
-        if (policy_used) {
-            float qlog[256];
-            int qn = 0;
-            const bool wtm = (td.side == white);
-            for (int i = 0; i < move_list->count; i++) {
-                int m = move_list->moves[i];
-                if (get_move_capture(m) || get_move_promoted(m)) continue;   // solo quiet
-                int src = get_move_source(m), tgt = get_move_target(m);
-                int idx = (wtm ? (src ^ 56) : src) * 64 + (wtm ? (tgt ^ 56) : tgt);
-                qlog[qn++] = current_policy_scores[idx];
-            }
-            if (qn >= 4) {
-                std::sort(qlog, qlog + qn, std::greater<float>());
-                int hi_i = (qn > 3) ? 2 : (qn - 1);   // confine top-3
-                int lo_i = (qn * 3) / 4;              // confine quartile inferiore
-                if (lo_i >= qn) lo_i = qn - 1;
-                policy_hi_cut = qlog[hi_i];
-                policy_lo_cut = qlog[lo_i];
-            }
-        }
+        td_score_all_moves(td, move_list, tt_move, move_scores);
     }
 
     MovePicker mp;
@@ -2773,10 +2683,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // search blow-up that uncapped double extensions can cause.
                 if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin) {
                     extension = 2;
-                    // Triple extension (bundle): hyper-forced by an even larger margin
-                    // (3x the double margin) -> +3. Rare, non-PV, to bound tree growth.
-                    if (g_triple_ext && s < singular_beta - 3 * g_singular_dmargin)
-                        extension = 3;
                 }
             }
             // Multi-cut (BAKED, default on): the exclusion search (TT move removed) failed
@@ -2861,18 +2767,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // flat/falling eval makes late quiets less likely to be the move.
                 if (g_improving && !improving) reduction++;
 
-                // LMR enrichment (bundle): extra reduction signals from SF that we do
-                // not already model. All moves here are quiet. The final [0, depth-2]
-                // clamp below keeps these additions safe.
-                if (g_lmr_enrich) {
-                    // TT best move is a capture -> tactical node; a late quiet here is
-                    // even less likely to be best -> reduce one extra ply.
-                    if (tt_move && get_move_capture(tt_move)) reduction++;
-                    // Cut-node late move: expected to fail high on an earlier move ->
-                    // extra reduction on top of the base cut-node bump above.
-                    if (is_cut_node) reduction++;
-                }
-
                 // History-based reduction. DEFAULT (StatScoreLMR off): butterfly
                 // history clamped to +/-1 ply (conservativo). StatScoreLMR on: stile
                 // SF, riduzione CONTINUA (niente clamp) -> quiet con ottima history
@@ -2923,23 +2817,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     }
                 }
 
-                // --- LMR guidata dalla policy (RANK-BASED), TEST #2 ---
-                // DISABILITATO (2026-05-29): la root-LMR guidata dalla policy
-                // risultava net-negativa (peggiorava l'ordinamento: +14/+16% nodi
-                // per arrivare alla stessa depth in mediogioco/tattica). Ridurre
-                // alla radice una mossa che la policy giudica scarsa ma che e'
-                // buona la fa cercare troppo poco. Teniamo solo l'ordinamento da
-                // policy (TEST #1). Rimetti POLICY_ROOT_LMR a true per riattivare.
-                constexpr bool POLICY_ROOT_LMR = false;
-                if (POLICY_ROOT_LMR && policy_used) {
-                    const bool wtm = (td.side == white);
-                    int src = get_move_source(move), tgt = get_move_target(move);
-                    int p_idx = (wtm ? (src ^ 56) : src) * 64 + (wtm ? (tgt ^ 56) : tgt);
-                    float p_score = current_policy_scores[p_idx];
-                    if (p_score >= policy_hi_cut) reduction--;
-                    else if (p_score <= policy_lo_cut) reduction++;
-                }
-
                 // DiverseSMP: nudge this helper's reduction to diversify its tree.
                 // The clamps below keep it in [0, depth-2], so the bias can't break LMR.
                 if (g_diverse_smp) reduction += td.lmr_bias;
@@ -2955,14 +2832,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             // Full-depth re-search when the reduced search fails high.
             int full_depth = depth - 1;
             if (score > alpha && reduction > 0) {
-                // SF Step 17 (doDeeper/doShallower): nudge the re-search depth +/-1
-                // by how strongly the reduced score beat bestValue. OFF keeps the
-                // plain depth-1 re-search (behaviour-preserving = identical A/B).
-                if (g_deeper_shallower) {
-                    bool do_deeper    = score > best_score + g_deeper_margin;
-                    bool do_shallower = score < best_score + g_shallower_margin;
-                    full_depth += (do_deeper ? 1 : 0) - (do_shallower ? 1 : 0);
-                }
                 if (full_depth > reduced_depth)
                     score = -td_negamax(td, -alpha - 1, -alpha, full_depth, !is_cut_node);
             }
@@ -3157,151 +3026,6 @@ static void print_search_info(ThreadData& td, int depth, int score) {
 static const int LSMP_SkipSize[8]  = { 1, 1, 2, 2, 2, 3, 3, 3 };
 static const int LSMP_SkipPhase[8] = { 0, 1, 0, 1, 2, 0, 1, 2 };
 
-// OFFLINE policy ordering: seed the butterfly history of THIS thread from the
-// root policy prior (one forward pass). Quiet moves only (captures/promotions are
-// ordered by SEE/MVV-LVA). The prior is CENTERED on the mean logit so above-mean
-// moves get a positive nudge and below-mean a negative one -> it reorders rather
-// than uniformly inflating. The gravity update bounds it and makes re-seeding each
-// move self-limiting. The online search then overwrites it: a transient prior at
-// zero per-node cost. No-op if no policy net is loaded.
-static void td_policy_seed_history(ThreadData& td) {
-    if (!policy_loaded()) return;
-
-    static thread_local float pscores[4096];
-    evaluate_policy(td, pscores);   // canonical STM encoding, index = from*64 + to
-
-    moves ml[1];
-    td_generate_moves(td, ml, false);   // all pseudo-legal root moves
-    const bool wtm = (td.side == white);
-
-    // Pass 1: mean policy logit over quiet moves.
-    double sum = 0.0; int n = 0;
-    for (int i = 0; i < ml->count; i++) {
-        int m = ml->moves[i];
-        if (get_move_capture(m) || get_move_promoted(m)) continue;
-        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
-        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
-        sum += pscores[cs * 64 + ct];
-        n++;
-    }
-    if (n == 0) return;
-    const double mean = sum / n;
-
-    // Pass 2: seed butterfly history[piece][to] with the centered, scaled prior.
-    for (int i = 0; i < ml->count; i++) {
-        int m = ml->moves[i];
-        if (get_move_capture(m) || get_move_promoted(m)) continue;
-        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
-        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
-        int bonus = (int)(g_policy_seed_scale * (pscores[cs * 64 + ct] - mean));
-        td_update_history(td.history_moves[get_move_piece(m)][get_move_target(m)], bonus);
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Policy ENTROPY of the current position, normalized to [0,1]: a learned
-// "complexity / obviousness" signal. Low = one obvious move (peaked policy);
-// high = many plausible moves (flat policy). DISTINCT from move ORDERING (where a
-// weak policy loses to our history): a weak ranker can still gauge complexity.
-// out_top1 = max softmax prob over the (pseudo-legal) moves; out_n = move count.
-// Returns -1.0 if no policy net is loaded.
-double td_policy_entropy(ThreadData& td, double* out_top1, int* out_n) {
-    if (out_top1) *out_top1 = -1.0;
-    if (out_n)    *out_n    = 0;
-    if (!policy_loaded()) return -1.0;
-
-    static thread_local float pscores[4096];
-    evaluate_policy(td, pscores);   // canonical STM logits, index = from*64 + to
-
-    moves ml[1];
-    td_generate_moves(td, ml, false);
-    const bool wtm = (td.side == white);
-
-    double logit[256];
-    int n = 0;
-    for (int i = 0; i < ml->count && n < 256; i++) {
-        int m  = ml->moves[i];
-        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
-        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
-        logit[n++] = (double)pscores[cs * 64 + ct];
-    }
-    if (n <= 1) { if (out_top1) *out_top1 = 1.0; if (out_n) *out_n = n; return 0.0; }
-
-    // numerically-stable softmax over the move logits
-    double mx = logit[0];
-    for (int i = 1; i < n; i++) if (logit[i] > mx) mx = logit[i];
-    double sum = 0.0;
-    for (int i = 0; i < n; i++) { logit[i] = exp(logit[i] - mx); sum += logit[i]; }
-
-    double H = 0.0, top1 = 0.0;
-    for (int i = 0; i < n; i++) {
-        double p = logit[i] / sum;
-        if (p > top1) top1 = p;
-        if (p > 1e-12) H -= p * log(p);
-    }
-    double Hnorm = H / log((double)n);   // / max entropy log(n) -> [0,1]
-    if (Hnorm < 0.0) Hnorm = 0.0; else if (Hnorm > 1.0) Hnorm = 1.0;
-    if (out_top1) *out_top1 = top1;
-    if (out_n)    *out_n    = n;
-    return Hnorm;
-}
-
-// Time-budget multiplier from the root policy entropy (EntropyTM). 1.0 when off or no
-// policy net (-> byte-identical when off). factor = 1 + scale*(Hnorm - center), clamped
-// to [0.5, 2.0]: complex positions (high entropy) get more time, obvious ones less.
-double policy_entropy_time_factor(ThreadData& td) {
-    if (!g_entropy_tm) return 1.0;
-    double top1; int nm;
-    double Hn = td_policy_entropy(td, &top1, &nm);
-    if (Hn < 0.0) return 1.0;
-    double center = g_entropy_tm_center / 100.0;
-    // v2: center adattivo = EMA per-partita dell'entropia (vedi g_entropy_tm_adaptive).
-    // L'EMA si aggiorna DOPO l'uso come center, cosi' il campione corrente non si
-    // confronta con se stesso; la prima mossa usa il center statico come seed.
-    if (g_entropy_tm_adaptive) {
-        if (g_entropy_ema >= 0.0) center = g_entropy_ema;
-        g_entropy_ema = (g_entropy_ema < 0.0) ? Hn : (0.8 * g_entropy_ema + 0.2 * Hn);
-    }
-    double f = 1.0 + (g_entropy_tm_scale / 100.0) * (Hn - center);
-    if (f < 0.5) f = 0.5; else if (f > 2.0) f = 2.0;
-    return f;
-}
-
-// Top-move della policy al root (from/to nelle NOSTRE coordinate) + la sua prob
-// softmax sulle mosse pseudo-legali. Consumata da PolicyEasyMove nel soft-TM.
-// NOTA: pseudo-legali -> in rari casi l'argmax e' una mossa illegale, che la search
-// non confermera' mai -> l'easy-move semplicemente non scatta (reduce-only = innocuo).
-// Ritorna false se nessuna policy net e' caricata o non ci sono mosse.
-static bool td_policy_root_top(ThreadData& td, int* out_from, int* out_to, double* out_p) {
-    if (!policy_loaded()) return false;
-    static thread_local float pscores[4096];
-    evaluate_policy(td, pscores);   // canonical STM logits, index = from*64 + to
-
-    moves ml[1];
-    td_generate_moves(td, ml, false);
-    if (ml->count < 1) return false;
-    const bool wtm = (td.side == white);
-
-    double logit[256];
-    int n = 0, best_i = 0;
-    double best_l = -1e30;
-    for (int i = 0; i < ml->count && n < 256; i++) {
-        int m  = ml->moves[i];
-        int cs = wtm ? (get_move_source(m) ^ 56) : get_move_source(m);
-        int ct = wtm ? (get_move_target(m) ^ 56) : get_move_target(m);
-        double l = (double)pscores[cs * 64 + ct];
-        if (l > best_l) { best_l = l; best_i = i; }
-        logit[n++] = l;
-    }
-    // softmax del logit massimo: exp(0) / sum(exp(l - max)) = 1 / sum
-    double sum = 0.0;
-    for (int i = 0; i < n; i++) sum += exp(logit[i] - best_l);
-    *out_from = get_move_source(ml->moves[best_i]);
-    *out_to   = get_move_target(ml->moves[best_i]);
-    *out_p    = 1.0 / sum;
-    return true;
-}
-
 static void thread_search(int thread_id, int max_depth) {
     ThreadData& td = thread_data[thread_id];
 
@@ -3321,17 +3045,6 @@ static void thread_search(int thread_id, int max_depth) {
     // (gated: OFF = nessun lavoro extra = byte-identico).
     if (g_lowply) memset(td.lowply_history, 0, sizeof(td.lowply_history));
     td.move_stack[0] = 0;  // root has no previous move
-
-    // OFFLINE policy ordering (PolicySeed): nudge butterfly history from the root
-    // policy prior before iterative deepening. Default OFF -> no-op (byte-identical).
-    if (g_policy_seed) td_policy_seed_history(td);
-
-    // PolicyEasyMove: una forward al root (solo thread 0, solo con clock attivo).
-    // pe_from < 0 = segnale non disponibile -> il check nel soft-TM non scatta.
-    int    pe_from = -1, pe_to = -1;
-    double pe_top1 = 0.0;
-    if (g_policy_easy && thread_id == 0 && timeset)
-        if (!td_policy_root_top(td, &pe_from, &pe_to, &pe_top1)) pe_from = -1;
 
     int prev_score = 0;
     int prev_best_move = 0;
@@ -3458,18 +3171,6 @@ static void thread_search(int thread_id, int max_depth) {
                 soft = starttime + (int)(dur * scale);
             }
 
-            // PolicyEasyMove (reduce-only, come NodeTM): se il best move della search
-            // E' la top-move del prior policy con prob alta, due segnali indipendenti
-            // concordano che la mossa e' ovvia -> accorcia l'optimum. Mai estensione.
-            // Default OFF (g_policy_easy) -> nessun lavoro extra = byte-identico.
-            if (g_policy_easy && pe_from >= 0 && current_depth >= 6 &&
-                pe_top1 >= g_policy_easy_top1 / 100.0 &&
-                get_move_source(td.best_move) == pe_from &&
-                get_move_target(td.best_move) == pe_to) {
-                int dur = soft - starttime;
-                if (dur < 0) dur = 0;
-                soft = starttime + dur * g_policy_easy_scale / 100;
-            }
             if (soft > stoptime) soft = stoptime;          // never exceed the hard cap
 
             prev_best_move = td.best_move;

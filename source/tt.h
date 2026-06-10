@@ -80,6 +80,11 @@ extern bool g_tt_4way;
 // di nuovo). Definita in threads.cpp.
 extern bool g_ttmove24;
 
+// P1.10a (UCI "TTAgeRefresh", default ON) — un probe-hit rinfresca l'age
+// dell'entry: le posizioni CALDE ma scritte in search vecchie non vengono piu'
+// evictate per anzianita' (SF fa lo stesso). Definita in threads.cpp.
+extern bool g_tt_age_refresh;
+
 // External variables needed for compatibility functions
 extern U64 hash_key;
 extern U64 piece_keys[12][64];
@@ -201,6 +206,15 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     tt_flag = unpack_flag(data);
     is_busy = (unpack_busy(data) > 0);
     is_pv = (unpack_pv(data) != 0);
+
+    // P1.10a age-refresh: l'entry e' CALDA (appena richiesta) -> portala all'age
+    // corrente cosi' tt_victim non la preferisce per anzianita'. Store benigno
+    // (lockless XOR-key ricalcolata; una race al peggio perde il refresh).
+    if (g_tt_age_refresh && unpack_age(data) != current_age) {
+        U64 new_data = (data & ~(0xFFULL << 55)) | ((U64)(current_age & 0xFF) << 55);
+        entry->data = new_data;
+        entry->key  = hash_key ^ new_data;
+    }
 
     return true;
 }

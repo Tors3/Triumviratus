@@ -65,7 +65,6 @@
     <ClCompile Include="uci_mt.cpp" />
     <ClCompile Include="zobrist.cpp" />
     <ClCompile Include="sf_bridge.cpp" />
-    <ClCompile Include="policy_bridge.cpp" />
     <ClCompile Include="syzygy.cpp">
       <AdditionalIncludeDirectories>fathom;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
