@@ -58,7 +58,7 @@ int side;
 int enpassant = no_sq;
 int castle;
 U64 hash_key;
-U64 repetition_table[1000];
+U64 repetition_table[2048];   // vedi defs.h (fix OOB 2026-06-12)
 int repetition_index;
 int ply;
 int fifty;

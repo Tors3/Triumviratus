@@ -29,30 +29,34 @@
  * - key: 8 bytes (position hash XOR data for lockless)
  * - data: 8 bytes packed (move, score, depth, flag, busy)
  */
-struct alignas(16) tt_entry {
+// 4.0: entry da 24 byte. key/data restano lockless (XOR-verification); `ext`
+// porta la STATIC EVAL a 16 BIT PIENI (4.0-base: niente quantizzazione ±508/4cp
+// della v1 a 8 bit, che flippava RFP/futility ai margini). ext e' protetta da un
+// frammento di chiave (16 bit): una race/torn-write al peggio invalida l'eval
+// (si ricalcola la forward), mai un valore sbagliato accettato come buono.
+// Straddling delle cache-line: irrilevante per noi — misurato 2026-06-07 che il
+// motore e' EVAL-bound, non TT-latency-bound (prefetch TT = 0%).
+struct alignas(8) tt_entry {
     U64 key;           // hash_key XOR data (for lockless verification)
-
-    // Packed data
-    U64 data;          // Contains: move (21 bits) | score (16 bits) | depth (8 bits) | flag (2 bits) | busy (8 bits) | age (8 bits)
+    U64 data;          // move (24) | score (16) | depth (8) | flag (2) | spare (8) | age (5) | pv (1)
+    U64 ext;           // eval16+32768 [0..15] (0 = assente) | keyfrag16 [16..31] | spare 32
 };
 
 // Data packing/unpacking.
 // Bit layout of `data` (64 bit): move[0..23] score[24..39] depth[40..47]
-// flag[48..49] busy[50..54] age[55..62] pv[63].
-// FIX P0.1 (2026-06-09): la mossa ora occupa 24 bit (prima 21). L'encoding mossa
-// usa i bit 21/22/23 per double-push / en-passant / castling (movegen.h): con la
-// vecchia maschera 0x1FFFFF quei flag venivano PERSI nello store -> la TT move di
-// un doppio passo / e.p. / arrocco non combaciava mai con la mossa generata
-// (niente hash-move-first, niente singular su quelle mosse; td_is_pseudo_legal la
-// rigettava). I 3 bit servono al campo `busy` (ABDADA, MORTO: tt_busy non e' mai
-// letto dalla search) che scende da 8 a 5 bit. `pv` ha default 0.
-inline U64 pack_tt_data(int move, int score, int depth, int flag, int busy, int age, int pv = 0) {
+// flag[48..49] spare[50..57] age[58..62] pv[63].
+// FIX P0.1 (2026-06-09): mossa a 24 bit (i bit 21/22/23 = double/ep/castling).
+// P1.1/4.0 (2026-06-11): STATIC EVAL nella TT a 16 BIT, nel campo `ext`
+// dell'entry da 24B (vedi sopra). Il motore e' eval-bound (58% del tempo-nodo =
+// forward NNUE): un TT-hit che porta l'eval statica salva la forward.
+#define tt_eval_none 32001
+
+inline U64 pack_tt_data(int move, int score, int depth, int flag, int age, int pv = 0) {
     return ((U64)(move & 0xFFFFFF)) |
         ((U64)((score + 32768) & 0xFFFF) << 24) |
         ((U64)(depth & 0xFF) << 40) |
         ((U64)(flag & 0x3) << 48) |
-        ((U64)(busy & 0x1F) << 50) |
-        ((U64)(age & 0xFF) << 55) |
+        ((U64)(age & 0x1F) << 58) |
         ((U64)(pv & 0x1) << 63);
 }
 
@@ -60,9 +64,20 @@ inline int unpack_move(U64 data) { return data & 0xFFFFFF; }
 inline int unpack_score(U64 data) { return ((data >> 24) & 0xFFFF) - 32768; }
 inline int unpack_depth(U64 data) { return (data >> 40) & 0xFF; }
 inline int unpack_flag(U64 data) { return (data >> 48) & 0x3; }
-inline int unpack_busy(U64 data) { return (data >> 50) & 0x1F; }
-inline int unpack_age(U64 data) { return (data >> 55) & 0xFF; }
+inline int unpack_age(U64 data) { return (data >> 58) & 0x1F; }
 inline int unpack_pv(U64 data) { return (data >> 63) & 0x1; }
+
+// ext: eval16 (offset +32768, 0 = assente) + frammento di chiave a 16 bit.
+inline U64 pack_ext(int eval, U64 hash_key) {
+    if (eval == tt_eval_none || eval > 30000 || eval < -30000) return 0;
+    return ((U64)((eval + 32768) & 0xFFFF)) | (((hash_key >> 48) & 0xFFFF) << 16);
+}
+inline int unpack_ext_eval(U64 ext, U64 hash_key) {
+    if (ext == 0) return tt_eval_none;
+    if (((ext >> 16) & 0xFFFF) != ((hash_key >> 48) & 0xFFFF)) return tt_eval_none;
+    int v = (int)(ext & 0xFFFF) - 32768;
+    return (v > 30000 || v < -30000) ? tt_eval_none : v;
+}
 
 // Global TT
 extern tt_entry* hash_table;
@@ -104,6 +119,7 @@ extern U64 side_key;
 inline void init_hash_table(int mb) {
     U64 size = (U64)mb * 1024 * 1024;
     hash_entries = size / sizeof(tt_entry);
+    hash_entries &= ~3ULL;   // multiplo di 4: il bucket TT4Way (base+3) resta in bounds
 
     // Free old table if exists
     if (hash_table) {
@@ -116,6 +132,7 @@ inline void init_hash_table(int mb) {
     for (U64 i = 0; i < hash_entries; i++) {
         hash_table[i].key = 0;
         hash_table[i].data = 0;
+        hash_table[i].ext = 0;
     }
 }
 
@@ -124,13 +141,14 @@ inline void clear_hash_table() {
     for (U64 i = 0; i < hash_entries; i++) {
         hash_table[i].key = 0;
         hash_table[i].data = 0;
+        hash_table[i].ext = 0;
     }
     current_age = 0;
 }
 
 // Increment age (call at start of each search)
 inline void new_search() {
-    current_age = (current_age + 1) & 0xFF;
+    current_age = (current_age + 1) & 0x1F;   // age a 5 bit (vedi pack_tt_data)
 }
 
 // ---- Bucket addressing (1-way vs 4-way) ------------------------------------
@@ -172,7 +190,7 @@ inline tt_entry* tt_victim(U64 key) {
     for (int i = 0; i < ways; i++) {
         tt_entry* e = &hash_table[base + i];
         if (e->key == 0 && e->data == 0) return e;            // empty: take it
-        int rel_age = (current_age - unpack_age(e->data)) & 0xFF;
+        int rel_age = (current_age - unpack_age(e->data)) & 0x1F;
         int val = unpack_depth(e->data) - 2 * rel_age;
         if (val < best_val) { best_val = val; best = e; }
     }
@@ -180,12 +198,13 @@ inline tt_entry* tt_victim(U64 key) {
 }
 
 /*
- * Probe TT with ABDADA support
- *
- * Returns: true if valid entry found
- * Sets: tt_move, tt_score, tt_depth, tt_flag, is_busy
+ * Probe TT.
+ * Returns: true if valid entry found.
+ * Sets: tt_move, tt_score, tt_depth, tt_flag, tt_eval (centipawn o tt_eval_none), is_pv.
+ * (ABDADA busy machinery RIMOSSO 2026-06-11: mai letto dalla search; i suoi bit
+ *  ospitano ora la static eval — vedi pack_tt_data.)
  */
-inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, bool& is_busy, bool& is_pv) {
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, int& tt_eval, bool& is_pv) {
     tt_entry* entry = tt_find(hash_key);
 
     if (!entry) {
@@ -193,7 +212,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
         tt_score = 0;
         tt_depth = 0;
         tt_flag = hash_flag_alpha;
-        is_busy = false;
+        tt_eval = tt_eval_none;
         is_pv = false;
         return false;
     }
@@ -204,14 +223,14 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     tt_score = unpack_score(data);
     tt_depth = unpack_depth(data);
     tt_flag = unpack_flag(data);
-    is_busy = (unpack_busy(data) > 0);
+    tt_eval = unpack_ext_eval(entry->ext, hash_key);   // eval16 (4.0), keyfrag-validata
     is_pv = (unpack_pv(data) != 0);
 
     // P1.10a age-refresh: l'entry e' CALDA (appena richiesta) -> portala all'age
     // corrente cosi' tt_victim non la preferisce per anzianita'. Store benigno
     // (lockless XOR-key ricalcolata; una race al peggio perde il refresh).
     if (g_tt_age_refresh && unpack_age(data) != current_age) {
-        U64 new_data = (data & ~(0xFFULL << 55)) | ((U64)(current_age & 0xFF) << 55);
+        U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
         entry->data = new_data;
         entry->key  = hash_key ^ new_data;
     }
@@ -219,79 +238,10 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     return true;
 }
 
-// Overload retro-compatibile (chiamanti che non vogliono il flag ttPv).
-inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, bool& is_busy) {
-    bool is_pv_dummy;
-    return probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag, is_busy, is_pv_dummy);
-}
-
-/*
- * Quick check if node is busy (for ABDADA skip decision)
- */
-inline bool is_node_busy(U64 hash_key) {
-    tt_entry* entry = tt_find(hash_key);
-    if (!entry) return false;
-    return (unpack_busy(entry->data) > 0);
-}
-
-/*
- * Mark node as busy (called when starting to search a node)
- * Only marks if entry doesn't exist or is from different position
- */
-inline void mark_busy(U64 hash_key, int depth) {
-    tt_entry* entry = tt_find(hash_key);
-
-    // If same position exists, increment busy counter
-    if (entry) {
-        U64 old_data = entry->data;
-        int old_busy = unpack_busy(old_data);
-        if (old_busy < 31) {       // busy ora a 5 bit (vedi pack_tt_data)
-            U64 new_data = pack_tt_data(
-                unpack_move(old_data),
-                unpack_score(old_data),
-                unpack_depth(old_data),
-                unpack_flag(old_data),
-                old_busy + 1,
-                unpack_age(old_data),
-                unpack_pv(old_data)
-            );
-            entry->data = new_data;
-            entry->key = hash_key ^ new_data;
-        }
-    }
-    else {
-        // New position - claim a victim slot in the bucket and mark it busy.
-        entry = tt_victim(hash_key);
-        U64 new_data = pack_tt_data(0, 0, 0, hash_flag_alpha, 1, current_age);
-        entry->data = new_data;
-        entry->key = hash_key ^ new_data;
-    }
-}
-
-/*
- * Unmark node as busy (called when done searching a node)
- */
-inline void unmark_busy(U64 hash_key) {
-    tt_entry* entry = tt_find(hash_key);
-
-    // Verify same position
-    if (entry) {
-        U64 old_data = entry->data;
-        int old_busy = unpack_busy(old_data);
-        if (old_busy > 0) {
-            U64 new_data = pack_tt_data(
-                unpack_move(old_data),
-                unpack_score(old_data),
-                unpack_depth(old_data),
-                unpack_flag(old_data),
-                old_busy - 1,
-                unpack_age(old_data),
-                unpack_pv(old_data)
-            );
-            entry->data = new_data;
-            entry->key = hash_key ^ new_data;
-        }
-    }
+// Overload retro-compatibile (chiamanti che non vogliono eval/ttPv).
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag) {
+    int eval_dummy; bool pv_dummy;
+    return probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag, eval_dummy, pv_dummy);
 }
 
 /*
@@ -302,7 +252,7 @@ inline void unmark_busy(U64 hash_key) {
  * 2. Replace if new depth >= old depth
  * 3. Replace if old entry is from different age
  */
-inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false) {
+inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false, int eval = tt_eval_none) {
     // Ablazione P0.1 (TTMove24 off): emula il troncamento 21-bit della 3.7.
     if (!g_ttmove24) move &= 0x1FFFFF;
 
@@ -313,32 +263,23 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
     if (score > mate_score) score += ply;
     else if (score < -mate_score) score -= ply;
 
-    int old_busy = 0;
+    U64 new_ext = pack_ext(eval, hash_key);
     tt_entry* entry = tt_find(hash_key);     // same-position slot in the bucket?
 
     if (entry) {
         U64 old_data = entry->data;
         int old_depth = unpack_depth(old_data);
         int old_age = unpack_age(old_data);
-        old_busy = unpack_busy(old_data);
 
-        // Decrement busy counter
-        if (old_busy > 0) old_busy--;
+        // P1.1: se questo store non porta un'eval fresca (es. nodo in scacco,
+        // lazy-eval) ma l'entry della STESSA posizione ne aveva una, conservala.
+        if (new_ext == 0 && unpack_ext_eval(entry->ext, hash_key) != tt_eval_none)
+            new_ext = entry->ext;
 
         // Don't replace deeper entries from same age unless exact score
         if (old_age == current_age && old_depth > depth && flag != hash_flag_exact) {
-            // Just update busy counter (preserve the ttPv bit)
-            U64 new_data = pack_tt_data(
-                unpack_move(old_data),
-                unpack_score(old_data),
-                old_depth,
-                unpack_flag(old_data),
-                old_busy,
-                old_age,
-                unpack_pv(old_data)
-            );
-            entry->data = new_data;
-            entry->key = hash_key ^ new_data;
+            // Conserva l'entry piu' profonda; aggiorna solo l'eval se mancava.
+            if (new_ext != entry->ext) entry->ext = new_ext;
             return;
         }
     }
@@ -348,9 +289,10 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
     }
 
     // Store new entry (carry the ttPv flag; `pv` già include l'ex-PV letto al probe)
-    U64 new_data = pack_tt_data(move, score, depth, flag, old_busy, current_age, pv ? 1 : 0);
+    U64 new_data = pack_tt_data(move, score, depth, flag, current_age, pv ? 1 : 0);
     entry->data = new_data;
     entry->key = hash_key ^ new_data;
+    entry->ext = new_ext;
 }
 
 /*
@@ -377,9 +319,8 @@ extern int ply;
  */
 inline int read_hash_entry(int alpha, int beta, int* best_move, int depth) {
     int tt_move, tt_score, tt_depth, tt_flag;
-    bool tt_busy;
 
-    if (!probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_busy)) {
+    if (!probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag)) {
         return no_hash_entry;
     }
 

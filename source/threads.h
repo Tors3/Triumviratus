@@ -23,11 +23,14 @@ struct ThreadData {
     int enpassant;
     int castle;
     U64 hash_key;
-    U64 pawn_key;   // P2.1: Zobrist solo-pedoni, mantenuta incrementale in make/unmake
+    U64 pawn_key;        // P2.1: Zobrist solo-pedoni, mantenuta incrementale in make/unmake
     int fifty;
+    int plies_from_null; // P2.2: mosse reali dall'ultima null nel cammino corrente
+    bool in_nmp_verif;   // P1.6: dentro una verification search (null disattivata)
+    int seldepth;        // max ply raggiunto (info UCI)
     
     // Repetition detection
-    U64 repetition_table[1000];
+    U64 repetition_table[2048];   // 2026-06-12: era 1000, OOB su partite 440+ mosse (vedi defs.h)
     int repetition_index;
     
     // Search state
@@ -201,6 +204,21 @@ extern void set_ttcut_bonus(bool enabled);     // P1.13 history bonus al ttMove 
 extern int  g_ttcut_bonus_scale;               //       spin TTCutBonusScale (/100, SPSA)
 extern void set_tt_age_refresh(bool enabled);  // P1.10a age refresh al probe-hit (def. threads.cpp, usato in tt.h)
 extern void set_pawn_key_incr(bool enabled);   // P2.1  pawn key incrementale (node-identical)
+// ---- Wave 3b (2026-06-11) ------------------------------------------------------
+extern void set_tt_static_eval(bool enabled);  // P1.1  eval statica in TT (salva la forward NNUE)
+extern void set_fast_rep_scan(bool enabled);   // P2.2  repetition scan a finestra min(fifty, plies_from_null)
+extern void set_evasion_gen(bool enabled);     // P2.3  generazione evasioni mascherata (node-identical)
+extern void set_thread_voting(bool enabled);   // P1.12 selezione SMP per voto pesato (default off)
+// ---- Toggle da co-tune (default OFF, si accendono nel mega-SPSA 4.0) ------------
+extern void set_qs_checks(bool enabled);       // P1.3 quiet check alla prima ply di qsearch
+extern void set_nmp_verif(bool enabled);       // P1.6 NMP verification + no doppia null (spin NMPVerifDepth)
+extern void set_lmp_improving(bool enabled);   // P1.7 LMP SF-style (spins LMPBase/LMPQuad), no cap d8
+extern void set_evalcache_undamp(bool enabled);// N1 eval-cache senza fifty in chiave (default ON)
+extern void set_probcut_tt(bool enabled);      // N2 probcut fail-high salvato in TT (default ON)
+
+// DIAGNOSTIC ("eval" UCI command): static NNUE eval (cp, side-to-move relative)
+// of the current global board. For cross-checking the NNUE port vs official SF.
+extern int debug_eval_position();
 
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);

@@ -31,6 +31,9 @@ extern "C" int __llvm_profile_write_file(void);
 // "EvalFile" handler to load a big net specified at runtime.
 std::string resolve_net_path(const std::string& name);
 
+// "Move Overhead" (UCI): ms riservati per mossa a lag di I/O e GUI (prima 50 fisso).
+static int g_move_overhead = 50;
+
 // parse user/GUI move string input (e.g. "e7e8q")
 int parse_move(char* move_string)
 {
@@ -180,7 +183,7 @@ void parse_go(char* command)
     if (time_uci != -1)
     {
         timeset = 1;
-        const int overhead = 50;               // ms reserved for lag / output
+        const int overhead = g_move_overhead;  // ms reserved for lag / output (UCI "Move Overhead")
         int remaining = time_uci - overhead;
         if (remaining < 0) remaining = 0;
 
@@ -277,6 +280,21 @@ void uci_loop()
             printf("option name TTCutBonusScale type spin default 100 min 0 max 400\n");  // /100 del stat_bonus; SPSA
             printf("option name TTAgeRefresh type check default true\n");      // P1.10a probe-hit rinfresca l'age
             printf("option name PawnKeyIncr type check default true\n");       // P2.1 pawn key incrementale (node-identical)
+            printf("option name TTStaticEval type check default true\n");      // P1.1 static eval in TT (salva la forward NNUE)
+            printf("option name FastRepScan type check default true\n");       // P2.2 repetition scan a finestra
+            printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
+            printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
+            // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
+            printf("option name QSChecks type check default false\n");          // P1.3 quiet check alla prima ply di qsearch
+            printf("option name NMPVerif type check default false\n");          // P1.6 NMP verification + no doppia null
+            printf("option name NMPVerifDepth type spin default 12 min 1 max 64\n");
+            printf("option name LMPImproving type check default false\n");      // P1.7 LMP SF-style senza cap d8
+            printf("option name LMPBase type spin default 3 min 0 max 20\n");
+            printf("option name LMPQuad type spin default 100 min 20 max 300\n"); // /100
+            printf("option name CheckExtDepth type spin default 128 min 0 max 128\n"); // P1.9: 128 = sempre (storico)
+            printf("option name Move Overhead type spin default 50 min 0 max 5000\n"); // ms riservati a lag/GUI per mossa
+            printf("option name EvalCacheUndamp type check default true\n");  // N1: eval-cache senza fifty in chiave (valore undamped)
+            printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
             printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // big net runtime-selezionabile; default rubicon, fallback nn-b1a57edbea57 (SF)
             printf("option name EvalCache type check default true\n");
@@ -396,6 +414,75 @@ void uci_loop()
         else if (strncmp(input, "accstats", 8) == 0)
         {
             sf_acc_stats();
+        }
+
+        // "bench [depth]" — suite fissa di 8 posizioni a profondita' fissa
+        // (default 13): node-count CANONICO (la node-identity in un comando) +
+        // NPS. Deterministico a Threads=1 (il default). Stato azzerato come
+        // ucinewgame prima di ogni posizione.
+        else if (strncmp(input, "bench", 5) == 0)
+        {
+            int bdepth = atoi(input + 5);
+            if (bdepth <= 0) bdepth = 13;
+            static const char* bench_fens[8] = {
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+                "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+                "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+                "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+                "8/2k5/3p4/p2P1p2/P2P1P2/8/2K5/8 w - - 0 1",
+                "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N w - - 0 1",
+            };
+            stop_search_threads();
+            wait_for_search_done();
+            U64 bench_nodes = 0;
+            int bench_t0 = get_time_ms();
+            for (int bi = 0; bi < 8; bi++) {
+                parse_fen((char*)bench_fens[bi]);
+                clear_hash_table();
+                for (int i = 0; i < num_threads; i++) {
+                    memset(thread_data[i].history_moves, 0, sizeof(thread_data[i].history_moves));
+                    memset(thread_data[i].capture_history, 0, sizeof(thread_data[i].capture_history));
+                    memset(thread_data[i].counter_moves, 0, sizeof(thread_data[i].counter_moves));
+                    memset(thread_data[i].continuation_history, 0, sizeof(thread_data[i].continuation_history));
+                    memset(thread_data[i].cont_corr_hist, 0, sizeof(thread_data[i].cont_corr_hist));
+                    memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));
+                    memset(thread_data[i].lowply_history, 0, sizeof(thread_data[i].lowply_history));
+                    memset(thread_data[i].cont_hist_2, 0, sizeof(thread_data[i].cont_hist_2));
+                    memset(thread_data[i].cont_hist_3, 0, sizeof(thread_data[i].cont_hist_3));
+                    memset(thread_data[i].cont_hist_4, 0, sizeof(thread_data[i].cont_hist_4));
+                    memset(thread_data[i].cont_hist_6, 0, sizeof(thread_data[i].cont_hist_6));
+                    memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
+                    memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
+                    memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+                }
+                reset_time_control();
+                launch_search(bdepth);
+                wait_for_search_done();
+                U64 bn = 0;
+                for (int i = 0; i < num_threads; i++) bn += thread_data[i].nodes;
+                bench_nodes += bn;
+                printf("info string bench pos %d/8 nodes %llu\n", bi + 1, (unsigned long long)bn);
+                fflush(stdout);
+            }
+            int bench_el = get_time_ms() - bench_t0;
+            if (bench_el <= 0) bench_el = 1;
+            printf("===========================\n");
+            printf("Nodes searched  : %llu\n", (unsigned long long)bench_nodes);
+            printf("Time (ms)       : %d\n", bench_el);
+            printf("Nodes/second    : %llu\n", (unsigned long long)((bench_nodes * 1000) / bench_el));
+            fflush(stdout);
+            parse_fen(start_position);
+        }
+
+        // DIAGNOSTIC: "eval" -> static NNUE eval of the current position (cp,
+        // side-to-move relative). Cross-checks the SFNNv9/3072 port against the
+        // official Stockfish binary on identical FENs. No search => byte-identical.
+        else if (strncmp(input, "eval", 4) == 0)
+        {
+            printf("eval %d\n", debug_eval_position());
+            fflush(stdout);
         }
 
        // UCI command: "ucinewgame"
@@ -567,6 +654,57 @@ void uci_loop()
         {
             const char* v = input + 33;
             set_pawn_key_incr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name TTStaticEval value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_tt_static_eval(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name FastRepScan value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_fast_rep_scan(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name EvasionGen value ", 32) == 0)
+        {
+            const char* v = input + 32;
+            set_evasion_gen(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name ThreadVoting value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_thread_voting(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name QSChecks value ", 30) == 0)
+        {
+            const char* v = input + 30;
+            set_qs_checks(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name NMPVerif value ", 30) == 0)
+        {
+            const char* v = input + 30;
+            set_nmp_verif(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name LMPImproving value ", 34) == 0)
+        {
+            const char* v = input + 34;
+            set_lmp_improving(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // "Move Overhead" (ms riservati per mossa a lag/GUI; prima hardcoded 50)
+        else if (strncmp(input, "setoption name Move Overhead value ", 35) == 0)
+        {
+            int v = atoi(input + 35);
+            g_move_overhead = v < 0 ? 0 : (v > 5000 ? 5000 : v);
+        }
+        else if (strncmp(input, "setoption name EvalCacheUndamp value ", 37) == 0)
+        {
+            const char* v = input + 37;
+            set_evalcache_undamp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name ProbCutTT value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_probcut_tt(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // DIAGNOSTIC: "setoption name EvalOff value <true|false>" (NPS profiling)

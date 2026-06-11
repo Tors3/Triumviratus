@@ -12,7 +12,7 @@
 #include <vector>
 
 // Define version information
-#define VERSION " - 3.9-dev"
+#define VERSION " - 4.0-beta"
 #define AUTHOR "Francesco Torsello"
 #define NAME "Triumviratus"
 
@@ -73,7 +73,9 @@ extern int side;
 extern int enpassant;
 extern int castle;
 extern U64 hash_key;
-extern U64 repetition_table[1000];
+// 2048 (2026-06-12, era 1000): partita lunga (440+ mosse = 880 plies di storia)
+// + cammino di search fino a max_ply=128 superava 1000 = scrittura OOB silenziosa.
+extern U64 repetition_table[2048];
 extern int repetition_index;
 extern int ply;
 extern int fifty;

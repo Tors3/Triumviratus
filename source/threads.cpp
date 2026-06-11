@@ -86,6 +86,108 @@ void set_tt_age_refresh(bool v) { g_tt_age_refresh = v; }
 static bool g_pawn_key_incr = true;
 void set_pawn_key_incr(bool v) { g_pawn_key_incr = v; }
 
+// ---- Wave 3b (2026-06-11): P1.1 static-eval-in-TT + P2.2 + P2.3 -------------
+
+// P1.1 (UCI "TTStaticEval", default ON): usa l'eval statica salvata nella TT
+// (8 bit: ±508cp passo 4, vedi tt.h) al posto della forward NNUE quando il probe
+// la porta. Il motore e' EVAL-BOUND (58% del tempo-nodo = forward): ogni hit con
+// eval = una forward risparmiata. Errore ±2cp + staleness-fifty accettati (stessa
+// classe dell'eval-cache, gia' ON). Lo STORE dell'eval e' incondizionato (gratis);
+// il toggle gata solo l'USO. Cambia i node-count -> SPRT.
+static bool g_tt_static_eval = true;
+void set_tt_static_eval(bool v) { g_tt_static_eval = v; }
+
+// P1.1 FIX fifty-staleness (2026-06-11): l'eval del wrapper SF e' SMORZATA dal
+// rule50 (evaluate.cpp: v*(200-fifty)/214) -> salvarla cruda in TT (chiave SENZA
+// fifty) la rende stantia: stored a fifty basso, riusata a fifty alto = eval
+// inflazionata (misurato: -37% nodi startpos = over-pruning; +1328% nel finale
+// bloccato = caos+corr avvelenata). Come SF (unadjustedStaticEval): in TT va
+// l'eval DE-smorzata; all'uso si RI-smorza col fifty corrente. Errore residuo =
+// solo arrotondamenti interi (~±3cp) invece di v*Δfifty/214 (fino a ~237cp).
+static inline int tt_eval_undamp(int v, int fifty) {
+    if (v == tt_eval_none) return v;
+    if (fifty > 100) fifty = 100;
+    return v * 214 / (200 - fifty);
+}
+static inline int tt_eval_redamp(int v, int fifty) {
+    if (v == tt_eval_none) return v;
+    if (fifty > 100) fifty = 100;
+    return v * (200 - fifty) / 214;
+}
+
+// P2.2 (UCI "FastRepScan", default ON): td_is_repetition scandisce solo le ultime
+// min(fifty, plies_from_null) entry invece dell'INTERA storia. fifty e' un bound
+// esatto (una mossa irreversibile cambia il board per sempre: nessuna ricorrenza
+// possibile oltre); plies_from_null esclude i segmenti oltre una null move (le
+// null pushano entry "virtuali" senza toccare fifty — il vecchio scan completo
+// le attraversava). Semantica = SF; node-count puo' cambiare di un soffio -> SPRT.
+static bool g_fast_rep_scan = true;
+void set_fast_rep_scan(bool v) { g_fast_rep_scan = v; }
+
+// P1.12 (UCI "ThreadVoting", default OFF): selezione del risultato SMP per VOTO
+// pesato stile SF invece di "vince il thread piu' profondo". Ogni thread vota la
+// sua best move con peso (score - minScore + 14) * depth; vince la mossa col
+// totale piu' alto (consenso fra thread > singolo thread profondo). Protezione
+// matti: un matto provato vince direttamente (il piu' corto). Inerte a 1 thread.
+// Default OFF = selezione legacy identica; SPRT a Threads=8 (convenzione SMP).
+static bool g_thread_voting = false;
+void set_thread_voting(bool v) { g_thread_voting = v; }
+
+// ---- Toggle DA CO-TUNE per il mega-SPSA 4.0 (2026-06-12) ---------------------
+// Strutture SF implementate dietro toggle default OFF = byte-identico. NON vanno
+// A/B-ate da sole (lezione two-basin: bolt-on con costanti altrui = negativo,
+// es. PawnHistory −18 bolt-on → +Elo dopo co-tune): si accendono nel co-tune
+// con le loro costanti nel vettore SPSA, insieme a PriorBonus/LowPly.
+
+// P1.3 (UCI "QSChecks"): alla PRIMA ply di qsearch tieni anche i QUIET CHECK
+// diretti (check_sq + filtro SEE>=-75 anti-blunder). Tattica forzante vista
+// prima, meno mate-blindness (SF: DEPTH_QS_CHECKS).
+static bool g_qs_checks = false;
+void set_qs_checks(bool v) { g_qs_checks = v; }
+
+// P1.6 (UCI "NMPVerif"): robustezza null-move — (a) niente due null consecutive;
+// (b) a depth >= NMPVerifDepth un fail-high della null va CONFERMATO da una
+// search reale ridotta (anti-zugzwang; SF: nmpMinPly). Spin NMPVerifDepth.
+static bool g_nmp_verif = false;
+void set_nmp_verif(bool v) { g_nmp_verif = v; }
+int g_nmp_verif_depth = 12;   // spin "NMPVerifDepth" (SPSA)
+
+// P1.7 (UCI "LMPImproving"): move-count pruning SF-style (base + d^2*quad/100) /
+// (2 - improving), SENZA il cap depth<=8 della lmp_table (oggi oltre d8 NESSUN
+// move-count pruning = parte del fattore-nodi vs SF). Spins LMPBase/LMPQuad,
+// scala comune LMPScale. Two-basin: costanti da co-tunare, non copiate.
+static bool g_lmp_improving = false;
+void set_lmp_improving(bool v) { g_lmp_improving = v; }
+int g_lmp_base = 3;     // spin "LMPBase"
+int g_lmp_quad = 100;   // spin "LMPQuad" (/100: 100 = d^2 pieno)
+
+// P1.9 (spin "CheckExtDepth", default 128 = SEMPRE = comportamento storico):
+// gate sulla check-extension incondizionata (SF l'ha rimossa ~10 anni fa).
+// Il co-tune puo' abbassarlo (0 = mai estendere); a 128 e' byte-identico.
+int g_check_ext_depth = 128;
+
+// N1 (UCI "EvalCacheUndamp", default ON): eval-cache con chiave senza fifty e
+// valore undamped (vedi td_evaluate). Piu' hit nei finali; OFF = legacy.
+static bool g_evalcache_undamp = true;
+void set_evalcache_undamp(bool v) { g_evalcache_undamp = v; }
+
+// N2 (UCI "ProbCutTT", default ON): il fail-high di ProbCut viene SALVATO in TT
+// (mossa, score, depth-3, bound beta, eval del nodo) come SF -> le rivisite
+// della stessa posizione tagliano dal probe senza rifare qsearch+verifica.
+static bool g_probcut_tt = true;
+void set_probcut_tt(bool v) { g_probcut_tt = v; }
+
+// P2.3 (UCI "EvasionGen", default ON): sotto scacco genera solo le pseudo-legali
+// UTILI (re + catture dello scaccante + blocchi sul raggio; doppio scacco: solo
+// re) intersecando le maschere ESISTENTI -> meno make falliti. VERIFICATO
+// (2026-06-11, harness simmetrico order-sensitive, 0 mismatch su pos in-scacco
+// d6 incl. captures-only): i flussi di mosse LEGALI (set E ordine) sono identici
+// on/off a ogni chiamata. Residuo ±0.3% di node-count da effetti di 2° ordine
+// non-semantici (bookkeeping) -> NON node-identical stretto: si valida con
+// l'SPRT del bundle come gli altri toggle.
+static bool g_evasion_gen = true;
+void set_evasion_gen(bool v) { g_evasion_gen = v; }
+
 // Eval-off DIAGNOSTIC toggle (UCI option "EvalOff", default false). Replaces the
 // NNUE forward in td_evaluate() with a trivial material count, so an NPS test can
 // measure how much per-node time is spent in evaluation (NNUE forward) vs the
@@ -506,6 +608,10 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMInstab"))            { g_tm_instab          = value; return true; }
     if (!strcmp(name, "TMDropDiv"))           { g_tm_drop_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "TTCutBonusScale"))     { g_ttcut_bonus_scale = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "NMPVerifDepth"))       { g_nmp_verif_depth = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "LMPBase"))             { g_lmp_base = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "LMPQuad"))             { g_lmp_quad = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "CheckExtDepth"))       { g_check_ext_depth = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRStatScoreDiv"))     { g_lmr_ss_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "LMRStatScoreOffset"))  { g_lmr_ss_offset      = value; return true; }
     if (!strcmp(name, "LMRContHistDiv"))      { g_lmr_ch_div = value < 1 ? 1 : value; return true; }
@@ -682,6 +788,11 @@ void copy_board_to_thread(ThreadData& td) {
         U64 bb = td.bitboards[pc];
         while (bb) { int sq = get_ls1b_index(bb); td.pawn_key ^= piece_keys[pc][sq]; pop_bit(bb, sq); }
     }
+    // P2.2: alla radice non ci sono null nel cammino -> finestra limitata solo
+    // da fifty/storia. 1024 = "nessuna null vista".
+    td.plies_from_null = 1024;
+    td.in_nmp_verif = false;   // P1.6
+    td.seldepth = 0;
     memcpy(td.repetition_table, repetition_table, sizeof(repetition_table));
     td.repetition_index = repetition_index;
     td.ply = 0;
@@ -934,6 +1045,8 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
         sf_pos_do(td.sfpos, &sm);
     }
 
+    td.plies_from_null++;   // P2.2: una mossa reale in piu' dall'ultima null
+
     return 1;
 }
 
@@ -943,6 +1056,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 
 static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
     sf_pos_undo(td.sfpos);   // retract the move on the incremental NNUE mirror
+    td.plies_from_null--;    // P2.2 (speculare al ++ del make riuscito)
     td.side ^= 1;
 
     int source = get_move_source(move);
@@ -987,6 +1101,22 @@ static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
 // MOVE GENERATION
 // ============================================================================
 
+// Case strettamente tra due quadrati allineati (0 per cavallo/non-allineati).
+// Riempita da init_cuckoo; usata dall'upcoming-repetition (P1.2) e dalle
+// evasioni (P2.3).
+static U64 between_tbl[64][64];
+
+// Bitboard degli attaccanti di `sq` del colore `by` (P2.3 EvasionGen).
+static inline U64 td_attackers_to(ThreadData& td, int sq, int by) {
+    const int off = (by == white) ? 0 : 6;
+    const U64 occ = td.occupancies[both];
+    return (pawn_attacks[by ^ 1][sq]        & td.bitboards[P + off])
+         | (knight_attacks[sq]              & td.bitboards[N + off])
+         | (king_attacks[sq]                & td.bitboards[K + off])
+         | (get_bishop_attacks(sq, occ)     & (td.bitboards[B + off] | td.bitboards[Q + off]))
+         | (get_rook_attacks(sq, occ)       & (td.bitboards[R + off] | td.bitboards[Q + off]));
+}
+
 static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_only = false) {
     move_list->count = 0;
     int source_square, target_square;
@@ -995,9 +1125,35 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
     // --- MAGIA BITWISE: Precalcoliamo le maschere ---
     U64 enemies = (td.side == white) ? td.occupancies[black] : td.occupancies[white];
     U64 friends = (td.side == white) ? td.occupancies[white] : td.occupancies[black];
-    // Se vogliamo solo catture, le uniche case valide sono quelle nemiche. 
+    // Se vogliamo solo catture, le uniche case valide sono quelle nemiche.
     // Altrimenti, tutte le case tranne le nostre.
     U64 allowed_squares = captures_only ? enemies : ~friends;
+
+    // P2.3 EvasionGen: sotto scacco le sole pseudo-legali che POSSONO essere
+    // legali sono: mosse di re, catture dello scaccante, blocchi sul raggio
+    // (scacco singolo; doppio scacco: solo il re). Restringiamo le maschere QUI:
+    // l'ordine delle mosse superstiti resta IDENTICO e quelle scartate sarebbero
+    // state comunque rigettate dal make-filter (re ancora in scacco) =>
+    // node-identical. Le case di blocco sono VUOTE per definizione (un pezzo
+    // nemico sul raggio = niente scacco), quindi checker|between funziona sia
+    // per le catture sia per i blocchi. E.p. e arrocco: invariati (l'e.p. puo'
+    // risolvere lo scacco in modi speciali -> lo filtra il make; l'arrocco in
+    // scacco e' gia' auto-escluso dal test e1/e8-attaccata).
+    U64 evasion_mask = ~0ULL;
+    if (g_evasion_gen) {
+        const int ksq = get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+        if (td_is_square_attacked(td, ksq, td.side ^ 1)) {
+            U64 checkers = td_attackers_to(td, ksq, td.side ^ 1);
+            if (checkers & (checkers - 1)) {
+                evasion_mask = 0ULL;                       // doppio scacco: solo il re
+            } else {
+                const int csq = get_ls1b_index(checkers);
+                evasion_mask = checkers | between_tbl[csq][ksq];
+            }
+        }
+    }
+    // Maschera per i pezzi NON-re (il re tiene allowed_squares pieno).
+    const U64 piece_allowed = allowed_squares & evasion_mask;
 
     for (int piece = P; piece <= k; piece++) {
         bitboard = td.bitboards[piece];
@@ -1009,24 +1165,30 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
                     target_square = source_square - 8;
 
                     // Mosse silenziose dei pedoni: bloccate se captures_only   true
+                    // (P2.3: ogni approdo deve stare in evasion_mask — sotto scacco
+                    //  solo i blocchi sul raggio sopravvivono, fuori scacco ~0ULL no-op)
                     if (!captures_only) {
                         if (!(target_square < a8) && !get_bit(td.occupancies[both], target_square)) {
                             if (source_square >= a7 && source_square <= h7) {
-                                add_move(move_list, encode_move(source_square, target_square, piece, Q, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, R, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, B, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, N, 0, 0, 0, 0));
+                                if ((evasion_mask >> target_square) & 1) {
+                                    add_move(move_list, encode_move(source_square, target_square, piece, Q, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, R, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, B, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, N, 0, 0, 0, 0));
+                                }
                             }
                             else {
-                                add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
-                                if ((source_square >= a2 && source_square <= h2) && !get_bit(td.occupancies[both], target_square - 8))
+                                if ((evasion_mask >> target_square) & 1)
+                                    add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
+                                if ((source_square >= a2 && source_square <= h2) && !get_bit(td.occupancies[both], target_square - 8) &&
+                                    ((evasion_mask >> (target_square - 8)) & 1))
                                     add_move(move_list, encode_move(source_square, target_square - 8, piece, 0, 0, 1, 0, 0));
                             }
                         }
                     }
 
                     // Catture dei pedoni
-                    attacks = pawn_attacks[td.side][source_square] & enemies;
+                    attacks = pawn_attacks[td.side][source_square] & enemies & evasion_mask;
                     while (attacks) {
                         target_square = get_ls1b_index(attacks);
                         if (source_square >= a7 && source_square <= h7) {
@@ -1079,20 +1241,24 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
                     if (!captures_only) {
                         if (!(target_square > h1) && !get_bit(td.occupancies[both], target_square)) {
                             if (source_square >= a2 && source_square <= h2) {
-                                add_move(move_list, encode_move(source_square, target_square, piece, q, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, r, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, b, 0, 0, 0, 0));
-                                add_move(move_list, encode_move(source_square, target_square, piece, n, 0, 0, 0, 0));
+                                if ((evasion_mask >> target_square) & 1) {
+                                    add_move(move_list, encode_move(source_square, target_square, piece, q, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, r, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, b, 0, 0, 0, 0));
+                                    add_move(move_list, encode_move(source_square, target_square, piece, n, 0, 0, 0, 0));
+                                }
                             }
                             else {
-                                add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
-                                if ((source_square >= a7 && source_square <= h7) && !get_bit(td.occupancies[both], target_square + 8))
+                                if ((evasion_mask >> target_square) & 1)
+                                    add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
+                                if ((source_square >= a7 && source_square <= h7) && !get_bit(td.occupancies[both], target_square + 8) &&
+                                    ((evasion_mask >> (target_square + 8)) & 1))
                                     add_move(move_list, encode_move(source_square, target_square + 8, piece, 0, 0, 1, 0, 0));
                             }
                         }
                     }
 
-                    attacks = pawn_attacks[td.side][source_square] & enemies;
+                    attacks = pawn_attacks[td.side][source_square] & enemies & evasion_mask;
                     while (attacks) {
                         target_square = get_ls1b_index(attacks);
                         if (source_square >= a2 && source_square <= h2) {
@@ -1138,7 +1304,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
         if ((td.side == white) ? piece == N : piece == n) {
             while (bitboard) {
                 source_square = get_ls1b_index(bitboard);
-                attacks = knight_attacks[source_square] & allowed_squares;
+                attacks = knight_attacks[source_square] & piece_allowed;
                 while (attacks) {
                     target_square = get_ls1b_index(attacks);
                     if (!get_bit(enemies, target_square)) add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
@@ -1152,7 +1318,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
         if ((td.side == white) ? piece == B : piece == b) {
             while (bitboard) {
                 source_square = get_ls1b_index(bitboard);
-                attacks = get_bishop_attacks(source_square, td.occupancies[both]) & allowed_squares;
+                attacks = get_bishop_attacks(source_square, td.occupancies[both]) & piece_allowed;
                 while (attacks) {
                     target_square = get_ls1b_index(attacks);
                     if (!get_bit(enemies, target_square)) add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
@@ -1166,7 +1332,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
         if ((td.side == white) ? piece == R : piece == r) {
             while (bitboard) {
                 source_square = get_ls1b_index(bitboard);
-                attacks = get_rook_attacks(source_square, td.occupancies[both]) & allowed_squares;
+                attacks = get_rook_attacks(source_square, td.occupancies[both]) & piece_allowed;
                 while (attacks) {
                     target_square = get_ls1b_index(attacks);
                     if (!get_bit(enemies, target_square)) add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
@@ -1180,7 +1346,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
         if ((td.side == white) ? piece == Q : piece == q) {
             while (bitboard) {
                 source_square = get_ls1b_index(bitboard);
-                attacks = get_queen_attacks(source_square, td.occupancies[both]) & allowed_squares;
+                attacks = get_queen_attacks(source_square, td.occupancies[both]) & piece_allowed;
                 while (attacks) {
                     target_square = get_ls1b_index(attacks);
                     if (!get_bit(enemies, target_square)) add_move(move_list, encode_move(source_square, target_square, piece, 0, 0, 0, 0, 0));
@@ -1205,6 +1371,7 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
             }
         }
     }
+
 }
 
 // ============================================================================
@@ -1226,6 +1393,30 @@ static inline int sf_build_piece_list(ThreadData& td, int pieces[33], int square
         }
     }
     return count;
+}
+
+// DIAGNOSTIC ("eval" UCI command): static NNUE eval of the CURRENT global board
+// (the one parse_fen / "position" populate). Builds the piece list straight from
+// the global bitboards and calls the stateless oracle sf_eval (whose value is,
+// by the NNUE_VERIFY invariant, identical to the incremental sf_pos_eval =
+// Eval::evaluate, i.e. SF's "Final evaluation"). Returns centipawns relative to
+// the side to move. Used to cross-check the SFNNv9/3072 port against the official
+// Stockfish binary on identical FENs (a correct port agrees up to SF's UCI
+// pawn-normalisation constant).
+int debug_eval_position() {
+    int pieces[33], squares[33];
+    int count = 0;
+    for (int bb_piece = P; bb_piece <= k; bb_piece++) {
+        U64 bb = bitboards[bb_piece];          // GLOBAL board set by parse_fen
+        while (bb) {
+            int sq = get_ls1b_index(bb);
+            pieces[count]  = sf_piece_code[bb_piece];
+            squares[count] = nnue_squares[sq];
+            count++;
+            pop_bit(bb, sq);
+        }
+    }
+    return sf_eval(side == white, pieces, squares, count, fifty);
 }
 
 // Re-sync the incremental NNUE mirror to the thread's current board (full
@@ -1266,6 +1457,19 @@ static inline int td_evaluate(ThreadData& td) {
     // safe because sf_pos_do/undo keep the lazy accumulator's dirty chain intact
     // whether or not we call sf_pos_eval here.
     if (g_eval_cache) {
+        if (g_evalcache_undamp) {
+            // N1 (2026-06-12): chiave SENZA fifty, valore UNDAMPED (rule50-indip.)
+            // ri-smorzato col fifty corrente alla lettura — stesso design del
+            // TT-eval16. Prima il fifty era nella chiave -> la stessa posizione a
+            // fifty diverso era un MISS sistematico (finali shuffle). Costo: ±2cp
+            // di arrotondamento sul roundtrip; il valore fresco resta esatto.
+            ThreadData::EvalCacheEntry& ce = td.eval_cache[td.hash_key & ThreadData::EVAL_CACHE_MASK];
+            if (ce.key == td.hash_key) return tt_eval_redamp(ce.eval, td.fifty);
+            const int v = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
+            ce.key = td.hash_key;
+            ce.eval = tt_eval_undamp(v, td.fifty);
+            return v;
+        }
         const U64 ck = td.hash_key ^ (0x9E3779B97F4A7C15ULL * (U64)(td.fifty + 1));
         ThreadData::EvalCacheEntry& ce = td.eval_cache[ck & ThreadData::EVAL_CACHE_MASK];
         if (ce.key == ck) return ce.eval;
@@ -1847,7 +2051,8 @@ static int mp_next(ThreadData& td, MovePicker& mp) {
 // case STRETTAMENTE tra s1 e s2 (0 per cavallo / case non allineate).
 static U64 cuckoo_key[8192];
 static int cuckoo_move[8192];
-static U64 between_tbl[64][64];
+// (between_tbl definita piu' sopra, prima di td_generate_moves: serve anche
+//  alle evasioni P2.3, non solo all'upcoming-repetition.)
 
 static inline int cuckoo_h1(U64 h) { return (int)(h & 0x1FFF); }
 static inline int cuckoo_h2(U64 h) { return (int)((h >> 16) & 0x1FFF); }
@@ -1931,11 +2136,22 @@ static bool td_upcoming_repetition(ThreadData& td) {
 }
 
 static inline int td_is_repetition(ThreadData& td) {
-    // NB: la repetition_table contiene ANCHE le null-move (NMP), che pushano un'entry
-    // ma flippano il lato senza mossa reale e senza toccare `fifty`. Questo ROMPE sia
-    // l'ottimizzazione step-2 ("stesso lato", la parita' si sfasa sulle null) sia la
-    // finestra-fifty (le null aggiungono entry senza incrementare fifty). Provato il
-    // 2026-06-06: cambiava i node-count = bug. Il loop completo resta la versione corretta.
+    // P2.2 FastRepScan (default ON): finestra min(fifty, plies_from_null) invece
+    // dell'INTERA storia. fifty = bound ESATTO (una mossa irreversibile azzera
+    // fifty e cambia il board per sempre -> nessuna ricorrenza oltre);
+    // plies_from_null esclude i segmenti oltre una null move — risolve il bug del
+    // vecchio tentativo finestra-fifty (2026-06-06): le null pushano entry senza
+    // toccare fifty e sfasavano la finestra. Niente step-2: la chiave include il
+    // side_key, le entry dell'altro lato non possono mai combaciare.
+    if (g_fast_rep_scan) {
+        int limit = td.fifty < td.plies_from_null ? td.fifty : td.plies_from_null;
+        int lo = td.repetition_index - limit;
+        if (lo < 0) lo = 0;
+        for (int i = td.repetition_index - 1; i >= lo; i--)
+            if (td.repetition_table[i] == td.hash_key) return 1;
+        return 0;
+    }
+    // Legacy: loop completo (entry null incluse), versione di riferimento.
     for (int i = 0; i < td.repetition_index; i++) {
         if (td.repetition_table[i] == td.hash_key)
             return 1;
@@ -1947,7 +2163,9 @@ static inline int td_is_repetition(ThreadData& td) {
 // QUIESCENCE SEARCH
 // ============================================================================
 
-static int td_quiescence(ThreadData& td, int alpha, int beta) {
+// qs_depth: 0 alla prima ply di qsearch (chiamate dal negamax), decresce nelle
+// ricorsioni. Serve solo a P1.3 QSChecks (quiet check tenuti SOLO a qs_depth 0).
+static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) {
     // Illegal-position / king-capture guard (see td_negamax for the full
     // rationale): never search a position where the side not to move is in check,
     // because making the king capture desyncs the NNUE accumulator and crashes.
@@ -1966,6 +2184,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     }
 
     td.nodes++;
+    if (td.ply > td.seldepth) td.seldepth = td.ply;   // seldepth (info UCI)
 
     if (td.ply >= max_ply) return td_evaluate(td);
 
@@ -1973,8 +2192,9 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
 
     // TT probe (qsearch entries stored at depth 0)
     int tt_move = 0, tt_score = 0, tt_depth = 0, tt_flag = hash_flag_alpha;
-    bool tt_busy = false;
-    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_busy);
+    int tt_eval = tt_eval_none;   // P1.1
+    bool tt_pv_q = false;
+    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_eval, tt_pv_q);
     if (tt_hit && !pv_node) {
         if (tt_score < -mate_score) tt_score += td.ply;
         if (tt_score > mate_score) tt_score -= td.ply;
@@ -1988,11 +2208,15 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     bool in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
 
     int best_score;
+    int q_raw_eval = tt_eval_none;   // P1.1: eval pura da salvare nello store qsearch
     if (in_check) {
         best_score = -infinity;
     }
     else {
-        int stand_pat = td_evaluate(td);
+        // P1.1 TTStaticEval: come nel negamax (TT = de-smorzata, ri-smorza qui).
+        q_raw_eval = (g_tt_static_eval && tt_hit && tt_eval != tt_eval_none)
+                     ? tt_eval_redamp(tt_eval, td.fifty) : td_evaluate(td);
+        int stand_pat = q_raw_eval;
         // FIX P0.4 (2026-06-09): la correction history ora corregge ANCHE lo
         // stand-pat di quiescence (dove avviene la maggioranza delle eval);
         // prima si fermava ai nodi interni. Gated QsearchCorr per l'ablazione.
@@ -2015,8 +2239,11 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
     }
 
     moves move_list[1];
-    // Se non siamo sotto scacco (!in_check), passa true per generare SOLO le catture!
-    td_generate_moves(td, move_list, !in_check);
+    // Se non siamo sotto scacco (!in_check), passa true per generare SOLO le catture.
+    // P1.3 QSChecks (default OFF): alla prima ply di qsearch genera TUTTO, poi il
+    // loop tiene solo catture + quiet che danno SCACCO DIRETTO.
+    const bool qs_checks_here = g_qs_checks && qs_depth == 0 && !in_check;
+    td_generate_moves(td, move_list, !in_check && !qs_checks_here);
 
     // Calcola punteggi senza ordinare (selezione pick-next).
     int move_scores[256];
@@ -2051,15 +2278,23 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
         // --- FINE PICK-NEXT ---
 
         if (!in_check) {
-            if (!get_move_capture(move)) continue;
-            // (4) QFutility: salta la cattura se best_score + valore(vittima) + margine
-            //     non arriva ad alpha (no ep/promo). OFF = nessun effetto.
-            if (g_qfutility && !get_move_promoted(move) && !get_move_enpassant(move)) {
-                int vic = td_captured_piece(td, get_move_target(move));
-                if (vic >= 0 && vic < 12 &&
-                    best_score + see_piece_values[vic] + g_qfut_margin <= alpha) continue;
+            if (!get_move_capture(move)) {
+                // P1.3 QSChecks: tieni il quiet SOLO se da' scacco diretto e non
+                // e' un check-blunder (SEE >= -75, stesso filtro del CheckOrdering).
+                if (!qs_checks_here) continue;
+                if (td.check_key != td.hash_key) td_compute_checks(td);
+                if (!get_bit(td.check_sq[get_move_piece(move) % 6], get_move_target(move))) continue;
+                if (td_see(td, move) < -75) continue;
+            } else {
+                // (4) QFutility: salta la cattura se best_score + valore(vittima) + margine
+                //     non arriva ad alpha (no ep/promo). OFF = nessun effetto.
+                if (g_qfutility && !get_move_promoted(move) && !get_move_enpassant(move)) {
+                    int vic = td_captured_piece(td, get_move_target(move));
+                    if (vic >= 0 && vic < 12 &&
+                        best_score + see_piece_values[vic] + g_qfut_margin <= alpha) continue;
+                }
+                if (!get_move_promoted(move) && td_see(td, move) < 0) continue;
             }
-            if (!get_move_promoted(move) && td_see(td, move) < 0) continue;
         }
 
         UndoInfo undo;
@@ -2074,7 +2309,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
 
         legal_moves++;
 
-        int score = -td_quiescence(td, -beta, -alpha);
+        int score = -td_quiescence(td, -beta, -alpha, qs_depth - 1);
 
         td_unmake_move(td, move, undo);
         td.ply--;
@@ -2096,7 +2331,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta) {
         return -mate_value + td.ply;
 
     int store_flag = (best_score >= beta) ? hash_flag_beta : hash_flag_alpha;
-    store_tt(td.hash_key, best_move, best_score, 0, store_flag, td.ply);
+    store_tt(td.hash_key, best_move, best_score, 0, store_flag, td.ply, false, tt_eval_undamp(q_raw_eval, td.fifty));
 
     return best_score;
 }
@@ -2295,12 +2530,12 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     int tt_score = 0;
     int tt_depth = 0;
     int tt_flag = hash_flag_alpha;
-    bool tt_busy = false;
+    int tt_eval = tt_eval_none;   // P1.1: static eval salvata nell'entry (o none)
     bool tt_pv = false;
     int score;
 
     // TT probe
-    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_busy, tt_pv);
+    bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag, tt_eval, tt_pv);
 
     // ttPv (SF): un nodo è "PV-ish" se è un vero PV node o se la TT lo ricorda ex-PV.
     // store_pv viene scritto negli store TT (propaga il flag); il segnale NUOVO è ridurre
@@ -2345,6 +2580,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     if (td.ply >= max_ply) { td.pv_length[td.ply] = td.ply; return td_evaluate(td); }
 
     td.nodes++;
+    if (td.ply > td.seldepth) td.seldepth = td.ply;   // seldepth (info UCI)
 
     // Syzygy tablebase WDL probe. For a non-root node with no castling rights
     // and few enough pieces, the tablebase gives the exact game value (side-to-
@@ -2365,7 +2601,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     int king_sq = get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
     bool in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
 
-    if (in_check) depth++;
+    // P1.9: gate co-tunabile sulla check-extension (default 128 = sempre =
+    // comportamento storico; il co-tune puo' abbassarlo, 0 = mai).
+    if (in_check && depth <= g_check_ext_depth) depth++;
 
     // Internal Iterative Reduction: senza TT move l'ordinamento e' scadente,
     // riduciamo di 1 ply per ottenere a basso costo una hash move.
@@ -2375,6 +2613,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // computed once; reused to apply the correction here and to learn at node exit.
     const int corr_idx = td_corr_index(td);
     int static_eval;
+    int node_raw_eval = tt_eval_none;   // P1.1: eval PURA (pre-corr) da salvare in TT
     if (g_lazy_eval && in_check) {
         // In check, no forward-pruning rule reads static_eval (all gated
         // !in_check) and corr-update is skipped -> don't pay for the NNUE eval.
@@ -2384,7 +2623,13 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // (ImprovingFix OFF = vecchio comportamento: slot a 0.)
         td.eval_stack[td.ply] = g_improving_fix ? EVAL_NONE : 0;
     } else {
-        static_eval = td_evaluate(td);
+        // P1.1 TTStaticEval: l'eval salvata in TT evita la forward NNUE (58% del
+        // tempo-nodo). In TT vive DE-smorzata dal rule50 -> ri-smorza col fifty
+        // CORRENTE (fix staleness). raw resta PURA pre-correction (la corr e'
+        // appresa/tempo-variante, si riapplica fresca qui sotto).
+        node_raw_eval = (g_tt_static_eval && tt_eval != tt_eval_none)
+                        ? tt_eval_redamp(tt_eval, td.fifty) : td_evaluate(td);
+        static_eval = node_raw_eval;
         if (g_corr_hist) static_eval += td_corr_value(td, corr_idx);
         td.eval_stack[td.ply] = static_eval;
     }
@@ -2433,7 +2678,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     }
 
     // Null move pruning (not when beta is a mate score)
-    if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score && eval >= beta) {
+    // P1.6 NMPVerif (default OFF): (a) mai due null consecutive (move_stack==0 =
+    // il padre ha appena nullato); (b) durante una search di verifica niente null.
+    if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score && eval >= beta &&
+        (!g_nmp_verif || (td.move_stack[td.ply] != 0 && !td.in_nmp_verif))) {
         U64 our_pieces = (td.side == white) ?
             (td.bitboards[N] | td.bitboards[B] | td.bitboards[R] | td.bitboards[Q]) :
             (td.bitboards[n] | td.bitboards[b] | td.bitboards[r] | td.bitboards[q]);
@@ -2454,6 +2702,11 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             td.move_stack[td.ply] = 0;
             td.captured_stack[td.ply] = -1;
 
+            // P2.2: il sottoalbero della null parte con 0 mosse reali dall'ultima
+            // null (le ripetizioni non si contano attraverso una null, stile SF).
+            const int saved_pfn = td.plies_from_null;
+            td.plies_from_null = 0;
+
             int R = g_nmp_base + depth / g_nmp_div;
             // (1) NMPEvalScale: più sopra beta = riduzione maggiore (cap +3). OFF = invariato.
             if (g_nmp_eval_scale) {
@@ -2467,6 +2720,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             score = -td_negamax(td, -beta, -beta + 1, depth - 1 - R, !is_cut_node);
             sf_pos_undo(td.sfpos);
 
+            td.plies_from_null = saved_pfn;   // P2.2 restore
             td.ply--;
             td.repetition_index--;
             td.side ^= 1;
@@ -2475,7 +2729,22 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
             if (stop_threads.load(std::memory_order_relaxed)) return 0;
             // fail-soft: ritorna lo score reale, ma non un matto "finto" da null move.
-            if (score >= beta) return (score >= mate_score) ? beta : score;
+            if (score >= beta) {
+                // P1.6 NMPVerif: a depth alta il fail-high della null va CONFERMATO
+                // da una search REALE ridotta (anti-zugzwang). Durante la verifica
+                // la null e' disattivata (td.in_nmp_verif). Verifica fallita = non
+                // potare: il nodo prosegue normalmente.
+                if (g_nmp_verif && depth >= g_nmp_verif_depth && !td.in_nmp_verif &&
+                    score < mate_score) {
+                    td.in_nmp_verif = true;
+                    int v = td_negamax(td, beta - 1, beta, depth - 1 - R, is_cut_node);
+                    td.in_nmp_verif = false;
+                    if (stop_threads.load(std::memory_order_relaxed)) return 0;
+                    if (v >= beta) return (v >= mate_score) ? beta : v;
+                } else {
+                    return (score >= mate_score) ? beta : score;
+                }
+            }
         }
     }
 
@@ -2548,8 +2817,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
                 if (stop_threads.load(std::memory_order_relaxed)) return 0;
 
-                if (pc_score >= probcut_beta)
+                if (pc_score >= probcut_beta) {
+                    // N2 ProbCutTT (SF): salva il fail-high in TT a depth-3 cosi'
+                    // le rivisite tagliano dal probe senza rifare qsearch+verifica.
+                    if (g_probcut_tt && !excluded_move)
+                        store_tt(td.hash_key, move, pc_score, depth - 3, hash_flag_beta,
+                                 td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
                     return pc_score;                       // fail-soft prune
+                }
             }
         }
     }
@@ -2603,10 +2878,20 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         bool is_quiet = !is_capture && !is_promotion;
 
         // LMP
-        if (!pv_node && !in_check && depth <= 8 && is_quiet && best_score > -mate_score) {
-            int lmp_idx = (depth < 8) ? depth : 8;
-            int lmp_threshold = lmp_table[lmp_idx] * g_lmp_scale / 100;   // LMPScale (100 = invariato)
-            if (quiets_searched >= lmp_threshold) {
+        if (!pv_node && !in_check && is_quiet && best_score > -mate_score) {
+            int lmp_threshold = -1;   // -1 = nessun move-count pruning a questo nodo
+            if (g_lmp_improving) {
+                // P1.7 (default OFF, co-tune): formula SF (base + d^2*quad/100) /
+                // (2 - improving), SENZA cap di profondita'. LMPScale resta la
+                // scala comune.
+                lmp_threshold = (g_lmp_base + depth * depth * g_lmp_quad / 100)
+                                / (2 - ((g_improving && improving) ? 1 : 0));
+                lmp_threshold = lmp_threshold * g_lmp_scale / 100;
+            } else if (depth <= 8) {
+                int lmp_idx = (depth < 8) ? depth : 8;
+                lmp_threshold = lmp_table[lmp_idx] * g_lmp_scale / 100;   // LMPScale (100 = invariato)
+            }
+            if (lmp_threshold >= 0 && quiets_searched >= lmp_threshold) {
                 // Phase-2: with the staged picker we can skip the entire quiet
                 // stage instead of testing every move individually. The flag is
                 // set once; mp_next() will never enter MPS_GEN_QUIET again.
@@ -2871,7 +3156,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 td.pv_length[td.ply] = td.pv_length[td.ply + 1];
 
                 if (score >= beta) {
-                    if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply, store_pv);
+                    if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
                     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag_beta, depth, in_check, move, excluded_move);
 
                     if (is_quiet) {
@@ -2973,7 +3258,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     }
 
     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag, depth, in_check, best_move, excluded_move);
-    if (!excluded_move) store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply, store_pv);
+    if (!excluded_move) store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
 
     return best_score;
 }
@@ -2996,16 +3281,16 @@ static void print_search_info(ThreadData& td, int depth, int score) {
     std::lock_guard<std::mutex> lock(output_mutex);
 
     if (score > -mate_value && score < -mate_score) {
-        printf("info depth %d score mate %d nodes %llu nps %llu time %d pv ",
-            depth, -(score + mate_value) / 2 - 1, total, nps, elapsed);
+        printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d pv ",
+            depth, td.seldepth, -(score + mate_value) / 2 - 1, total, nps, elapsed);
     }
     else if (score > mate_score && score < mate_value) {
-        printf("info depth %d score mate %d nodes %llu nps %llu time %d pv ",
-            depth, (mate_value - score) / 2 + 1, total, nps, elapsed);
+        printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d pv ",
+            depth, td.seldepth, (mate_value - score) / 2 + 1, total, nps, elapsed);
     }
     else {
-        printf("info depth %d score cp %d nodes %llu nps %llu time %d pv ",
-            depth, score, total, nps, elapsed);
+        printf("info depth %d seldepth %d score cp %d nodes %llu nps %llu time %d pv ",
+            depth, td.seldepth, score, total, nps, elapsed);
     }
 
     for (int i = 0; i < td.pv_length[0]; i++) {
@@ -3290,13 +3575,63 @@ void search_position_mt(int depth) {
     int best_score = thread_data[0].best_score;
     int best_depth = thread_data[0].depth;
 
-    for (int i = 1; i < num_threads; i++) {
-        if (thread_data[i].depth > best_depth ||
-            (thread_data[i].depth == best_depth && thread_data[i].best_score > best_score)) {
-            if (thread_data[i].best_move != 0) {
-                best_move = thread_data[i].best_move;
-                best_score = thread_data[i].best_score;
-                best_depth = thread_data[i].depth;
+    if (g_thread_voting && num_threads > 1) {
+        // P1.12: voto pesato stile SF. Un matto provato salta il voto (vince il
+        // piu' corto = score piu' alto); altrimenti ogni thread vota la sua mossa
+        // con peso (score - minScore + 14) * depth e vince il consenso.
+        int mate_thread = -1;
+        int min_score = infinity;
+        for (int i = 0; i < num_threads; i++) {
+            if (!thread_data[i].best_move) continue;
+            if (thread_data[i].best_score < min_score) min_score = thread_data[i].best_score;
+            if (thread_data[i].best_score >= mate_score &&
+                (mate_thread < 0 || thread_data[i].best_score > thread_data[mate_thread].best_score))
+                mate_thread = i;
+        }
+        if (mate_thread >= 0) {
+            best_move  = thread_data[mate_thread].best_move;
+            best_score = thread_data[mate_thread].best_score;
+            best_depth = thread_data[mate_thread].depth;
+        } else if (min_score < infinity) {
+            int       vote_moves[MAX_THREADS];
+            long long vote_w[MAX_THREADS];
+            int nv = 0;
+            for (int i = 0; i < num_threads; i++) {
+                if (!thread_data[i].best_move) continue;
+                long long w = (long long)(thread_data[i].best_score - min_score + 14) *
+                              (thread_data[i].depth > 0 ? thread_data[i].depth : 1);
+                int j;
+                for (j = 0; j < nv; j++) if (vote_moves[j] == thread_data[i].best_move) break;
+                if (j == nv) { vote_moves[nv] = thread_data[i].best_move; vote_w[nv] = 0; nv++; }
+                vote_w[j] += w;
+            }
+            int win = 0;
+            for (int j = 1; j < nv; j++) if (vote_w[j] > vote_w[win]) win = j;
+            // fra i thread che votano la vincitrice: depth max, tie score max
+            int bt = -1;
+            for (int i = 0; i < num_threads; i++) {
+                if (thread_data[i].best_move != vote_moves[win]) continue;
+                if (bt < 0 || thread_data[i].depth > thread_data[bt].depth ||
+                    (thread_data[i].depth == thread_data[bt].depth &&
+                     thread_data[i].best_score > thread_data[bt].best_score))
+                    bt = i;
+            }
+            if (bt >= 0) {
+                best_move  = thread_data[bt].best_move;
+                best_score = thread_data[bt].best_score;
+                best_depth = thread_data[bt].depth;
+            }
+        }
+    } else {
+        // Legacy: vince il thread piu' profondo (tie: score piu' alto).
+        for (int i = 1; i < num_threads; i++) {
+            if (thread_data[i].depth > best_depth ||
+                (thread_data[i].depth == best_depth && thread_data[i].best_score > best_score)) {
+                if (thread_data[i].best_move != 0) {
+                    best_move = thread_data[i].best_move;
+                    best_score = thread_data[i].best_score;
+                    best_depth = thread_data[i].depth;
+                }
             }
         }
     }
