@@ -58,18 +58,18 @@ const unsigned int         gEmbeddedNNUESmallSize    = 1;
 // NB: 782 NON ancora validato in isolamento (era 1050 = valore Stockfish). Per ora
 // gira "in blocco" con gli altri valori bakati; va confermato con un A/B SPRT
 // dedicato (SmallNetThreshold 782 vs 1050) prima di considerarlo definitivo.
-int g_small_net_threshold = 1050;  // RIPRISTINATO 782->1050 (2026-06-06): A/B dedicato = higher MORE Elo. Round-robin 8+0.08: thr1050 +29 > thr782 +16 > thr600 -10 > thr450 -35; poi 1200 -17 e 1500 -9 vs 1050 = 1050 e' il picco del plateau. Il bake 782 era una REGRESSIONE ~-13 Elo. La ns ricerca preferisce eval accurate ai nodi extra. (deve combaciare col default UCI)
+int g_small_net_threshold = 1043;  // RIPRISTINATO 782->1050 (2026-06-06): A/B dedicato = higher MORE Elo. Round-robin 8+0.08: thr1050 +29 > thr782 +16 > thr600 -10 > thr450 -35; poi 1200 -17 e 1500 -9 vs 1050 = 1050 e' il picco del plateau. Il bake 782 era una REGRESSIONE ~-13 Elo. La ns ricerca preferisce eval accurate ai nodi extra. (deve combaciare col default UCI)
 
 // Costanti del WRAPPER di valutazione (post-processing dell'output NNUE grezzo),
 // hand-tunate da Stockfish PER LA RICERCA DI SF. La nostra ricerca e' diversa ->
 // vanno ri-tunate per noi (SPSA). Global namespace + extern in threads.cpp via
 // set_search_param. NON toccano la forward-pass SIMD (Elo, non NPS). Default =
 // valori SF (engine identico finche' non tunato). Devono combaciare coi default UCI.
-int g_eval_optimism      = 395;    // [3.7 BAKE 600->395, SPSA-37 su over_last] BAKED 2026-06-06: 600 vs 915 = +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 troppo ottimista per la NOSTRA ricerca. v = nnue*(EvalOptimism + npm + EvalPawnScale*pawns)/1024
-int g_eval_pawn_scale    = 9;      // peso del conteggio pedoni nell'optimism
-int g_eval_complexity_div= 32768;  // divisore del damping di complessita'
+int g_eval_optimism      = 345;    // [3.7 BAKE 600->395, SPSA-37 su over_last] BAKED 2026-06-06: 600 vs 915 = +51.8 Elo LOS100% @642 (6+0.08, SPRT[0,5]). SF-tuned 915 troppo ottimista per la NOSTRA ricerca. v = nnue*(EvalOptimism + npm + EvalPawnScale*pawns)/1024
+int g_eval_pawn_scale    = 4;      // peso del conteggio pedoni nell'optimism
+int g_eval_complexity_div= 58504;  // divisore del damping di complessita'
 // EvalBlendDelta (psqt vs positional) vive in evaluate_nnue.cpp (namespace NNUE) -> qui sotto.
-int g_eval_blend_delta   = 24;     // blend: ((1024-d)*psqt + (1024+d)*positional)/(1024*OutputScale)
+int g_eval_blend_delta   = 12;     // blend: ((1024-d)*psqt + (1024+d)*positional)/(1024*OutputScale)
 
 namespace Stockfish {
 

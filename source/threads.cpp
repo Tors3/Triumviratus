@@ -71,7 +71,7 @@ void set_draw_dither(bool v) { g_draw_dither = v; }
 // se la mossa continua a tagliare. Scala SPSA-tunable (TTCutBonusScale /100).
 static bool g_ttcut_bonus = true;
 void set_ttcut_bonus(bool v) { g_ttcut_bonus = v; }
-int g_ttcut_bonus_scale = 100;   // /100 del td_stat_bonus(depth); spin "TTCutBonusScale"
+int g_ttcut_bonus_scale = 156;   // /100 del td_stat_bonus(depth); spin "TTCutBonusScale"
 
 // P1.10a TT age-refresh al probe-hit: un hit rinfresca l'age dell'entry, cosi' le
 // posizioni CALDE ma scritte in search vecchie non vengono evictate per anzianita'
@@ -142,29 +142,29 @@ void set_thread_voting(bool v) { g_thread_voting = v; }
 // P1.3 (UCI "QSChecks"): alla PRIMA ply di qsearch tieni anche i QUIET CHECK
 // diretti (check_sq + filtro SEE>=-75 anti-blunder). Tattica forzante vista
 // prima, meno mate-blindness (SF: DEPTH_QS_CHECKS).
-static bool g_qs_checks = false;
+static bool g_qs_checks = true;
 void set_qs_checks(bool v) { g_qs_checks = v; }
 
 // P1.6 (UCI "NMPVerif"): robustezza null-move — (a) niente due null consecutive;
 // (b) a depth >= NMPVerifDepth un fail-high della null va CONFERMATO da una
 // search reale ridotta (anti-zugzwang; SF: nmpMinPly). Spin NMPVerifDepth.
-static bool g_nmp_verif = false;
+static bool g_nmp_verif = true;
 void set_nmp_verif(bool v) { g_nmp_verif = v; }
-int g_nmp_verif_depth = 12;   // spin "NMPVerifDepth" (SPSA)
+int g_nmp_verif_depth = 2;   // spin "NMPVerifDepth" (SPSA)
 
 // P1.7 (UCI "LMPImproving"): move-count pruning SF-style (base + d^2*quad/100) /
 // (2 - improving), SENZA il cap depth<=8 della lmp_table (oggi oltre d8 NESSUN
 // move-count pruning = parte del fattore-nodi vs SF). Spins LMPBase/LMPQuad,
 // scala comune LMPScale. Two-basin: costanti da co-tunare, non copiate.
-static bool g_lmp_improving = false;
+static bool g_lmp_improving = true;
 void set_lmp_improving(bool v) { g_lmp_improving = v; }
-int g_lmp_base = 3;     // spin "LMPBase"
-int g_lmp_quad = 100;   // spin "LMPQuad" (/100: 100 = d^2 pieno)
+int g_lmp_base = 18;     // spin "LMPBase"
+int g_lmp_quad = 87;   // spin "LMPQuad" (/100: 100 = d^2 pieno)
 
 // P1.9 (spin "CheckExtDepth", default 128 = SEMPRE = comportamento storico):
 // gate sulla check-extension incondizionata (SF l'ha rimossa ~10 anni fa).
 // Il co-tune puo' abbassarlo (0 = mai estendere); a 128 e' byte-identico.
-int g_check_ext_depth = 128;
+int g_check_ext_depth = 31;
 
 // N1 (UCI "EvalCacheUndamp", default ON): eval-cache con chiave senza fifty e
 // valore undamped (vedi td_evaluate). Piu' hit nei finali; OFF = legacy.
@@ -246,7 +246,7 @@ void set_corr_multi(bool v) { g_corr_multi = v; }
 // co-tunable via CorrContWeight (lets a co-tune balance cont vs pawn/minor/major).
 static bool g_corr_cont = false;
 void set_corr_cont(bool v) { g_corr_cont = v; }
-int g_corr_cont_weight = 100;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
+int g_corr_cont_weight = 270;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di ordering
 // per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale. Tabella per-thread
@@ -254,17 +254,17 @@ int g_corr_cont_weight = 100;   // /100 del contributo cont alla somma corr. Spi
 // (durante lo scoring il board e' sempre quello del nodo -> niente staleness da ricorsione).
 static bool g_pawn_hist = true;     // BAKED #1 2026-06-07 (era false): co-tune neutro@8 / +3@20+0.08
 void set_pawn_hist(bool v) { g_pawn_hist = v; }
-int g_pawn_hist_weight = 83;   // [3.7 BAKE 195->83] peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
+int g_pawn_hist_weight = 126;   // [3.7 BAKE 195->83] peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
 // Peso della main (butterfly) history nello scoring quiet. SF la pesa 2x (come la pawn);
 // noi storicamente 1x -> con pawn a 2x la pawn DOMINA la main = sbilanciato. Spin
 // MainHistWeight per copiare il rapporto SF (main 2x, pawn 2x). Default 1 = byte-identico.
-int g_mainhist_weight = 131;   // [3.7 BAKE 209->131] /100 (100 = 1.0x; SF usa 2.0x=200)
+int g_mainhist_weight = 122;   // [3.7 BAKE 209->131] /100 (100 = 1.0x; SF usa 2.0x=200)
 // Peso della continuation-history nello scoring quiet (ordering). Default 1 = invariato.
 // Manopola del CO-TUNE: bilancia conthist vs main/pawn. NON tocca conthist in LMR/pruning.
-int g_conthist_weight = 150;   // [3.7 BAKE 134->150] /100 (100 = 1.0x)
+int g_conthist_weight = 80;   // [3.7 BAKE 134->150] /100 (100 = 1.0x)
 // Scala % della soglia LMP (late-move-pruning). Default 100 = invariato. <100 pota prima
 // (albero più stretto), >100 pota dopo. Co-tune: si ri-equilibra con l'ordering nuovo.
-int g_lmp_scale = 116;   // [3.7 BAKE 93->116]
+int g_lmp_scale = 63;   // [3.7 BAKE 93->116]
 // Forward-decl: td_corr_index (pawn-only Zobrist bucket) e' definita piu' sotto, ma
 // serve qui sopra in td_score_move per la pawn-key.
 static inline int td_corr_index(ThreadData& td);
@@ -373,9 +373,9 @@ int g_qfut_margin = 150;
 //     +Elo di ricerca dopo una settimana. Toggle conservato per A/B (off = depth*depth).
 static bool g_hist_bonus_sf = true;
 void set_hist_bonus_sf(bool v) { g_hist_bonus_sf = v; }
-int g_hist_bonus_mult = 169;   // bakato SPSA 155->169 (block +5.2 LOS84% @1260)
-int g_hist_bonus_sub  = 84;    // bakato SPSA 90->84
-int g_hist_bonus_max  = 1720;  // bakato SPSA 1600->1720
+int g_hist_bonus_mult = 282;   // bakato SPSA 155->169 (block +5.2 LOS84% @1260)
+int g_hist_bonus_sub  = 59;    // bakato SPSA 90->84
+int g_hist_bonus_max  = 1247;  // bakato SPSA 1600->1720
 
 // CaptureHist (UCI option "CaptureHist"). Capture history: tabella
 // [piece][to][victim] che impara quali catture producono cutoff, e ne bias-a
@@ -394,7 +394,7 @@ int g_hist_bonus_max  = 1720;  // bakato SPSA 1600->1720
 // `CaptureHistDiv` resta una leva SPSA (8/16/24) per un futuro tentativo di +Elo.
 static bool g_capture_hist = true;
 void set_capture_hist(bool v) { g_capture_hist = v; }
-int g_caphist_div = 14;   // bakato SPSA 16->14 (rock-solid in convergenza)
+int g_caphist_div = 23;   // bakato SPSA 16->14 (rock-solid in convergenza)
 
 // Lazy SMP is the ONLY parallel-search scheme (ADOPTED, +55 Elo @4CPU; direct A/B
 // @2+0.02 4-thread was +102 Elo, LOS 99.99%). Helper threads search fully
@@ -459,11 +459,11 @@ void set_time_mgmt(bool v) { g_time_mgmt = v; }
 // Statici (usati in parse_go, uci_mt.cpp): quota base = remaining/TMMovesToGo +
 // inc*TMIncFrac/100; maximum = optimum*TMMaxMult/100. Dinamici (loop ID, sotto):
 // instabilita' best-move += headroom*TMInstab/100; eval che cala += headroom*d/TMDropDiv.
-int g_tm_movestogo = 30;    // assunzione moves-to-go quando ignota (minore = piu' tempo/mossa)
+int g_tm_movestogo = 23;    // assunzione moves-to-go quando ignota (minore = piu' tempo/mossa)
 int g_tm_inc_frac  = 75;    // % dell'incremento da spendere
-int g_tm_max_mult  = 400;   // maximum = optimum * questo/100 (burst su posizioni difficili)
-int g_tm_instab    = 50;    // % dell'headroom aggiunta al soft su cambio best-move
-int g_tm_drop_div  = 800;   // divisore dell'estensione su score-drop (minore = piu' tempo)
+int g_tm_max_mult  = 582;   // maximum = optimum * questo/100 (burst su posizioni difficili)
+int g_tm_instab    = 81;    // % dell'headroom aggiunta al soft su cambio best-move
+int g_tm_drop_div  = 497;   // divisore dell'estensione su score-drop (minore = piu' tempo)
 
 // Aggressive LMR on/off (UCI "AggrLMR"). Default OFF. When ON, the history- and
 // continuation-history-based LMR reductions use a SMALLER divisor and a WIDER
@@ -476,22 +476,22 @@ void set_aggr_lmr(bool v) { g_aggr_lmr = v; }
 // Exposed as UCI spin options (see set_search_param + uci_mt.cpp) so an external
 // SPSA tuner (fastchess) can set them per-game without recompiling. Defaults =
 // the current hand-set values. After a tuning run, bake the converged values in.
-int g_rfp_margin = 21;    // reverse futility: static_eval - g*depth >= beta   [SPSA-tuned: 30->21]
-int g_razor_base = 300;   // razoring: base + mult*depth below alpha -> qsearch
-int g_razor_mult = 139;   // [SPSA-tuned: 102->139]
-int g_fut_base = 111;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
-int g_fut_mult = 41;    // [3.7 BAKE 53->41; BAKED #1 66->53]
-int g_fut_improving = 93;    // extra futility margin when improving                [SPSA-tuned: 60->93]
-int g_singular_dmargin = 43;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
-int g_hist_red_div = 1041;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
-int g_asp_init_delta = 31;    // aspiration: initial window half-width               [SPSA-tuned: 25->31]
-int g_asp_grow = 31;    // aspiration: growth % on fail                        [SPSA-tuned: 100->31]
-int g_probcut_margin = 180;   // ProbCut: capture verification must beat beta by this margin
+int g_rfp_margin = 38;    // reverse futility: static_eval - g*depth >= beta   [SPSA-tuned: 30->21]
+int g_razor_base = 351;   // razoring: base + mult*depth below alpha -> qsearch
+int g_razor_mult = 71;   // [SPSA-tuned: 102->139]
+int g_fut_base = 49;   // futility: base + mult*depth (+improving bonus)      [SPSA-tuned: 82->111]
+int g_fut_mult = 98;    // [3.7 BAKE 53->41; BAKED #1 66->53]
+int g_fut_improving = 84;    // extra futility margin when improving                [SPSA-tuned: 60->93]
+int g_singular_dmargin = 23;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
+int g_hist_red_div = 1814;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
+int g_asp_init_delta = 24;    // aspiration: initial window half-width               [SPSA-tuned: 25->31]
+int g_asp_grow = 80;    // aspiration: growth % on fail                        [SPSA-tuned: 100->31]
+int g_probcut_margin = 266;   // ProbCut: capture verification must beat beta by this margin
 // Correction-history tunables (only active when CorrHist is on).
-int g_corr_cap = 32;    // max correction applied to static eval (cp). [SPSA histmulti 32->44 RIGETTATO: -1.3 LOS23% @11438 -> default]
-int g_corr_lr_div = 512;   // learning-rate divisor (bigger = slower/steadier learning) [histmulti 512->565 rigettato]
+int g_corr_cap = 88;    // max correction applied to static eval (cp). [SPSA histmulti 32->44 RIGETTATO: -1.3 LOS23% @11438 -> default]
+int g_corr_lr_div = 493;   // learning-rate divisor (bigger = slower/steadier learning) [histmulti 512->565 rigettato]
 // Continuation-history pruning tunables (only active when ContHistPrune is on).
-int g_conthist_red_div = 6595;  // LMR: continuation-history reduction divisor [SPSA-tuned 5000->6595; histmulti 6595->7050 rigettato]
+int g_conthist_red_div = 6111;  // LMR: continuation-history reduction divisor [SPSA-tuned 5000->6595; histmulti 6595->7050 rigettato]
 // Aggressive-LMR tunables (only active when AggrLMR is on).
 int g_aggr_lmr_div = 2048;  // smaller divisor -> wider reduction range
 int g_aggr_lmr_clamp = 3;     // max +/- ply the history reductions may apply
@@ -516,14 +516,14 @@ void set_cutnode_lmr(bool v) { g_cutnode_lmr = v; }
 // hash_key) -> niente costo per-mossa.
 static bool g_threat_ordering = true;   // BAKED FULL 2026-06-07
 void set_threat_ordering(bool v) { g_threat_ordering = v; }
-int g_threat_scale = 383;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
+int g_threat_scale = 3916;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
 // ---- Check-ordering (#3 SF, 2026-06-07) -------------------------------------
 // SF da' un bonus ai quiet che danno SCACCO DIRETTO (forcing), filtrati per non essere
 // blunder (SEE >= -75). Una sola costante co-tunabile (CheckBonus). check_sq[] (case da
 // cui ogni tipo di pezzo da scacco al re nemico) calcolate 1x/nodo. Default OFF = byte-identico.
 static bool g_check_ordering = true;    // BAKED FULL 2026-06-07
 void set_check_ordering(bool v) { g_check_ordering = v; }
-int g_check_bonus = 4201;    // bonus ordering per quiet che da scacco diretto (SF=16384). Spin CheckBonus (SPSA).
+int g_check_bonus = 13305;    // bonus ordering per quiet che da scacco diretto (SF=16384). Spin CheckBonus (SPSA).
 // ---- ContHist 3/6-ply (#4 SF, 2026-06-07) -----------------------------------
 // SF somma la continuation-history a 1/2/3/4/6 ply; noi avevamo 1/2/4. #4 aggiunge
 // 3-ply (move_stack[ply-2]) e 6-ply (move_stack[ply-5]) all'ordering quiet, scalati da
@@ -531,39 +531,39 @@ int g_check_bonus = 4201;    // bonus ordering per quiet che da scacco diretto (
 // td_conthist_multi_update. SCOPE: solo ordering (NON la ContHistLMR). Default OFF = byte-identico.
 static bool g_conthist36 = true;        // BAKED FULL 2026-06-07
 void set_conthist36(bool v) { g_conthist36 = v; }
-int g_conthist36_weight = 37;   // /100: peso dei termini 3/6-ply relativo agli altri conthist. Spin ContHist36Weight.
+int g_conthist36_weight = 150;   // /100: peso dei termini 3/6-ply relativo agli altri conthist. Spin ContHist36Weight.
 // ---- V2: prior-counter-move bonus + capture-history bonus (SF, 2026-06-07) --------
 // Su un nodo FAIL-LOW (nessuna mossa batte alpha) la mossa PRECEDENTE (quella che ha
 // portato qui) era forte (ci ha messo in difficolta') -> bonus alla sua history. Quiet:
 // main + continuation history; cattura: capture history (vittima da captured_stack).
 // Una sola scala co-tunabile (PriorBonusScale) sul td_stat_bonus. Default OFF = byte-identico.
-static bool g_prior_bonus = false;
+static bool g_prior_bonus = true;
 void set_prior_bonus(bool v) { g_prior_bonus = v; }
-int g_prior_bonus_scale = 100;   // /100 del td_stat_bonus(depth). Spin PriorBonusScale.
+int g_prior_bonus_scale = 151;   // /100 del td_stat_bonus(depth). Spin PriorBonusScale.
 // ---- #5: low-ply history (SF) -----------------------------------------------------
 // History per-ply usata SOLO nei primi LOW_PLY_MAX ply (vicino alla radice): cattura
 // "questa mossa e' buona a questo ply basso". Peso /(1+ply). Default OFF = byte-identico.
-static bool g_lowply = false;
+static bool g_lowply = true;
 void set_lowply(bool v) { g_lowply = v; }
-int g_lowply_weight = 30;    // contributo ordering = g_lowply_weight * lowply / (100*(1+2*ply)) (SF-style decay). Spin LowPlyWeight.
-int g_lmr_ss_div    = 7585;  // [3.7 BAKE 12104->7585; BAKED #1 era 7000]. StatScoreLMR: reduction -= (2*butterfly - offset) / div
-int g_lmr_ss_offset = 2435;   // [3.7 BAKE 2668->2435; BAKED #1 era 4600]. StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
-int g_lmr_ch_div    = 3506;   // [3.7 BAKE 4437->3506; BAKED #1 era 10000]. ContHistLMR: reduction -= (conthist1+2+4) / div
+int g_lowply_weight = 4;    // contributo ordering = g_lowply_weight * lowply / (100*(1+2*ply)) (SF-style decay). Spin LowPlyWeight.
+int g_lmr_ss_div    = 4450;  // [3.7 BAKE 12104->7585; BAKED #1 era 7000]. StatScoreLMR: reduction -= (2*butterfly - offset) / div
+int g_lmr_ss_offset = 472;   // [3.7 BAKE 2668->2435; BAKED #1 era 4600]. StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
+int g_lmr_ch_div    = 6848;   // [3.7 BAKE 4437->3506; BAKED #1 era 10000]. ContHistLMR: reduction -= (conthist1+2+4) / div
 int g_cutnode_lmr_extra = 1;  // CutNodeLMR: ply extra di riduzione sui cut-node (sopra il +1 esistente)
 // NMP + LMR-enrichment tunables.
-int g_nmp_base = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
-int g_nmp_div = 4;
-int g_lmr_eval_margin = 100;   // LMR: reduce +1 more when static_eval + margin < alpha
-int g_lmr_ttdepth = 2;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
+int g_nmp_base = 5;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
+int g_nmp_div = 2;
+int g_lmr_eval_margin = 175;   // LMR: reduce +1 more when static_eval + margin < alpha
+int g_lmr_ttdepth = 1;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
 // CORE LMR formula coefficients (*100).
-int g_lmr_base_x100 = 37;    // baseline reduction floor [3.7 BAKE 41->37; SPSA 75->47; BAKED #1 47->41]
-int g_lmr_div_x100 = 310;   // bigger divisor = LESS reduction [3.7 BAKE 345->310; SPSA 225->270; BAKED #1 270->345]
-int g_histprune_margin = 1691;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune late quiet if combined hist < -margin*depth
+int g_lmr_base_x100 = 15;    // baseline reduction floor [3.7 BAKE 41->37; SPSA 75->47; BAKED #1 47->41]
+int g_lmr_div_x100 = 202;   // bigger divisor = LESS reduction [3.7 BAKE 345->310; SPSA 225->270; BAKED #1 270->345]
+int g_histprune_margin = 1490;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune late quiet if combined hist < -margin*depth
 // SEE-pruning margins (ALSO the Phase-2 skip_bad_caps lever): a move is SEE-pruned at
 // low depth if SEE < -g_see_cap_margin*depth (captures) or < -g_see_quiet_margin*depth*depth
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
-int g_see_cap_margin   = 90;
-int g_see_quiet_margin = 96;    // [3.7 BAKE 98->96; BAKED #1 era 50]
+int g_see_cap_margin   = 180;
+int g_see_quiet_margin = 185;    // [3.7 BAKE 98->96; BAKED #1 era 50]
 // Defined in sfnnue/evaluate.cpp: the eval picks the Big or Small NNUE by whether
 // |simpleEval| exceeds this threshold. Exposed here so SPSA can tune it.
 extern int g_small_net_threshold;
