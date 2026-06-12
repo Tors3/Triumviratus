@@ -153,28 +153,34 @@ int main()
     // Resolve the NNUE nets relative to the executable so the engine works from
     // ANY working directory. A missing net used to cause a SILENT eval=0 (junk
     // moves under cutechess); now we fail loudly instead of playing garbage.
-    // Big net: default to OUR rubicon net; fall back to the SF-named net if the
-    // rubicon file is absent. The SPRT harness renames the candidate to
-    // nn-b1a57edbea57.nnue, so test folders (no nn-rubicon-v1.nnue) keep working
-    // unchanged via the fallback. Overridable at runtime via UCI "EvalFile".
-    std::string bigNet = resolve_net_path("nn-rubicon-v1.nnue");
-    const bool usingRubicon = !bigNet.empty();
+    // Big net: DEFAULT = the Stockfish-derived net (strongest, and accepted by
+    // CCRL). If absent, fall back to OUR own "rubicon" net so the engine still
+    // starts. Overridable at runtime via UCI "EvalFile". The SF default name
+    // follows the build-time L1 (TRIUMV_L1_BIG): the 3072 build expects the
+    // SFNNv9-format net.
+#if defined(TRIUMV_L1_BIG) && TRIUMV_L1_BIG == 3072
+    const char* sfBigName = "nn-1111cefa1111.nnue";
+#else
+    const char* sfBigName = "nn-b1a57edbea57.nnue";
+#endif
+    std::string bigNet = resolve_net_path(sfBigName);
+    const bool usingSF = !bigNet.empty();
     if (bigNet.empty())
-        bigNet = resolve_net_path("nn-b1a57edbea57.nnue");
+        bigNet = resolve_net_path("nn-rubicon-v1.nnue");   // fallback: our own net
     const std::string smallNet = resolve_net_path("nn-baff1ede1f90.nnue");
     if (bigNet.empty() || smallNet.empty())
     {
-        std::cerr << "FATAL: NNUE net not found. Place nn-rubicon-v1.nnue (or the "
-                     "fallback nn-b1a57edbea57.nnue) and nn-baff1ede1f90.nnue next "
+        std::cerr << "FATAL: NNUE net not found. Place " << sfBigName << " (or the "
+                     "fallback nn-rubicon-v1.nnue) and nn-baff1ede1f90.nnue next "
                      "to the executable (or in the project root) and restart." << std::endl;
         return 1;
     }
 
     // Initialize the Stockfish HalfKAv2_hm NNUE probe (big + small nets).
     sf_init(bigNet.c_str(), smallNet.c_str());
-    printf("info string Big net: %s\n",
-           usingRubicon ? "nn-rubicon-v1.nnue (rubicon, default)"
-                        : "nn-b1a57edbea57.nnue (SF fallback)");
+    printf("info string Big net: %s%s\n",
+           usingSF ? sfBigName : "nn-rubicon-v1.nnue",
+           usingSF ? " (default)" : " (rubicon fallback)");
     fflush(stdout);
 
     // (Policy-net: rimossa 2026-06-11 — capitolo chiuso, vedi notes/ §P5.)
