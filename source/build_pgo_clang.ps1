@@ -67,18 +67,31 @@ function Build-Variant([string]$tag) {
     $merged = "$profDir\clang_$tag.profdata"
     Write-Host "`n########  VARIANTE $tag  ->  $Name$suffix.exe  ########" -ForegroundColor Magenta
 
+    # HOTFIX 2026-06-12: la variante avx2 della release 4.0 conteneva istruzioni
+    # AVX-512 nel codice NNUE (6 vpdpbusd/vpaddd su zmm) -> crash (illegal
+    # instruction) su CPU senza AVX-512 (report TalkChess: i5-7400 Kaby Lake,
+    # "muore dopo 2-3s, Arena Hash=0" = morte alla prima eval). Doppia difesa:
+    #  1) flag clang ESPLICITI -mno-avx512* (non solo defines/arch del vcxproj);
+    #  2) GATE anti-zmm sull'exe finale (sotto): la build FALLISCE se trova
+    #     istruzioni NNUE su zmm nella variante legacy. Mai piu' fidarsi senza gate.
+    $extra = ""
+    if ($tag -eq "avx2") {
+        $extra = " /clang:-mno-avx512f /clang:-mno-avx512bw /clang:-mno-avx512dq /clang:-mno-avx512vl /clang:-mno-avx512cd /clang:-mno-avx512vnni"
+    }
+
     # patch vcxproj per la variante legacy (ripristinato nel finally)
     $orig = Get-Content $proj -Raw
     try {
         if ($tag -eq "avx2") {
             $xml = $orig -replace "USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX2", "USE_PEXT;USE_AVX2"
             $xml = $xml -replace "AdvancedVectorExtensions512", "AdvancedVectorExtensions2"
+            if ($xml -match "USE_AVX512") { throw "[$tag] patch vcxproj fallita: USE_AVX512 ancora presente" }
             Set-Content $proj $xml -Encoding UTF8
         }
         if (Test-Path $profDir) { Remove-Item "$profDir\*.profraw" -Force -ErrorAction SilentlyContinue } else { New-Item -ItemType Directory -Force -Path $profDir | Out-Null }
 
         Step 1 "[$tag] FASE 1: build strumentata"
-        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN" "-t:Rebuild"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN$extra" "-t:Rebuild"
         if ($LASTEXITCODE -ne 0) { throw "[$tag] build strumentata fallita" }
 
         Step 2 "[$tag] FASE 2: training ($Positions pos, $Workers workers)"
@@ -96,8 +109,20 @@ function Build-Variant([string]$tag) {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $merged)) { throw "[$tag] llvm-profdata merge fallito" }
 
         Step 4 "[$tag] FASE 4: build ottimizzata (-fprofile-use)"
-        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged" "-t:Rebuild"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged$extra" "-t:Rebuild"
         if ($LASTEXITCODE -ne 0) { throw "[$tag] build ottimizzata fallita" }
+
+        # GATE anti-AVX512 (variante legacy): scansiona il disassembly per
+        # istruzioni NNUE su registri zmm. La CRT puo' contenere zmm con dispatch
+        # runtime (benigni); vpdpbusd/vpmaddubsw/vpaddd su zmm = codice EVAL
+        # nostro = crash su CPU pre-AVX512 -> build BOCCIATA.
+        if ($tag -eq "avx2") {
+            Step 5 "[$tag] GATE: scansione anti-AVX512 dell'exe"
+            $dumpbin = Get-ChildItem "$vsRoot\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1 -ExpandProperty FullName
+            $bad = (& $dumpbin /disasm:nobytes $exe | Select-String "vpdpbusd.*zmm|vpmaddubsw.*zmm|vpaddd.*zmm").Count
+            if ($bad -gt 0) { throw "[$tag] GATE FALLITO: $bad istruzioni NNUE su zmm nella build legacy (AVX-512 leak)" }
+            Write-Host "  GATE OK: 0 istruzioni NNUE-su-zmm" -ForegroundColor Green
+        }
 
         Copy-Item $exe "$outDir\$Name$suffix.exe" -Force
         if (Test-Path "$root\x64\Release") { Copy-Item $exe "$root\x64\Release\$Name$suffix.exe" -Force }
