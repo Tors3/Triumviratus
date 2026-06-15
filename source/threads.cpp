@@ -254,14 +254,14 @@ int g_corr_cont_weight = 270;   // /100 del contributo cont alla somma corr. Spi
 // (durante lo scoring il board e' sempre quello del nodo -> niente staleness da ricorsione).
 static bool g_pawn_hist = true;     // BAKED #1 2026-06-07 (era false): co-tune neutro@8 / +3@20+0.08
 void set_pawn_hist(bool v) { g_pawn_hist = v; }
-int g_pawn_hist_weight = 139;  // [4.1 BAKE 126->139]   // [3.7 BAKE 195->83] peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
+int g_pawn_hist_weight = 126;   // [3.7 BAKE 195->83] peso pawn-history /100 (200 = 2.0x come SF). Spin PawnHistoryWeight (granularita' /100, SPSA-friendly + permette frazioni <1).
 // Peso della main (butterfly) history nello scoring quiet. SF la pesa 2x (come la pawn);
 // noi storicamente 1x -> con pawn a 2x la pawn DOMINA la main = sbilanciato. Spin
 // MainHistWeight per copiare il rapporto SF (main 2x, pawn 2x). Default 1 = byte-identico.
-int g_mainhist_weight = 168;  // [4.1 BAKE 122->168]   // [3.7 BAKE 209->131] /100 (100 = 1.0x; SF usa 2.0x=200)
+int g_mainhist_weight = 122;   // [3.7 BAKE 209->131] /100 (100 = 1.0x; SF usa 2.0x=200)
 // Peso della continuation-history nello scoring quiet (ordering). Default 1 = invariato.
 // Manopola del CO-TUNE: bilancia conthist vs main/pawn. NON tocca conthist in LMR/pruning.
-int g_conthist_weight = 96;  // [4.1 BAKE 80->96]   // [3.7 BAKE 134->150] /100 (100 = 1.0x)
+int g_conthist_weight = 80;   // [3.7 BAKE 134->150] /100 (100 = 1.0x)
 // Scala % della soglia LMP (late-move-pruning). Default 100 = invariato. <100 pota prima
 // (albero più stretto), >100 pota dopo. Co-tune: si ri-equilibra con l'ordering nuovo.
 int g_lmp_scale = 63;   // [3.7 BAKE 93->116]
@@ -373,9 +373,9 @@ int g_qfut_margin = 150;
 //     +Elo di ricerca dopo una settimana. Toggle conservato per A/B (off = depth*depth).
 static bool g_hist_bonus_sf = true;
 void set_hist_bonus_sf(bool v) { g_hist_bonus_sf = v; }
-int g_hist_bonus_mult = 326;   // [4.1 BAKE 282->326] SPSA co-tune history/LMR @12+0.12 (+5-7 Elo)
-int g_hist_bonus_sub  = 35;    // [4.1 BAKE 59->35]
-int g_hist_bonus_max  = 2439;  // [4.1 BAKE 1247->2439]
+int g_hist_bonus_mult = 282;   // bakato SPSA 155->169 (block +5.2 LOS84% @1260)
+int g_hist_bonus_sub  = 59;    // bakato SPSA 90->84
+int g_hist_bonus_max  = 1247;  // bakato SPSA 1600->1720
 
 // CaptureHist (UCI option "CaptureHist"). Capture history: tabella
 // [piece][to][victim] che impara quali catture producono cutoff, e ne bias-a
@@ -546,28 +546,8 @@ int g_prior_bonus_scale = 151;   // /100 del td_stat_bonus(depth). Spin PriorBon
 static bool g_lowply = true;
 void set_lowply(bool v) { g_lowply = v; }
 int g_lowply_weight = 4;    // contributo ordering = g_lowply_weight * lowply / (100*(1+2*ply)) (SF-style decay). Spin LowPlyWeight.
-// StatEvalDiffOrder (SF search.cpp ~728, "~9 Elo"): dopo la static eval, spinge la
-// history (main + pawn) della mossa PRECEDENTE (dell'avversario) col negato della
-// SOMMA delle due static-eval consecutive — segnale a costo ~0 che quella mossa ha
-// prodotto uno swing di eval buono/cattivo. NUOVA feature aggiunta SOPRA il parco
-// mega-SPSA (gli altri ordering-weight restano tunati). Spin "StatEvalDiffMult":
-// 0 = OFF (byte-identico al 4.0), 14 = SF-esatto, >14 = piu' aggressivo di SF.
-int g_seo_mult = 6;  // [4.1 BAKE 14->6] (SEO neutro a ogni valore; 6 = valore del vettore confermato)
-// cutoffCnt (SF): contatore fail-high per-ply. In LMR riduce di piu' se il figlio ha
-// cuttato molto di recente. g_cutoffcnt_penalty: 0=off (default, byte-identico), 1=SF
-// (r+=1 se cutoff_cnt figlio > 3). Spin CutoffCntPenalty [0,3]. Co-tunabile.
-int g_cutoffcnt_penalty = 0;
-// CutoffStats (diagnostica move-ordering, default OFF = byte-identico): se ON, conta sui
-// beta-cutoff il first-move-cutoff rate (fh_first/fh_nodes) + indice medio della mossa al
-// cutoff, e li stampa come "info string FMC ..." a fine ricerca. Il gap vs SF e' l'ordering
-// (first-move-cutoff storico 84.76% SATURO) -> questo lo misura per guidare il lavoro futuro.
-bool g_cutoff_stats = false;
-// ProbCut-sotto-scacco (SF step 12): in scacco, se la TT ha una cattura con bound LOWER
-// e score >= beta+margin a depth>=depth-4, ritorna beta+margin. 0=off (default).
-// Spin ProbCutInCheckMargin [0,800] (SF=452). Co-tunabile.
-int g_probcut_incheck_margin = 523;  // [4.1 BAKE 0->523]
-int g_lmr_ss_div    = 4450; // [4.1: tenuto 4.0 - il BAKE @12s 13790 GONFIAVA l'albero 2.5x (meno riduzione) per ~pochi Elo: scelta = albero stretto > Elo]
-int g_lmr_ss_offset = 472;  // [4.1: tenuto 4.0 - vedi sopra; il BAKE -2214 = parte del bloat LMR, revertito]
+int g_lmr_ss_div    = 4450;  // [3.7 BAKE 12104->7585; BAKED #1 era 7000]. StatScoreLMR: reduction -= (2*butterfly - offset) / div
+int g_lmr_ss_offset = 472;   // [3.7 BAKE 2668->2435; BAKED #1 era 4600]. StatScoreLMR: offset del punto neutro (SF sottrae ~4600 -> mossa media RIDOTTA di piu' = albero stretto/profondo, direzione SF)
 int g_lmr_ch_div    = 6848;   // [3.7 BAKE 4437->3506; BAKED #1 era 10000]. ContHistLMR: reduction -= (conthist1+2+4) / div
 int g_cutnode_lmr_extra = 1;  // CutNodeLMR: ply extra di riduzione sui cut-node (sopra il +1 esistente)
 // NMP + LMR-enrichment tunables.
@@ -579,12 +559,6 @@ int g_lmr_ttdepth = 1;     // LMR: reduce LESS by this when TT depth >= depth   
 int g_lmr_base_x100 = 15;    // baseline reduction floor [3.7 BAKE 41->37; SPSA 75->47; BAKED #1 47->41]
 int g_lmr_div_x100 = 202;   // bigger divisor = LESS reduction [3.7 BAKE 345->310; SPSA 225->270; BAKED #1 270->345]
 int g_histprune_margin = 1490;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune late quiet if combined hist < -margin*depth
-// LmrDepthPrune (SF): pota futility+conthist sulla profondita' RIDOTTA dalla LMR per
-// la mossa (prune_depth = depth-1-lmr_table[depth][movecount]) invece che sulla depth
-// piena del nodo. Fa scattare il pruning sulle mosse TARDIVE anche a node-depth alto
-// (chiude il gap-midgame vs SF, che pota 3x di piu' li'). Cap nostri (6/4) = MENO
-// aggressivo di SF (15/6). Spin LmrDepthPrune: 0=off (byte-identico), 1=on. Co-tunabile.
-int g_lmrdepth_prune = 0;
 // SEE-pruning margins (ALSO the Phase-2 skip_bad_caps lever): a move is SEE-pruned at
 // low depth if SEE < -g_see_cap_margin*depth (captures) or < -g_see_quiet_margin*depth*depth
 // (quiets). Exposed so SPSA can tune them (UCI: SEECaptureMargin / SEEQuietMargin).
@@ -621,7 +595,6 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CorrContWeight"))      { g_corr_cont_weight = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
     if (!strcmp(name, "HistPruneMargin"))     { g_histprune_margin = value; return true; }
-    if (!strcmp(name, "LmrDepthPrune"))       { g_lmrdepth_prune = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "SEECaptureMargin"))    { g_see_cap_margin   = value; return true; }
     if (!strcmp(name, "SEEQuietMargin"))      { g_see_quiet_margin = value; return true; }
     if (!strcmp(name, "SmallNetThreshold"))   { g_small_net_threshold = value; return true; }
@@ -648,10 +621,6 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "ContHist36Weight"))    { g_conthist36_weight = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "PriorBonusScale"))     { g_prior_bonus_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LowPlyWeight"))        { g_lowply_weight = value < 0 ? 0 : value; return true; }
-    if (!strcmp(name, "StatEvalDiffMult"))    { g_seo_mult = value < 0 ? 0 : value; return true; }
-    if (!strcmp(name, "CutoffCntPenalty"))    { g_cutoffcnt_penalty = value < 0 ? 0 : value; return true; }
-    if (!strcmp(name, "CutoffStats"))         { g_cutoff_stats = value != 0; return true; }
-    if (!strcmp(name, "ProbCutInCheckMargin")){ g_probcut_incheck_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "PawnHistoryWeight"))   { g_pawn_hist_weight   = value; return true; }
     if (!strcmp(name, "MainHistWeight"))      { g_mainhist_weight    = value < 1 ? 1 : value; return true; }   // /100
     if (!strcmp(name, "ContHistWeight"))      { g_conthist_weight    = value < 1 ? 1 : value; return true; }   // /100
@@ -2640,19 +2609,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // riduciamo di 1 ply per ottenere a basso costo una hash move.
     if (depth >= 4 && !tt_move && !excluded_move) depth--;
 
-    // cutoffCnt: azzera il contatore 2 ply avanti (come SF (ss+2)=0), cosi e' fresco
-    // per i figli di questo nodo. Letto in LMR solo se g_cutoffcnt_penalty>0.
-    if (td.ply + 2 < max_ply + 8) td.cutoff_cnt[td.ply + 2] = 0;
-
-    // ProbCut sotto scacco (SF step 12, default off): se la TT ricorda una cattura con
-    // bound LOWER e score >= beta+margin a profondita' adeguata, taglia subito (~4 Elo SF).
-    if (g_probcut_incheck_margin && in_check && !pv_node && !excluded_move && tt_hit
-        && tt_move && get_move_capture(tt_move) && tt_flag == hash_flag_beta
-        && tt_depth >= depth - 4 && tt_score >= beta + g_probcut_incheck_margin
-        && tt_score < mate_score && tt_score > -mate_score
-        && beta < mate_score && beta > -mate_score)
-        return beta + g_probcut_incheck_margin;
-
     // Correction history: bucket for this position (pawn structure + side). Index
     // computed once; reused to apply the correction here and to learn at node exit.
     const int corr_idx = td_corr_index(td);
@@ -2709,29 +2665,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             improving = static_eval > e2;
         else if (td.ply >= 4 && td.eval_stack[td.ply - 4] != EVAL_NONE)
             improving = static_eval > td.eval_stack[td.ply - 4];
-    }
-
-    // StatEvalDiffOrder (SF search.cpp ~728, "~9 Elo"): la differenza tra la static
-    // eval di questo nodo e quella del padre e' un segnale a costo ~0 sulla qualita'
-    // della mossa PRECEDENTE (dell'avversario). Spingiamo la sua history (main +
-    // pawn) col negato della somma delle due eval consecutive. Gating come SF: nodo
-    // corrente NON in scacco (eval valida), padre NON in scacco (eval_stack valida),
-    // ESISTE una mossa precedente, ed era QUIET. g_seo_mult: 0=off, 14=SF, >14=aggr.
-    if (g_seo_mult && !in_check && td.ply >= 1) {
-        int prev_move = td.move_stack[td.ply];
-        if (prev_move != 0 && td.captured_stack[td.ply] == -1
-            && td.eval_stack[td.ply - 1] != EVAL_NONE) {
-            int bonus = -g_seo_mult * (td.eval_stack[td.ply - 1] + static_eval);
-            if (bonus >  1455) bonus =  1455;          // clamp PRIMA del raddoppio (come SF)
-            if (bonus < -1723) bonus = -1723;
-            bonus = bonus > 0 ? 2 * bonus : bonus / 2;
-            int pp = get_move_piece(prev_move);
-            int pt = get_move_target(prev_move);
-            td_update_history(td.history_moves[pp][pt], bonus);
-            if (g_pawn_hist && pp != P && pp != p && !get_move_promoted(prev_move))
-                td_update_history(td.pawn_history[corr_idx & ThreadData::PAWN_HIST_MASK][pp][pt],
-                                  bonus / 4);
-        }
     }
 
     // Reverse futility pruning (skip when beta is a mate bound: don't cut a
@@ -2944,18 +2877,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         bool is_promotion = get_move_promoted(move);
         bool is_quiet = !is_capture && !is_promotion;
 
-        // LmrDepthPrune: profondita' su cui gating-are futility+conthist. Di default =
-        // depth piena (byte-identico). Con g_lmrdepth_prune: depth ridotta dalla LMR per
-        // QUESTA mossa (mosse tardive -> riduzione grande -> prune_depth piccola -> pota
-        // anche a node-depth alto, come SF). Cap nostri (6/4) restano = meno aggressivo.
-        int prune_depth = depth;
-        if (g_lmrdepth_prune && is_quiet && depth >= 3 && moves_searched >= 1) {
-            int d_idx = depth < 64 ? depth : 63;
-            int m_idx = moves_searched < 64 ? moves_searched : 63;
-            prune_depth = depth - 1 - lmr_table[d_idx][m_idx];
-            if (prune_depth < 0) prune_depth = 0;
-        }
-
         // LMP
         if (!pv_node && !in_check && is_quiet && best_score > -mate_score) {
             int lmp_threshold = -1;   // -1 = nessun move-count pruning a questo nodo
@@ -2982,8 +2903,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // Futility pruning. When improving, widen the margin so we prune fewer
         // quiets (a rising eval deserves the benefit of the doubt); when not
         // improving, the base margin prunes more.
-        if (!pv_node && !in_check && prune_depth <= 6 && is_quiet && best_score > -mate_score) {
-            int futility_margin = g_fut_base + g_fut_mult * prune_depth + ((g_improving && improving) ? g_fut_improving : 0);
+        if (!pv_node && !in_check && depth <= 6 && is_quiet && best_score > -mate_score) {
+            int futility_margin = g_fut_base + g_fut_mult * depth + ((g_improving && improving) ? g_fut_improving : 0);
             if (eval + futility_margin <= alpha) {
                 // Phase-2: once futility fires, ALL remaining quiets at this node
                 // fail the same static-eval test -> skip the entire stage.
@@ -3015,7 +2936,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // more aggressively the shallower we are. NB: td.ply not yet incremented
         // here, so the previous move is td.move_stack[td.ply].
         if (g_cont_hist_prune && !pv_node && !in_check && is_quiet &&
-            prune_depth <= 4 && moves_searched > 0 && best_score > -mate_score) {
+            depth <= 4 && moves_searched > 0 && best_score > -mate_score) {
             int prev = td.move_stack[td.ply];
             int hh = td.history_moves[get_move_piece(move)][get_move_target(move)];
             if (prev)
@@ -3185,11 +3106,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // The clamps below keep it in [0, depth-2], so the bias can't break LMR.
                 if (g_diverse_smp) reduction += td.lmr_bias;
 
-                // cutoffCnt-LMR (SF, default off): qui td.ply == ply del FIGLIO (post ply++),
-                // quindi td.cutoff_cnt[td.ply] e' il (ss+1)->cutoffCnt di SF. Se il figlio ha
-                // cuttato molto di recente, riduci di piu'.
-                if (g_cutoffcnt_penalty && td.cutoff_cnt[td.ply] > 3) reduction += g_cutoffcnt_penalty;
-
                 if (reduction < 0) reduction = 0;
                 if (reduction > depth - 2) reduction = depth - 2;
             }
@@ -3240,14 +3156,6 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 td.pv_length[td.ply] = td.pv_length[td.ply + 1];
 
                 if (score >= beta) {
-                    // CutoffStats (diagnostica, off-default): fail-high node. moves_searched
-                    // e' GIA' incrementato (riga sopra) -> cutoff sulla 1a mossa <=> ==1.
-                    if (g_cutoff_stats) {
-                        td.fh_nodes++;
-                        td.fh_move_sum += (U64)moves_searched;
-                        if (moves_searched == 1) td.fh_first++;
-                    }
-                    td.cutoff_cnt[td.ply] += tt_move ? 1 : 2;   // SF cutoffCnt: += 1 + !ttMove
                     if (!excluded_move) store_tt(td.hash_key, move, best_score, depth, hash_flag_beta, td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
                     td_corr_update(td, corr_idx, static_eval, best_score, hash_flag_beta, depth, in_check, move, excluded_move);
 
@@ -3647,9 +3555,6 @@ void search_position_mt(int depth) {
         thread_data[i].best_move = 0;
         thread_data[i].best_score = -infinity;
         thread_data[i].depth = 0;
-        thread_data[i].fh_nodes = 0;
-        thread_data[i].fh_first = 0;
-        thread_data[i].fh_move_sum = 0;
     }
 
     search_threads.clear();
@@ -3759,23 +3664,6 @@ void search_position_mt(int depth) {
             }
             td0.ply--;
             td0.repetition_index--;
-        }
-    }
-
-    // CutoffStats (diagnostica move-ordering, off-default): aggrega i contatori di tutti
-    // i thread e stampa il first-move-cutoff rate + indice medio della mossa al cutoff.
-    if (g_cutoff_stats) {
-        U64 fh = 0, first = 0, msum = 0;
-        for (int i = 0; i < num_threads; i++) {
-            fh += thread_data[i].fh_nodes;
-            first += thread_data[i].fh_first;
-            msum += thread_data[i].fh_move_sum;
-        }
-        if (fh) {
-            printf("info string FMC %.2f%% (fh=%llu first=%llu) avgidx %.3f\n",
-                   100.0 * (double)first / (double)fh,
-                   (unsigned long long)fh, (unsigned long long)first,
-                   (double)msum / (double)fh);
         }
     }
 
