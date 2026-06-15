@@ -81,6 +81,10 @@ struct ThreadData {
     // node's static eval to our own eval two plies ago (our previous turn).
     // A rising eval lets the search prune/reduce more aggressively.
     int eval_stack[max_ply + 8];
+    // cutoffCnt per-ply (SF): quante volte un nodo a questo ply ha fatto fail-high
+    // di recente. Letto nella LMR (riduci di piu' se il figlio cutta molto). +8 slack
+    // come gli altri stack ply-indicizzati. Tracciato sempre; usato solo se penalty>0.
+    int cutoff_cnt[max_ply + 8];
 
     // Results
     int best_move;
@@ -91,6 +95,14 @@ struct ThreadData {
     // the last completed iteration. Compared to the iteration's total nodes to
     // gauge confidence (best move dominating nodes => stop sooner).
     U64 root_bestmove_nodes = 0;
+
+    // Move-ordering diagnostic (gated da g_cutoff_stats, default off). Contati per-thread
+    // sui beta-cutoff della main search: fh_nodes = nodi fail-high; fh_first = cutoff sulla
+    // 1a mossa cercata; fh_move_sum = somma indici-mossa al cutoff (per indice medio).
+    // first-move-cutoff rate = fh_first/fh_nodes (84.76% storico; gap vs SF = ordering).
+    U64 fh_nodes = 0;
+    U64 fh_first = 0;
+    U64 fh_move_sum = 0;
 
     // Correction history: learned (search - static_eval) gap bucketed by
     // [side][pawn-structure key]. Size MUST match CORR_SIZE (1<<14) in threads.cpp.
