@@ -94,6 +94,7 @@ extern bool g_tt_4way;
 // store tronca la mossa a 21 bit come la 3.7 (i flag double/ep/castling si perdono
 // di nuovo). Definita in threads.cpp.
 extern bool g_ttmove24;
+extern bool g_tt_move_keep;   // TTMoveKeep: conserva la TT move sui fail-low senza mossa (SF)
 
 // P1.10a (UCI "TTAgeRefresh", default ON) — un probe-hit rinfresca l'age
 // dell'entry: le posizioni CALDE ma scritte in search vecchie non vengono piu'
@@ -270,6 +271,12 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         U64 old_data = entry->data;
         int old_depth = unpack_depth(old_data);
         int old_age = unpack_age(old_data);
+
+        // SF-style move preservation (toggle TTMoveKeep, default off = byte-identico):
+        // se questo store NON porta una mossa (fail-low con tutti i quiet potati ->
+        // best_move=0), conserva la hash move gia' presente per QUESTA posizione invece
+        // di azzerarla. Alza la ttrate ai cut-node (+7.7pt @suite) con albero +5%.
+        if (g_tt_move_keep && move == 0) move = unpack_move(old_data);
 
         // P1.1: se questo store non porta un'eval fresca (es. nodo in scacco,
         // lazy-eval) ma l'entry della STESSA posizione ne aveva una, conservala.
