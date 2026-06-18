@@ -1,36 +1,49 @@
 # =============================================================================
-#  Build clang-cl + ThinLTO + PGO (IR-based) per Triumviratus.
-#  La leva NPS piu' grossa trovata (clang+LTO = +10% su MSVC; +PGO atteso ~+10% sulla
-#  produzione MSVC+PGO). 4 fasi:
-#    1) STRUMENTA  : clang-cl + ThinLTO + -fprofile-generate
-#    2) ALLENA     : pgo_train.py su posizioni reali -> *.profraw (LLVM_PROFILE_FILE)
-#    3) MERGE      : llvm-profdata merge -> clang.profdata
-#    4) OTTIMIZZA  : clang-cl + ThinLTO + -fprofile-use -> Triumviratus_3.6.exe
+#  Build di RELEASE clang-cl + ThinLTO + PGO (IR-based) per Triumviratus 4.0+.
+#  Produce DUE varianti distribuibili (entrambe PGO-ottimizzate):
+#    - <Name>_avx512.exe : CPU moderne (AVX-512+VNNI: Intel Ice Lake+/AMD Zen4+)
+#    - <Name>_avx2.exe   : CPU piu' vecchie (AVX2+BMI2: Intel Haswell 2013+ / AMD Zen+)
+#  ⚠️ Il motore usa _pext_u64 SEMPRE (magic.cpp) -> BMI2 e' il minimo assoluto:
+#     CPU pre-2013 (o senza BMI2) NON sono supportate da nessuna variante.
+#     Su AMD Zen1/Zen2 il PEXT e' microcodato (lento): variante avx2 funziona ma rende meno.
 #
-#  USO:  .\build_pgo_clang.ps1                 # 200 pos, 8 workers
-#        .\build_pgo_clang.ps1 -Positions 120 -Workers 8
+#  4 fasi per variante:
+#    1) STRUMENTA : clang-cl + ThinLTO + -fprofile-generate
+#    2) ALLENA    : pgo_train.py su posizioni reali -> *.profraw
+#    3) MERGE     : llvm-profdata merge -> clang.profdata
+#    4) OTTIMIZZA : clang-cl + ThinLTO + -fprofile-use -> exe finale
 #
-#  ⚠️ Laptop-only (AVX512/Zen4). Per AWS/distribuzione serve un build MSVC-AVX2.
-#  ⚠️ Misura NPS a laptop SCARICO (senno' rumore). Toolset: VS LLVM clang 19 + llvm-profdata.
-#  Non tocca l'exe di produzione MSVC (Triumviratus_pgo.exe) ne' la Release MSVC.
+#  USO:  .\build_pgo_clang.ps1                          # entrambe le varianti, Triumviratus_4.1_*
+#        .\build_pgo_clang.ps1 -Arch avx2               # solo legacy
+#        .\build_pgo_clang.ps1 -Arch avx512             # solo moderna
+#        .\build_pgo_clang.ps1 -Name Triumviratus_4.2   # release future
+#
+#  RETI (runtime, non embedded): il motore carica nn-rubicon-v1.nnue (rete
+#  rubicon, default) e in sua assenza fa fallback su nn-b1a57edbea57.nnue (rete
+#  Stockfish); small net nn-baff1ede1f90.nnue sempre richiesta. Vanno distribuite
+#  accanto all'exe.
+#  ⚠️ Allena/misura a laptop SCARICO. Toolset: VS LLVM clang + llvm-profdata.
 # =============================================================================
-param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8)
+param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
+      [string]$Name = "Triumviratus_4.1",
+      [ValidateSet("both","avx512","avx2")][string]$Arch = "both")
 $ErrorActionPreference = "Stop"
 
-$root    = $PSScriptRoot                                # repo-root (lo script vive qui) -> niente path assoluti
-$proj    = "$root\Triumviratus_3.0\Triumviratus_3.0.vcxproj"
-$outDir  = "$root\Triumviratus_3.0\x64\Release"        # OutDir del vcxproj (inner)
-$exe     = "$outDir\Triumviratus_3.4.exe"              # target Release
-# VS install: dependency di SISTEMA (non del repo). Scoperto via vswhere, fallback al path standard.
+$root    = $PSScriptRoot
+# layout repo-locale (vcxproj in Triumviratus_3.0\) o layout GitHub (script accanto al vcxproj)
+$proj    = if (Test-Path "$root\Triumviratus_3.0\Triumviratus_4.1.vcxproj") { "$root\Triumviratus_3.0\Triumviratus_4.1.vcxproj" }
+           elseif (Test-Path "$root\..\source\Triumviratus_4.1.vcxproj") { "$root\..\source\Triumviratus_4.1.vcxproj" }
+           elseif (Test-Path "$root\Triumviratus_4.1.vcxproj") { "$root\Triumviratus_4.1.vcxproj" }
+           else { throw "vcxproj non trovato (ne' layout repo, ne' GitHub build/, ne' flat)" }
+$projDir = Split-Path $proj
+$outDir  = "$projDir\x64\Release"
+$exe     = "$outDir\Triumviratus_4.1.exe"              # nome target storico del vcxproj
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsRoot  = if (Test-Path $vswhere) { (& $vswhere -latest -property installationPath) } else { "" }
 if (-not $vsRoot) { $vsRoot = "C:\Program Files\Microsoft Visual Studio\2022\Community" }
 $msbuild = "$vsRoot\MSBuild\Current\Bin\MSBuild.exe"
 $profdata= "$vsRoot\VC\Tools\Llvm\x64\bin\llvm-profdata.exe"
 
-# clang profiling runtime: lld-link cerca "clang_rt.profile.lib" (senza suffisso arch). La creiamo
-# self-contained copiandola (rinominata) in <repo>\clang_rt_lib dal lib-clang di VS (versione auto-rilevata).
-# Il vcxproj usa $(MSBuildProjectDirectory)\..\clang_rt_lib + $(ClangProfileLibDir) (passato sotto).
 $clangLibDir = (Resolve-Path "$vsRoot\VC\Tools\Llvm\x64\lib\clang\*\lib\windows" -ErrorAction SilentlyContinue | Select-Object -Last 1).Path
 $rtLib = "$root\clang_rt_lib"
 New-Item -ItemType Directory -Force -Path $rtLib | Out-Null
@@ -39,61 +52,99 @@ if ($clangLibDir) {
     if (Test-Path $srcLib) { Copy-Item $srcLib "$rtLib\clang_rt.profile.lib" -Force }
 }
 $profDir = "$root\clang_pgo_profiles"
-$merged  = "$profDir\clang.profdata"
 $book    = "$root\OpeningBooks\uho_2024\UHO_2024_+085_+094\UHO_2024_8mvs_big_+080_+099.epd"
-$finalInner = "$outDir\Triumviratus_3.6.exe"
-$finalRepo  = "$root\x64\Release\Triumviratus_3.6.exe"
+$trainer = "$root\pgo_train.py"
 
-function Step($n,$m){ Write-Host "`n==== FASE $n : $m ====" -ForegroundColor Cyan }
+function Step($n,$m){ Write-Host "`n==== $m ====" -ForegroundColor Cyan }
 
-if (-not (Test-Path $profdata)) { throw "llvm-profdata mancante: $profdata (installa 'C++ Clang tools for Windows' nel VS Installer)" }
-if (-not (Test-Path $book))     { throw "Libro EPD non trovato: $book" }
-
-if (Test-Path $profDir) { Remove-Item "$profDir\*" -Force -ErrorAction SilentlyContinue } else { New-Item -ItemType Directory -Force -Path $profDir | Out-Null }
+if (-not (Test-Path $profdata)) { throw "llvm-profdata mancante: $profdata (VS Installer: 'C++ Clang tools for Windows')" }
+if (-not (Test-Path $book))     { throw "Libro EPD non trovato: $book (serve per il training PGO)" }
+if (-not (Test-Path $trainer))  { throw "pgo_train.py non trovato: $trainer" }
 
 $common = @("-p:Configuration=Release","-p:Platform=x64","-p:PlatformToolset=ClangCL","-m","-nologo","-v:minimal","-p:ClangProfileLibDir=$clangLibDir")
 
-# --- 1) STRUMENTA ------------------------------------------------------------
-Step 1 "Build strumentata (clang-cl + ThinLTO + -fprofile-generate)"
-& $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN" "-t:Rebuild"
-if ($LASTEXITCODE -ne 0) { throw "Build strumentata clang fallita." }
-if (-not (Test-Path $exe)) { throw "Exe strumentato mancante: $exe" }
+function Build-Variant([string]$tag) {
+    $suffix = "_$tag"
+    $merged = "$profDir\clang_$tag.profdata"
+    Write-Host "`n########  VARIANTE $tag  ->  $Name$suffix.exe  ########" -ForegroundColor Magenta
 
-# --- 2) ALLENA ---------------------------------------------------------------
-Step 2 "Training ($Positions posizioni, $Workers workers) -> .profraw"
-# Il path di exit del motore NON fa scattare l'atexit di LLVM -> il quit-handler (con
-# -DCLANG_PGO_GEN) chiama __llvm_profile_write_file() esplicitamente. %p = per-pid (ogni
-# worker il suo profraw COMPLETO). NB: continuous mode (%c) dava file TRUNCATED -> non si usa.
-$env:LLVM_PROFILE_FILE = "$profDir\prof_%p.profraw"
-Push-Location $outDir
-try {
-    python "$root\pgo_train.py" $exe $Movetime $book $Positions --workers $Workers
-    if ($LASTEXITCODE -ne 0) { throw "pgo_train.py exit $LASTEXITCODE" }
-} finally {
-    Pop-Location
-    $env:LLVM_PROFILE_FILE = $null
+    # HOTFIX 2026-06-12: la variante avx2 della release 4.0 conteneva istruzioni
+    # AVX-512 nel codice NNUE (6 vpdpbusd/vpaddd su zmm) -> crash (illegal
+    # instruction) su CPU senza AVX-512 (report TalkChess: i5-7400 Kaby Lake,
+    # "muore dopo 2-3s, Arena Hash=0" = morte alla prima eval). Doppia difesa:
+    #  1) flag clang ESPLICITI -mno-avx512* (non solo defines/arch del vcxproj);
+    #  2) GATE anti-zmm sull'exe finale (sotto): la build FALLISCE se trova
+    #     istruzioni NNUE su zmm nella variante legacy. Mai piu' fidarsi senza gate.
+    $extra = ""
+    if ($tag -eq "avx2") {
+        $extra = " /clang:-mno-avx512f /clang:-mno-avx512bw /clang:-mno-avx512dq /clang:-mno-avx512vl /clang:-mno-avx512cd /clang:-mno-avx512vnni"
+    }
+
+    # patch vcxproj per la variante legacy (ripristinato nel finally)
+    $orig = Get-Content $proj -Raw
+    try {
+        if ($tag -eq "avx2") {
+            $xml = $orig -replace "USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX2", "USE_PEXT;USE_AVX2"
+            $xml = $xml -replace "AdvancedVectorExtensions512", "AdvancedVectorExtensions2"
+            if ($xml -match "USE_AVX512") { throw "[$tag] patch vcxproj fallita: USE_AVX512 ancora presente" }
+            Set-Content $proj $xml -Encoding UTF8
+        }
+        if (Test-Path $profDir) { Remove-Item "$profDir\*.profraw" -Force -ErrorAction SilentlyContinue } else { New-Item -ItemType Directory -Force -Path $profDir | Out-Null }
+
+        Step 1 "[$tag] FASE 1: build strumentata"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN$extra /clang:-ffp-contract=off" "-t:Rebuild"
+        if ($LASTEXITCODE -ne 0) { throw "[$tag] build strumentata fallita" }
+
+        Step 2 "[$tag] FASE 2: training ($Positions pos, $Workers workers)"
+        $env:LLVM_PROFILE_FILE = "$profDir\prof_%p.profraw"
+        Push-Location $outDir
+        try {
+            python $trainer $exe $Movetime $book $Positions --workers $Workers
+            if ($LASTEXITCODE -ne 0) { throw "[$tag] pgo_train.py exit $LASTEXITCODE" }
+        } finally { Pop-Location; $env:LLVM_PROFILE_FILE = $null }
+        $raws = @(Get-ChildItem "$profDir\*.profraw" -ErrorAction SilentlyContinue)
+        if ($raws.Count -eq 0) { throw "[$tag] nessun .profraw generato" }
+
+        Step 3 "[$tag] FASE 3: merge profili"
+        & $profdata merge -output="$merged" ($raws | Select-Object -ExpandProperty FullName)
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $merged)) { throw "[$tag] llvm-profdata merge fallito" }
+
+        Step 4 "[$tag] FASE 4: build ottimizzata (-fprofile-use)"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged$extra /clang:-ffp-contract=off" "-t:Rebuild"
+        if ($LASTEXITCODE -ne 0) { throw "[$tag] build ottimizzata fallita" }
+
+        # GATE anti-AVX512 (variante legacy): scansiona il disassembly per
+        # istruzioni NNUE su registri zmm. La CRT puo' contenere zmm con dispatch
+        # runtime (benigni); vpdpbusd/vpmaddubsw/vpaddd su zmm = codice EVAL
+        # nostro = crash su CPU pre-AVX512 -> build BOCCIATA.
+        if ($tag -eq "avx2") {
+            Step 5 "[$tag] GATE: scansione anti-AVX512 dell'exe"
+            $dumpbin = Get-ChildItem "$vsRoot\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1 -ExpandProperty FullName
+            $bad = (& $dumpbin /disasm:nobytes $exe | Select-String "vpdpbusd.*zmm|vpmaddubsw.*zmm|vpaddd.*zmm").Count
+            if ($bad -gt 0) { throw "[$tag] GATE FALLITO: $bad istruzioni NNUE su zmm nella build legacy (AVX-512 leak)" }
+            Write-Host "  GATE OK: 0 istruzioni NNUE-su-zmm" -ForegroundColor Green
+        }
+
+        Copy-Item $exe "$outDir\$Name$suffix.exe" -Force
+        if (Test-Path "$root\x64\Release") { Copy-Item $exe "$root\x64\Release\$Name$suffix.exe" -Force }
+        Write-Host "  -> $Name$suffix.exe pronto" -ForegroundColor Green
+    } finally {
+        Set-Content $proj $orig -Encoding UTF8       # vcxproj sempre ripristinato
+    }
+
+    # pulizia OutDir: solo exe + reti
+    $junk = @("*.profraw","*.iobj","*.obj","*.pdb","*.ilk","*.exp","pgort*.dll",
+              "*.Build.CppClean.log","*.exe.recipe","vcpkg.applocal.log","*.FileListAbsolute.txt")
+    foreach ($pat in $junk) { Remove-Item (Join-Path $outDir $pat) -Force -ErrorAction SilentlyContinue }
+    Remove-Item "$profDir\*.profraw" -Force -ErrorAction SilentlyContinue
 }
-$raws = @(Get-ChildItem "$profDir\*.profraw" -ErrorAction SilentlyContinue)
-if ($raws.Count -eq 0) { throw "Nessun .profraw in $profDir (LLVM_PROFILE_FILE non ereditato dall'exe? exe crasha senza 'quit' pulito?)." }
-Write-Host "  -> $($raws.Count) .profraw generati" -ForegroundColor Green
 
-# --- 3) MERGE ----------------------------------------------------------------
-Step 3 "llvm-profdata merge -> clang.profdata"
-& $profdata merge -output="$merged" ($raws | Select-Object -ExpandProperty FullName)
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $merged)) { throw "llvm-profdata merge fallito." }
-Write-Host "  -> $merged" -ForegroundColor Green
+$variants = switch ($Arch) { "both" { @("avx512","avx2") } default { @($Arch) } }
+foreach ($v in $variants) { Build-Variant $v }
 
-# --- 4) OTTIMIZZA ------------------------------------------------------------
-Step 4 "Build ottimizzata (clang-cl + ThinLTO + -fprofile-use)"
-& $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged" "-t:Rebuild"
-if ($LASTEXITCODE -ne 0) { throw "Build ottimizzata clang fallita." }
-Copy-Item $exe $finalInner -Force
-if (Test-Path (Split-Path $finalRepo)) { Copy-Item $exe $finalRepo -Force }
+Write-Host "`n==== RELEASE PRONTE ====" -ForegroundColor Cyan
+foreach ($v in $variants) { Write-Host "  $outDir\$Name`_$v.exe" }
+Write-Host "Distribuzione: exe + nn-rubicon-v1.nnue (default) [+ nn-b1a57edbea57.nnue fallback] + nn-baff1ede1f90.nnue" -ForegroundColor Yellow
+Write-Host "Requisiti CPU: avx512 = Ice Lake+/Zen4+ ; avx2 = Haswell 2013+/Zen+ (BMI2 OBBLIGATORIO per entrambe)."
 
-Write-Host "`n==== FATTO ====" -ForegroundColor Cyan
-Write-Host "clang-PGO exe : $finalInner"
-Write-Host "             + $finalRepo"
-Write-Host "`nConfronto NPS (laptop SCARICO!):" -ForegroundColor Yellow
-Write-Host "  .\tools\measure_nps.ps1 `"$finalRepo`" 8000 5"
-Write-Host "  .\tools\measure_nps.ps1 `"$root\x64\Release\Triumviratus_pgo.exe`" 8000 5"
-Write-Host "Atteso clang-PGO ~+10% su MSVC-PGO. Se conferma -> diventa il build di release (laptop)."
+

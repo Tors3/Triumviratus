@@ -134,4 +134,10 @@
       <Filter>File di risorse</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Triumviratus_4.1.rc">
+      <Filter>File di risorse</Filter>
+    </ResourceCompile>
+  </ItemGroup>
 </Project>
+

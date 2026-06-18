@@ -9,7 +9,7 @@
 #         .\build_pgo.ps1 -Workers 8        # processi paralleli (default: 8)
 #         .\build_pgo.ps1 -SkipToLink       # salta a fase 3 (obj+pgd gia' pronti)
 #
-#  NB: la config Release|x64 (Triumviratus_3.4.exe) non viene mai toccata.
+#  NB: la config Release|x64 (Triumviratus_4.1.exe) non viene mai toccata.
 #      Le config ReleasePGI e ReleasePGO sono dedicate al PGO.
 #      Il training usa posizioni reali dal libro UHO a MOVETIME (non depth
 #      fisso): profilo rappresentativo del gioco a tempo, niente overfit bench.
@@ -24,7 +24,10 @@ param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8, [switch]$Ski
 $ErrorActionPreference = "Stop"
 
 $root    = $PSScriptRoot   # repo-root (lo script vive qui) -> niente path assoluti
-$proj    = "$root\Triumviratus_3.0\Triumviratus_3.0.vcxproj"
+$proj    = if (Test-Path "$root\Triumviratus_3.0\Triumviratus_4.1.vcxproj") { "$root\Triumviratus_3.0\Triumviratus_4.1.vcxproj" }
+            elseif (Test-Path "$root\..\source\Triumviratus_4.1.vcxproj") { "$root\..\source\Triumviratus_4.1.vcxproj" }
+            elseif (Test-Path "$root\Triumviratus_4.1.vcxproj") { "$root\Triumviratus_4.1.vcxproj" }
+            else { throw "vcxproj non trovato" }
 
 # OutDir condiviso da ReleasePGI e ReleasePGO (come da vcxproj)
 $outDir  = "$root\Triumviratus_3.0\x64\Release"
@@ -181,11 +184,19 @@ $linkArgs = $objs + $sysLibs + @(
 if ($LASTEXITCODE -ne 0) { throw "Link PGOptimize fallito (exit $LASTEXITCODE)." }
 Write-Host "  -> ${exe} rilinkata con PGO." -ForegroundColor Green
 
-# Pulizia profilo (tieni solo l'exe finale)
-Remove-Item "$outDir\$target!*.pgc", "$outDir\$target.pgd" -ErrorAction SilentlyContinue
-Write-Host "  -> file di profilo (.pgd, .pgc) rimossi." -ForegroundColor DarkGray
+# --- Pulizia Release: deve restarci SOLO l'eseguibile (+ reti .nnue/.bin runtime) ---
+# Il PGO + MSBuild lasciano in OutDir: profilo (.pgc/.pgd), il runtime di
+# strumentazione (pgort*.dll, serve solo all'exe PGInstrument, NON al PGO finale),
+# e intermedi (.obj/.iobj/.pdb/.recipe/log). Tutto fuori dall'exe va tolto.
+$junk = @("$target!*.pgc","$target.pgd","pgort*.dll","*.iobj","*.obj","*.pdb","*.ilk",
+          "*.exp","*.Build.CppClean.log","*.exe.recipe","vcpkg.applocal.log",
+          "*.FileListAbsolute.txt","*.profraw")
+foreach ($pat in $junk) { Remove-Item (Join-Path $outDir $pat) -Force -ErrorAction SilentlyContinue }
+Write-Host "  -> Release ripulita: solo .exe + reti (.nnue/.bin)." -ForegroundColor DarkGray
 
 Write-Host "`n==== FATTO ====" -ForegroundColor Cyan
 Write-Host "Exe PGO : ${exe}"
 Write-Host "Confronta NPS vs il main (no-PGO):"
-Write-Host "  python tools\nps_compare.py ${root}\x64\Release\Triumviratus_3.4.exe ${exe}"
+Write-Host "  python tools\nps_compare.py ${root}\x64\Release\Triumviratus_4.1.exe ${exe}"
+
+

@@ -85,11 +85,9 @@ MSVC-PGO path. All paths are relative, so the scripts run from a fresh clone.
 ### Windows (MSVC)
 ```powershell
 & "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" `
-  "Triumviratus_3.0.vcxproj" /t:Rebuild /p:Configuration=Release /p:Platform=x64
+  "Triumviratus_4.1.vcxproj" /t:Rebuild /p:Configuration=Release /p:Platform=x64
 ```
-> Note: the Visual Studio project file is still named `Triumviratus_3.0.vcxproj` for
-> historical reasons; the build output name follows the engine version
-> (`Triumviratus_4.1_avx512.exe` / `_avx2.exe` from `build_pgo_clang.ps1`).
+> Build output: `Triumviratus_4.1_avx512.exe` / `_avx2.exe` from `build_pgo_clang.ps1`.
 
 ## License
 
@@ -115,3 +113,5 @@ refactoring, tuning infrastructure, and documentation). The NNUE evaluation is
 **derived from Stockfish** (GPLv3, credited above); the original work is the classical
 search, the move generator, the engine architecture, and the empirical tuning pipeline.
 This is stated transparently so the nature and provenance of the code are clear.
+
+
