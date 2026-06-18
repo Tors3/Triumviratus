@@ -1,32 +1,34 @@
 # Triumviratus Chess Engine
 
 Triumviratus is a strong, UCI-compliant chess engine written in C++.
-Version 4.0 builds on a hybrid architecture: a heavily co-tuned classical
-alpha-beta search with NNUE evaluation — fed directly from the engine's native
-bitboards via a **single-board bridge** — plus **Lazy SMP** parallel search and
-**Syzygy endgame tablebases**.
+The current release (**4.1**) is a heavily co-tuned classical alpha-beta search with
+NNUE evaluation — fed directly from the engine's native bitboards via a
+**single-board bridge** — plus **Lazy SMP** parallel search and **Syzygy endgame
+tablebases**.
 
 Every change is validated empirically: search changes by SPRT, speed changes by
 an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on feel.
 
 ## What's New
 
+### 4.1 — Search co-tune (+35 Elo over 4.0)
+* **Large SPSA co-tune (~10k iterations, 18 parameters):** pruning margins, history
+  weights, LMR + SF-style depth-pruning block — re-tuned **together** as a block.
+* **SPRT-verified vs 4.0** (same network, `nn-b1a57edbea57.nnue`, both sides):
+  **+35.0 ± 17.9 Elo at 20+0.2 (LOS ~100%, fastchess, UHO_2024 +080/+099)** and
+  **+17.8 ± 8.8 Elo at 12+0.12**.
+* No new features vs 4.0 — same architecture. Just better-tuned constants.
+* **Bench fingerprint:** `Nodes searched : 2601747`.
+
 ### 4.0 — TT redesign + a large co-tuned search vector
-* **Mega-SPSA search co-tune (+29.5 Elo):** 55 search / move-ordering / time-management
-  parameters were re-tuned **together** (along with several previously dormant
-  heuristics enabled: quiet-check qsearch, NMP verification, SF-style LMP,
-  prior-move history bonus, low-ply history) in a single large SPSA run
-  (~9,200 iterations). Validated by SPRT against the previous defaults — same
-  network on both sides — at **+29.5 ± 21 Elo (LOS 99.7%, 20+0.08)**. The vector
-  is co-adapted: it is shipped as a block.
-* **24-byte transposition table with 16-bit static eval:** the TT entry stores the
-  static evaluation at full 16-bit precision (with a key fragment as an anti-race
-  guard), so NNUE forward passes are skipped on TT hits; plus windowed repetition
-  scanning and masked evasion generation.
-* **Cumulative gain since the last release (3.7):** a build-neutral SPRT (same
-  compiler, same network on both sides) measured **+27.6 Elo (3.7 → 4.0)** before
-  the co-tune above stacks on top, from correctness fixes (3.8), search micro-fixes
-  (3.9), and the TT redesign.
+* **Mega-SPSA search co-tune (+29.5 Elo):** 55 parameters re-tuned together with
+  several dormant heuristics enabled (quiet-check qsearch, NMP verification,
+  SF-style LMP, prior-move/low-ply history). SPRT-verified at
+  **+29.5 ± 21 Elo (LOS 99.7%, 20+0.08)**.
+* **24-byte transposition table with 16-bit static eval:** NNUE forward passes
+  skipped on TT hits; windowed repetition scanning; masked evasion generation.
+* **Cumulative gain 3.7 → 4.0 (pre co-tune): +27.6 Elo** (correctness fixes,
+  search micro-fixes, TT redesign).
 
 ### Earlier highlights (3.x)
 * **SPSA search re-tune (3.7):** Google-Cloud SPSA over the core search vector, **+27.7 Elo** over 3.6.
@@ -86,7 +88,8 @@ MSVC-PGO path. All paths are relative, so the scripts run from a fresh clone.
   "Triumviratus_3.0.vcxproj" /t:Rebuild /p:Configuration=Release /p:Platform=x64
 ```
 > Note: the Visual Studio project file is still named `Triumviratus_3.0.vcxproj` for
-> historical reasons; the build output name follows the engine version.
+> historical reasons; the build output name follows the engine version
+> (`Triumviratus_4.1_avx512.exe` / `_avx2.exe` from `build_pgo_clang.ps1`).
 
 ## License
 
