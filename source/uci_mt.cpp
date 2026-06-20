@@ -284,6 +284,7 @@ void uci_loop()
             printf("option name FastRepScan type check default true\n");       // P2.2 repetition scan a finestra
             printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
             printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
+            printf("option name UseSmallNet type check default false\n");       // 4.2: small=mini-rubicon (own) OFF di default (A/B: small ON -88 vs 4.1, OFF -41); big-only piu' forte
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
             printf("option name QSChecks type check default true\n");          // P1.3 quiet check alla prima ply di qsearch
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
@@ -397,10 +398,10 @@ void uci_loop()
             printf("option name FutilityDepth type spin default 10 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 4 min 3 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SmallNetThreshold type spin default 1043 min 300 max 2000\n"); // RIPRISTINATO 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau)
-            printf("option name EvalOptimism type spin default 345 min 200 max 1200\n");        // [3.7] eval-wrapper: BAKED 395 (SPSA-37 su over_last); era 600
+            printf("option name EvalOptimism type spin default 415 min 200 max 1200\n");        // [4.2] eval-SPSA rubicon (era 345); storico 600/915
             printf("option name EvalPawnScale type spin default 4 min 0 max 40\n");
-            printf("option name EvalComplexityDiv type spin default 58504 min 8192 max 65536\n");
-            printf("option name EvalBlendDelta type spin default 12 min 0 max 96\n");
+            printf("option name EvalComplexityDiv type spin default 56134 min 8192 max 65536\n");   // [4.2] eval-SPSA rubicon (era 58504)
+            printf("option name EvalBlendDelta type spin default 10 min 0 max 96\n");               // [4.2] eval-SPSA rubicon (era 12)
             printf("option name TMMovesToGo type spin default 23 min 12 max 60\n");        // time mgmt: quota base = remaining/questo
             printf("option name TMIncFrac type spin default 75 min 0 max 100\n");           // % incremento
             printf("option name TMMaxMult type spin default 582 min 150 max 800\n");        // burst maximum = optimum*questo/100
@@ -669,6 +670,12 @@ void uci_loop()
         {
             const char* v = input + 34;
             set_tt_static_eval(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name UseSmallNet value ", 33) == 0)
+        {
+            extern bool g_use_small_net;   // defined in sfnnue/evaluate.cpp
+            const char* v = input + 33;
+            g_use_small_net = (strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name FastRepScan value ", 33) == 0)
         {
