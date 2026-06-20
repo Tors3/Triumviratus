@@ -1,15 +1,29 @@
 # Triumviratus Chess Engine
 
 Triumviratus is a strong, UCI-compliant chess engine written in C++.
-The current release (**4.1**) is a heavily co-tuned classical alpha-beta search with
-NNUE evaluation — fed directly from the engine's native bitboards via a
-**single-board bridge** — plus **Lazy SMP** parallel search and **Syzygy endgame
-tablebases**.
+The current release (**4.2**) is the first **own-network** build: it evaluates with
+our own **"rubicon"** NNUE — trained from scratch on T80 data, no Stockfish network
+shipped — on top of the same heavily co-tuned classical alpha-beta search, **Lazy SMP**
+parallel search, and **Syzygy endgame tablebases**.
 
 Every change is validated empirically: search changes by SPRT, speed changes by
 an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on feel.
 
 ## What's New
+
+### 4.2 — First own-lineage network
+* **Own network by default:** ships `nn-rubicon-v1.nnue`, an in-house NNUE trained
+  **from scratch on T80 data** (own lineage). **No Stockfish network is distributed.**
+  The NNUE *inference code* (`sfnnue/`, HalfKAv2_hm) remains Stockfish-derived — see
+  License — but the *weights* are our own.
+* **`UseSmallNet` off by default:** an own small net (`mini-rubicon-v1.nnue`) exists but
+  is a net loss in-game, so 4.2 runs big-net-only. The toggle is kept for the future.
+* **Eval-wrapper retune for the new net:** the NNUE post-processing constants
+  (`EvalOptimism`, `EvalComplexityDiv`, `EvalBlendDelta`) were re-tuned by SPSA for the
+  rubicon net, since a different network wants a different eval-search coupling.
+* **Cost of going own:** vs 4.1 (Stockfish net) at 12+0.12, the own-network 4.2 measures
+  **−38.9 ± 19.9 Elo** — the deliberate, accepted price of a 100% own-lineage build. The
+  search is unchanged from 4.1.
 
 ### 4.1 — Search co-tune (+35 Elo over 4.0)
 * **Large SPSA co-tune (~10k iterations, 18 parameters):** pruning margins, history
@@ -18,7 +32,6 @@ an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on fee
   **+35.0 ± 17.9 Elo at 20+0.2 (LOS ~100%, fastchess, UHO_2024 +080/+099)** and
   **+17.8 ± 8.8 Elo at 12+0.12**.
 * No new features vs 4.0 — same architecture. Just better-tuned constants.
-* **Bench fingerprint:** `Nodes searched : 2601747`.
 
 ### 4.0 — TT redesign + a large co-tuned search vector
 * **Mega-SPSA search co-tune (+29.5 Elo):** 55 parameters re-tuned together with
@@ -45,7 +58,7 @@ an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on fee
 * **Move Ordering:** staged MovePicker, capture history, butterfly + multi-ply continuation history (1/2/3/4/6-ply), pawn-structure history, prior-move and low-ply history, counter-move and killer heuristics, threat- / check-aware ordering. All ordering weights are co-tuned and exposed as UCI spin options.
 * **Pruning & Reductions:** Null Move Pruning (with verification), Late Move Reductions (continuous butterfly/continuation-history scaling), Reverse Futility / Futility Pruning, Razoring, ProbCut (TT-stored), Late Move Pruning (improving-scaled), SEE pruning, quiet checks in qsearch. Margins are SPSA-tuned and exposed as UCI spin options.
 * **Parallel Search:** **Lazy SMP** — independent threads sharing the transposition table, with per-thread depth skipping and reduction-bias diversity.
-* **Evaluation:** NNUE (Stockfish HalfKAv2_hm architecture) with dual nets (big/small), a **single-board bridge** feeding the network from the engine's native bitboards, a finny-table accumulator-refresh cache, a per-thread static-eval cache, a 16-bit static eval cached in the transposition table, and learned **correction history** (pawn + minor + major material keys).
+* **Evaluation:** NNUE (Stockfish HalfKAv2_hm inference architecture) with our **own `rubicon` network** trained from scratch on T80 data, an optional small net (`UseSmallNet`, off by default), a **single-board bridge** feeding the network from the engine's native bitboards, a finny-table accumulator-refresh cache, a per-thread static-eval cache, a 16-bit static eval cached in the transposition table, and learned **correction history** (pawn + minor + major material keys).
 * **Endgames:** Syzygy tablebase probing (WDL in search, DTZ at the root), up to 5 men via [Fathom](https://github.com/jdart1/Fathom).
 
 ## Setup & Usage
@@ -55,12 +68,10 @@ To use Triumviratus in any standard chess GUI (e.g., Cute Chess, Banksia GUI, Ar
 1. Download the latest executable from the [Releases](../../releases) tab. Two
    variants are provided: `*_avx2` (Intel Haswell 2013+ / AMD Zen+) and `*_avx512`
    (Intel Ice Lake+ / AMD Zen4+). **BMI2 is required** (the engine always uses PEXT).
-2. The engine loads its NNUE networks at runtime — place these files in the **same
+2. The engine loads its NNUE network at runtime — place this file in the **same
    directory** as the executable:
-   * `nn-b1a57edbea57.nnue` — **big net (default)**, the Stockfish HalfKAv2_hm network.
-   * `nn-baff1ede1f90.nnue` — small net (always required).
-   * `nn-rubicon-v1.nnue` — *(optional)* an in-house network; used as a fallback if
-     the default big net is absent, or selectable at runtime via `EvalFile`.
+   * `nn-rubicon-v1.nnue` — **the network** (our own, trained from scratch on T80).
+     Shipped inside the release archive.
 3. *(Optional)* Place Syzygy tablebase files in a folder and set `SyzygyPath`
    (a `Syzygy/` folder next to the executable is auto-detected).
 4. Add the engine to your GUI using the standard UCI procedure.
@@ -68,7 +79,8 @@ To use Triumviratus in any standard chess GUI (e.g., Cute Chess, Banksia GUI, Ar
 ### Recommended UCI Settings
 * **Hash:** according to available RAM (default 64 MB; 1024 MB+ for long time controls).
 * **Threads:** match your hardware's optimal concurrent thread count.
-* **EvalFile:** path to the big NNUE net to load (defaults to `nn-b1a57edbea57.nnue`).
+* **EvalFile:** path to the NNUE net to load (defaults to `nn-rubicon-v1.nnue`).
+* **UseSmallNet:** dual-net mode (default `false`; big-net-only is strongest).
 * **SyzygyPath:** absolute path to your Syzygy `.rtbw`/`.rtbz` folder (empty to disable).
 * **Move Overhead:** ms reserved per move for GUI/lag (default 50).
 
@@ -78,40 +90,50 @@ The project is configured for MSBuild (Visual Studio 2022, toolset v143), Releas
 with `/O2`, AVX2, intrinsics and whole-program optimization. A Linux `Makefile` is also
 provided (`make` for AVX2+BMI2, `make avx512` for AVX-512+VNNI).
 
-For the fastest release builds, `build_pgo_clang.ps1` (clang-cl + ThinLTO + IR-PGO)
-produces both distributable variants (`*_avx512` and `*_avx2`); `build_pgo.ps1` is the
+For the fastest release builds, `build/build_pgo_clang_42.ps1` (clang-cl + ThinLTO + IR-PGO)
+produces both distributable variants (`*_avx512` and `*_avx2`); `build/build_pgo.ps1` is the
 MSVC-PGO path. All paths are relative, so the scripts run from a fresh clone.
 
 ### Windows (MSVC)
 ```powershell
 & "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" `
-  "Triumviratus_4.1.vcxproj" /t:Rebuild /p:Configuration=Release /p:Platform=x64
+  "source\Triumviratus_4.2.vcxproj" /t:Rebuild /p:Configuration=Release /p:Platform=x64
 ```
-> Build output: `Triumviratus_4.1_avx512.exe` / `_avx2.exe` from `build_pgo_clang.ps1`.
+> Build output: `Triumviratus_4.2_avx512.exe` / `_avx2.exe` from `build/build_pgo_clang_42.ps1`.
 
 ## License
 
 Triumviratus is **free software licensed under the GNU General Public License v3 (GPLv3)** — see the [`COPYING`](COPYING) file for the full text.
 
-Triumviratus incorporates and is a derivative work of **Stockfish** (the NNUE evaluation code in `sfnnue/` and the official `nn-*.nnue` networks), which is itself licensed under the GPLv3. In accordance with the GPL, the **entire Triumviratus project is therefore distributed under the GPLv3**, the original Stockfish copyright notices are preserved in all derived files, and the complete corresponding source code is published in this repository. Any binary release is accompanied by a link to this source repository.
+Triumviratus incorporates and is a derivative work of **Stockfish**: the NNUE evaluation
+**inference code** in `sfnnue/` (the HalfKAv2_hm architecture) is taken from Stockfish,
+which is itself licensed under the GPLv3. In accordance with the GPL, the **entire
+Triumviratus project is therefore distributed under the GPLv3**, the original Stockfish
+copyright notices are preserved in all derived files, and the complete corresponding source
+code is published in this repository. Any binary release is accompanied by a link to this
+source repository.
+
+> **Network provenance (4.2):** the shipped network `nn-rubicon-v1.nnue` is **our own**,
+> trained from scratch on T80 data — it is *not* a Stockfish network. Only the NNUE
+> inference *code* is Stockfish-derived.
 
 You may redistribute and/or modify Triumviratus under the terms of the GPLv3. It is distributed in the hope that it will be useful, but **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 ## Credits & Acknowledgements
 
-- **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — the NNUE evaluation (HalfKAv2_hm architecture, `sfnnue/`) and the `nn-b1a57edbea57.nnue` / `nn-baff1ede1f90.nnue` networks are derived from Stockfish. Copyright (C) 2004-2024 The Stockfish developers.
+- **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — the NNUE evaluation *inference code* (HalfKAv2_hm architecture, `sfnnue/`) is derived from Stockfish. Copyright (C) 2004-2024 The Stockfish developers. The networks shipped with Triumviratus 4.2 are our own (`nn-rubicon-v1.nnue`), not Stockfish networks.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing (`fathom/`). Copyright (C) Ronald de Man, basil00, and Jon Dart.
 - **[Syzygy tablebases](https://github.com/syzygy1/tb)** — endgame tablebase format by Ronald de Man.
 
 The classical search (PVS, pruning, reductions, move ordering, Lazy SMP), the bitboard
-move generator, and the engine architecture are original work by Francesco Torsello.
+move generator, the engine architecture, the own NNUE training pipeline (rubicon), and the
+empirical tuning infrastructure are original work by Francesco Torsello.
 
 ## Development Note
 
 Triumviratus is developed openly and with **significant AI assistance** (coding,
-refactoring, tuning infrastructure, and documentation). The NNUE evaluation is
+refactoring, tuning infrastructure, and documentation). The NNUE *inference code* is
 **derived from Stockfish** (GPLv3, credited above); the original work is the classical
-search, the move generator, the engine architecture, and the empirical tuning pipeline.
-This is stated transparently so the nature and provenance of the code are clear.
-
-
+search, the move generator, the engine architecture, the own-lineage NNUE training
+(rubicon), and the empirical tuning pipeline. This is stated transparently so the nature
+and provenance of the code are clear.
