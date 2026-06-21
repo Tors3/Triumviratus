@@ -297,7 +297,7 @@ void uci_loop()
             printf("option name EvalCacheUndamp type check default true\n");  // N1: eval-cache senza fifty in chiave (valore undamped)
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
-            printf("option name EvalFile type string default nn-b1a57edbea57.nnue\n");  // big net runtime-selezionabile; default SF-net (CCRL-accettata), fallback nn-rubicon-v1 (nostra)
+            printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // 4.2 OWN-NET: default = our rubicon net (loaded from disk; no net embedded in the binary)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)

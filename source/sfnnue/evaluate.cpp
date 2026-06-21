@@ -38,7 +38,11 @@
 //     const unsigned char *const gEmbeddedNNUEEnd;     // a marker to the end
 //     const unsigned int         gEmbeddedNNUESize;    // the size of the embedded file
 // Note that this does not work in Microsoft Visual Studio.
-#if !defined(_MSC_VER) && !defined(NNUE_EMBEDDING_OFF)
+// 4.2 OWN-NET: NNUE embedding DISABLED. The engine loads nn-rubicon-v1.nnue from
+// disk (main.cpp / sf_init); NO network is compiled into the binary, so no
+// Stockfish net is distributed. The <internal> path below falls through to the
+// 1-byte dummies (load fails) and load_networks then reads the net from disk.
+#if 0
 INCBIN(EmbeddedNNUEBig, EvalFileDefaultNameBig);
 INCBIN(EmbeddedNNUESmall, EvalFileDefaultNameSmall);
 #else

@@ -39,11 +39,11 @@ void clear_accumulator_caches(AccumulatorCaches& caches);
 int   simple_eval(const Position& pos, Color c);
 Value evaluate(const Position& pos, NNUE::AccumulatorCaches* caches = nullptr);
 
-// The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
-// for the build process (profile-build and fishtest) to work. Do not change the
-// name of the macro, as it is used in the Makefile.
-#define EvalFileDefaultNameBig "nn-b1a57edbea57.nnue"
-#define EvalFileDefaultNameSmall "nn-baff1ede1f90.nnue"
+// 4.2 OWN-NET: default net names point to OUR nets (loaded from disk; embedding is
+// disabled in evaluate.cpp so neither is compiled into the binary). The SF SHA-name
+// convention does not apply since we no longer ship/embed a Stockfish net.
+#define EvalFileDefaultNameBig "nn-rubicon-v1.nnue"
+#define EvalFileDefaultNameSmall "mini-rubicon-v1.nnue"
 
 struct EvalFile {
     // UCI option name
