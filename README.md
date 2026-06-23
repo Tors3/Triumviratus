@@ -11,6 +11,20 @@ an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on fee
 
 ## What's New
 
+### 5.0 — In development
+* **Port of Stockfish's newest NNUE architecture (SFNNv13, threats-based):** Triumviratus 5
+  faithfully ports Stockfish-master's current NNUE — the richer **threats** feature set
+  (`FullThreats + HalfKAv2_hm`) that encodes board threats — with a **bit-exact**,
+  incrementally-updated evaluation and a faster back end (clang PGO + AVX-512).
+* **Own-lineage SFNNv13 network in training:** an in-house threats network is being trained
+  following Stockfish's official **staged** training recipe (nnue-pytorch), continuing the
+  own-lineage philosophy of 4.2 on the new architecture.
+* **Search re-audit vs Stockfish-master:** the tree-pruning has been re-audited against
+  current Stockfish; the missing aggressive-cutting features (capture futility, triple /
+  full negative singular extensions, opponent-worsening margins, quadratic razoring) are
+  being ported and will be **co-tuned together** for the stronger network.
+* *Unreleased — work in progress. 4.2 remains the current release.*
+
 ### 4.2 — First own-lineage network
 * **Own network by default:** ships `nn-rubicon-v1.nnue`, an in-house NNUE trained
   **from scratch on T80 data** (own lineage). **No Stockfish network is distributed.**
@@ -24,6 +38,15 @@ an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on fee
 * **Cost of going own:** vs 4.1 (Stockfish net) at 12+0.12, the own-network 4.2 measures
   **−38.9 ± 19.9 Elo** — the deliberate, accepted price of a 100% own-lineage build. The
   search is unchanged from 4.1.
+
+> **Independent community test — thanks to Maurizio Platino.** In a 100-game match run
+> independently by Maurizio Platino (Fritz 18, Intel i7-8700, 6 threads/engine, 1024 MB
+> hash, 3 min + 1 s, UHO 2022 6-move +120/+129 book by Stefan Pohl, no tablebases), the
+> **own-lineage 4.2** network held its own against the established **Stockfish network**
+> shipped by 4.1, **trailing by a margin of only 3 games** out of 100 at a long time
+> control. An encouraging external confirmation that the from-scratch *rubicon* network is
+> genuinely competitive with the Stockfish network. Thank you, Maurizio, for the rigorous
+> test and the annotated games.
 
 ### 4.1 — Search co-tune (+35 Elo over 4.0)
 * **Large SPSA co-tune (~10k iterations, 18 parameters):** pruning margins, history
@@ -124,6 +147,7 @@ You may redistribute and/or modify Triumviratus under the terms of the GPLv3. It
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — the NNUE evaluation *inference code* (HalfKAv2_hm architecture, `sfnnue/`) is derived from Stockfish. Copyright (C) 2004-2024 The Stockfish developers. The networks shipped with Triumviratus 4.2 are our own (`nn-rubicon-v1.nnue`), not Stockfish networks.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing (`fathom/`). Copyright (C) Ronald de Man, basil00, and Jon Dart.
 - **[Syzygy tablebases](https://github.com/syzygy1/tb)** — endgame tablebase format by Ronald de Man.
+- **Maurizio Platino** — independent testing, gauntlet validation, and community feedback.
 
 The classical search (PVS, pruning, reductions, move ordering, Lazy SMP), the bitboard
 move generator, the engine architecture, the own NNUE training pipeline (rubicon), and the
