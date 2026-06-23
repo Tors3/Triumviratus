@@ -46,7 +46,7 @@ an interleaved A/B NPS test, Elo by anchored gauntlets. Nothing is merged on fee
 > shipped by 4.1, **trailing by a margin of only 3 games** out of 100 at a long time
 > control. An encouraging external confirmation that the from-scratch *rubicon* network is
 > genuinely competitive with the Stockfish network. Thank you, Maurizio, for the rigorous
-> test and the annotated games.
+> tests.
 
 ### 4.1 — Search co-tune (+35 Elo over 4.0)
 * **Large SPSA co-tune (~10k iterations, 18 parameters):** pruning margins, history
