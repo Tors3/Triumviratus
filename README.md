@@ -40,6 +40,7 @@ code in `sfnnue_v13/` and the `nn-*.nnue` networks, GPLv3), so the whole project
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing.
 - Search and engine by **Francesco Torsello**.
-- Thanks to **Maurizio Platino** for the SPSA search-tuning and for generously contributing his hardware.
+- Thanks to **Maurizio Platino** for help validating 4.2 against 4.1 and for the 5.0 SPSA search-tuning,
+  generously contributing his hardware to both efforts.
 
 <sub>Developed openly and with significant AI assistance.</sub>
