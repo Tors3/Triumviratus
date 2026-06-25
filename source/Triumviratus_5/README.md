@@ -1,6 +1,8 @@
-<p align="center">
-  <img src="logo.png" alt="Triumviratus" width="220">
-</p>
+<div align="center">
+
+![Triumviratus](logo.png)
+
+</div>
 
 # Triumviratus 5.0 Chess Engine
 
@@ -8,9 +10,9 @@ Triumviratus is a strong, UCI-compliant chess engine written in C++. **Version 5
 **SFNNv13** NNUE architecture (a faithful port of Stockfish-master's evaluation) combined with a
 Stockfish-faithful, heavily SPSA-co-tuned alpha-beta search and Syzygy tablebase support.
 
-> Triumviratus 5.0 is a **development version**. Its search is co-tuned and validated against the
-> 4.x line; an own-lineage NNUE network is in training. Default builds load the reference SFNNv13
-> network (see *Setup & Usage*).
+> Triumviratus 5.0 is a **development version**. Its search is co-tuned and SPRT-validated; an
+> own-lineage NNUE network is in training. Default builds load the reference SFNNv13 network
+> (see *Setup & Usage*).
 
 ## What's New in 5.0
 
@@ -21,7 +23,7 @@ Stockfish-faithful, heavily SPSA-co-tuned alpha-beta search and Syzygy tablebase
   LMR, reverse-futility / futility, razoring (quadratic), LMP, SEE pruning, capture-futility, singular /
   double / triple extensions, negative extensions, multi-cut, ProbCut, correction history (pawn / minor /
   major / continuation), multi-ply continuation history, and threat-aware move ordering. Search constants
-  are baked from a large SPSA co-tune (validated vs. the previous generation).
+  are baked from a large SPRT-validated SPSA co-tune.
 * **Parallel search:** Lazy SMP (shared TT, per-thread diversification).
 * **Endgames:** Syzygy tablebases via [Fathom](https://github.com/jdart1/Fathom) (WDL in search, DTZ at root).
 
@@ -87,6 +89,9 @@ implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 The classical search (PVS, pruning, reductions, Lazy SMP) and the engine glue are original work by
 Francesco Torsello.
+
+Special thanks to **Maurizio Platino** for his help with the SPSA search-parameter tuning and for
+generously contributing his hardware to the co-tuning effort.
 
 ## Development note
 
