@@ -1,0 +1,28 @@
+# Build outputs / artifacts — keep the backup source-only
+x64/
+Debug/
+Release/
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.user
+*.v8bak
+
+# NNUE nets (external data, large)
+*.nnue
+
+# PGO intermediates
+*.profraw
+*.profdata
+clang_pgo_profiles/
+clang_rt_lib/
+
+# misc build logs
+*.log
+*.Build.CppClean.log
+*.FileListAbsolute.txt

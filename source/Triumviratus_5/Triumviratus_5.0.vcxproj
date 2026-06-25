@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <!-- PGO: fase 1 - build strumentata -->
+    <ProjectConfiguration Include="ReleasePGI|x64">
+      <Configuration>ReleasePGI</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <!-- PGO: fase 3 - build ottimizzata sul profilo -->
+    <ProjectConfiguration Include="ReleasePGO|x64">
+      <Configuration>ReleasePGO</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Triumviratus_5.0.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="attacks.h" />
+    <ClInclude Include="defs.h" />
+    <ClInclude Include="evaluation.h" />
+    <ClInclude Include="sf_bridge.h" />
+    <ClInclude Include="io.h" />
+    <ClInclude Include="magic.h" />
+    <ClInclude Include="misc.h" />
+    <ClInclude Include="movegen.h" />
+    <ClInclude Include="perft.h" />
+    <ClInclude Include="presentation.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="search.h" />
+    <ClInclude Include="see.h" />
+    <ClInclude Include="threads.h" />
+    <ClInclude Include="tt.h" />
+    <ClInclude Include="uci.h" />
+    <ClInclude Include="syzygy.h" />
+    <ClInclude Include="fathom\tbprobe.h" />
+    <ClInclude Include="fathom\tbconfig.h" />
+    <ClInclude Include="fathom\stdendian.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="attacks.cpp" />
+    <ClCompile Include="init.cpp" />
+    <ClCompile Include="io.cpp" />
+    <ClCompile Include="magic.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="misc.cpp" />
+    <ClCompile Include="movegen.cpp" />
+    <ClCompile Include="perft.cpp" />
+    <ClCompile Include="presentation.cpp" />
+    <ClCompile Include="random.cpp" />
+    <ClCompile Include="see.cpp" />
+    <ClCompile Include="threads.cpp" />
+    <ClCompile Include="uci_mt.cpp" />
+    <ClCompile Include="zobrist.cpp" />
+    <ClCompile Include="sf_bridge.cpp" />
+    <!-- Vendored Stockfish-master SFNNv13 NNUE (FullThreats + HalfKAv2_hm, L1=1024).
+         Replaces the SFNNv10 + Bullet code (removed in M2). We compile only the subset
+         the NNUE eval needs: position_min.cpp provides Position::set_pieces (the heavy
+         master position.cpp / nnue_misc.cpp / evaluate.cpp pull movegen/uci closures and
+         are NOT compiled). ObjectFileName routes objects to a subdir so sfnnue_v13's
+         misc.cpp / attacks.cpp / bitboard.cpp do not clash with the engine's own. -->
+    <ClCompile Include="sfnnue_v13\position_min.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\bitboard.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\attacks.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\misc.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\memory.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\nnue\network.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\nnue\nnue_accumulator.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\nnue\features\full_threats.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\features\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="sfnnue_v13\nnue\features\half_ka_v2_hm.cpp">
+      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\features\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="syzygy.cpp">
+      <AdditionalIncludeDirectories>fathom;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="fathom\tbprobe.c">
+      <ObjectFileName>$(IntDir)fathom\</ObjectFileName>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
+      <AdditionalIncludeDirectories>fathom;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/experimental:c11atomics %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="nn-eba324f53044.nnue" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{05cd0a18-5996-4e10-950c-744bc9ee44e5}</ProjectGuid>
+    <RootNamespace>Triumviratus30</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <!-- PGO fase 1: strumentazione -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGI|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>PGInstrument</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <!-- PGO fase 3: ottimizzazione sul profilo -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGO|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>PGOptimization</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='ReleasePGI|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='ReleasePGO|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <TargetName>Triumviratus_5.0</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGI|x64'">
+    <TargetName>Triumviratus_pgo</TargetName>
+    <OutDir>$(SolutionDir)x64\Release\</OutDir>
+    <IntDir>$(SolutionDir)x64\ReleasePGI\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGO|x64'">
+    <TargetName>Triumviratus_pgo</TargetName>
+    <OutDir>$(SolutionDir)x64\Release\</OutDir>
+    <IntDir>$(SolutionDir)x64\ReleasePGI\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions512</EnableEnhancedInstructionSet>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- PGO fase 1: stesse ottimizzazioni di Release, linker in PGInstrument -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGI|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions512</EnableEnhancedInstructionSet>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <LinkTimeCodeGeneration>PGInstrument</LinkTimeCodeGeneration>
+      <ProfileGuidedDatabase>$(OutDir)$(TargetName).pgd</ProfileGuidedDatabase>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- PGO fase 3: stesse ottimizzazioni di Release, linker in PGOptimize -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGO|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions512</EnableEnhancedInstructionSet>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <LinkTimeCodeGeneration>PGOptimization</LinkTimeCodeGeneration>
+      <ProfileGuidedDatabase>$(OutDir)$(TargetName).pgd</ProfileGuidedDatabase>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Build con clang-cl (VS LLVM 19): MSBuild ... -p:PlatformToolset=ClangCL.
+       Flag per-feature di clang (MSVC li ignora: gruppo condizionato al toolset).
+       /arch:AVX512 di clang NON abilita VNNI/BMI2 -> li aggiungo qui per gli intrinsics. -->
+  <ItemDefinitionGroup Condition="'$(PlatformToolset)'=='ClangCL'">
+    <ClCompile>
+      <AdditionalOptions>-O3 -flto=thin $(ClangPgoFlags) -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni -mbmi2 -mavx2 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <!-- runtime di profiling clang (per -fprofile-generate/-use); lld-link cerca clang_rt.profile.lib.
+           Path RELATIVI: clang_rt_lib accanto al repo-root (lo crea build_pgo_clang.ps1, copia+rinomina la lib);
+           $(ClangProfileLibDir) = dir lib-clang di VS, passata dallo script (-p:ClangProfileLibDir=...). Niente path assoluti. -->
+      <AdditionalLibraryDirectories>$(MSBuildProjectDirectory)\..\clang_rt_lib;$(ClangProfileLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
