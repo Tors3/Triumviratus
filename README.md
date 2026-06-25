@@ -6,6 +6,10 @@
 
 **A strong UCI chess engine in C++** — NNUE evaluation · Stockfish-faithful search · Syzygy tablebases
 
+**by Francesco Torsello**
+
+<sub>in collaboration with Maurizio Platino</sub>
+
 </div>
 
 ---
