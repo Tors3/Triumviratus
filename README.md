@@ -16,8 +16,8 @@
 
 ## Triumviratus 5.0 · *in development*
 
-The current line: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with a
-Stockfish-faithful, SPSA-co-tuned search and multi-threaded **Lazy SMP**. An own-lineage network is in training
+The current line: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with an
+original, heavily **SPSA-co-tuned** alpha-beta search and multi-threaded **Lazy SMP**. An own-lineage network is in training
 — see [`NETWORKS.md`](NETWORKS.md) for how each shipped network was trained.
 
 | | |
