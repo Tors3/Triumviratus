@@ -4,7 +4,7 @@
 
 # Triumviratus
 
-**A strong UCI chess engine in C++** — NNUE evaluation · Stockfish-faithful search · Syzygy tablebases
+**A strong UCI chess engine in C++** — NNUE evaluation · SPSA-tuned alpha-beta search · Syzygy tablebases
 
 **by Francesco Torsello**
 
