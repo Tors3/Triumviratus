@@ -1,37 +1,28 @@
-# ===== Visual Studio / MSVC build output =====
+# Build outputs / artifacts — keep the backup source-only
 x64/
-Win32/
-[Dd]ebug/
-[Rr]elease/
-.vs/
+Debug/
+Release/
 *.obj
-*.pdb
-*.ipdb
-*.iobj
+*.o
 *.exe
+*.pdb
+*.ilk
 *.exp
 *.lib
-*.ilk
-*.idb
-*.tlog
+*.dll
+*.user
+*.v8bak
+
+# NNUE nets (external data, large)
+*.nnue
+
+# PGO intermediates
+*.profraw
+*.profdata
+clang_pgo_profiles/
+clang_rt_lib/
+
+# misc build logs
 *.log
-*.aps
-*.vcxproj.user
-
-# ===== Claude Code (local/personal settings) =====
-.claude/settings.local.json
-
-# ===== Unused NNUE net (kept local, not tracked) =====
-# 88MB SFNNv13 net, incompatible with the current probe lib; kept locally for a
-# possible future SFNNv13 attempt. Excluded to avoid bloating the repo.
-nn-5227780996d3.nnue
-
-# ===== Self-play data (policy-net training, Phase 1) =====
-# Per-process datasets generated during self-play; large/churny, regenerable.
-selfplay_data/
-triumviratus_dataset.txt*
-
-# ===== graphify =====
-# The code graph is fully regenerable from source (graphify update) and is
-# refreshed by the post-commit hook, so it is not tracked (avoids churn).
-graphify-out/
+*.Build.CppClean.log
+*.FileListAbsolute.txt

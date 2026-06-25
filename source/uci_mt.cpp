@@ -130,6 +130,7 @@ void reset_time_control()
     stoptime = 0;
     timeset = 0;
     stopped = 0;
+    g_node_limit = 0;
 }
 
 // parse UCI command "go"
@@ -162,6 +163,11 @@ void parse_go(char* command)
 
     if ((argument = strstr(command, "depth")))
         depth = atoi(argument + 6);
+
+    // "go nodes N": hard node budget (datagen). Stops the search at ~N nodes
+    // (per-node check in (q)search); independent of depth/time.
+    if ((argument = strstr(command, "nodes")))
+        g_node_limit = (U64) strtoull(argument + 6, nullptr, 10);
 
     // UCI option "Depth" > 0 forces a fixed-depth search (clock ignored), unless
     // the GUI sent an explicit "go depth N" (which takes precedence).
@@ -284,7 +290,6 @@ void uci_loop()
             printf("option name FastRepScan type check default true\n");       // P2.2 repetition scan a finestra
             printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
             printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
-            printf("option name UseSmallNet type check default false\n");       // 4.2: small=mini-rubicon (own) OFF di default (A/B: small ON -88 vs 4.1, OFF -41); big-only piu' forte
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
             printf("option name QSChecks type check default true\n");          // P1.3 quiet check alla prima ply di qsearch
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
@@ -297,7 +302,8 @@ void uci_loop()
             printf("option name EvalCacheUndamp type check default true\n");  // N1: eval-cache senza fifty in chiave (valore undamped)
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
-            printf("option name EvalFile type string default nn-rubicon-v1.nnue\n");  // 4.2 OWN-NET: default = our rubicon net (loaded from disk; no net embedded in the binary)
+            printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // SFNNv13 net (runtime-selezionabile)
+            printf("option name EvalScale type spin default 100 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (SFNNv13)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)
@@ -323,6 +329,8 @@ void uci_loop()
             printf("option name PawnHistoryWeight type spin default 131 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
             printf("option name ThreatScale type spin default 3916 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
+            printf("option name ThreatHist type check default false\n");                  // 5.1: history quiet condizionata dalle minacce (from/to attaccata)
+            printf("option name ThreatHistWeight type spin default 100 min 0 max 400\n"); // /100 del contributo threat-history; co-tunabile
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13305 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
@@ -342,7 +350,7 @@ void uci_loop()
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
             printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
             printf("option name MultiCut type check default true\n");
-            printf("option name TTPv type check default false\n");
+            printf("option name TTPvAmount type spin default 0 min 0 max 2\n");   // ex-PV LMR reduction in ply (0=off); co-tunable
             printf("option name NMPEvalScale type check default false\n");
             printf("option name RFPDepth8 type check default false\n");
             printf("option name RazorDepth4 type check default false\n");
@@ -367,7 +375,7 @@ void uci_loop()
             printf("option name LMRStatScoreOffset type spin default 472 min -4000 max 12000\n");     // [4.1: tenuto 4.0 - parte del bloat LMR revertito]
             printf("option name LMRContHistDiv type spin default 6848 min 1000 max 40000\n");       // [3.7] ContHistLMR: divisore conthist
             printf("option name CutNodeLMRExtra type spin default 1 min 0 max 3\n");                 // CutNodeLMR: ply extra
-            printf("option name NMPBase type spin default 5 min 1 max 6\n");
+            printf("option name NMPBase type spin default 5 min 1 max 10\n");   // max alzato 6->10: SF usa base 7 (co-tune toward SF)
             printf("option name NMPDiv type spin default 2 min 2 max 8\n");
             printf("option name LMREvalMargin type spin default 175 min 0 max 400\n");
             printf("option name LMRTTDepth type spin default 1 min 0 max 3\n");
@@ -395,13 +403,39 @@ void uci_loop()
             printf("option name HistPruneMargin type spin default 1481 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 168 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 28 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
+            // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
+            printf("option name CaptureFutility type spin default 0 min 0 max 1\n");
+            printf("option name CapFutBase type spin default 200 min 0 max 500\n");
+            printf("option name CapFutMult type spin default 125 min 0 max 400\n");
+            printf("option name CapFutChist type spin default 131 min 0 max 400\n");
+            printf("option name CapFutDepth type spin default 7 min 1 max 12\n");
+            // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
+            printf("option name OppWorsening type spin default 0 min 0 max 1\n");
+            printf("option name OppWorseMargin type spin default 16 min 0 max 100\n");
+            printf("option name TripleExt type spin default 0 min 0 max 1\n");
+            printf("option name SingularTripleMargin type spin default 100 min 0 max 400\n");
+            printf("option name NegExtTT type spin default 1 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
+            printf("option name NegExtCut type spin default 0 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
+            printf("option name CorrValMargin type spin default 0 min 0 max 1\n");
+            printf("option name CorrValRFP type spin default 32 min 0 max 256\n");
+            printf("option name CorrValExt type spin default 0 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
+            printf("option name CorrValFut type spin default 64 min 0 max 400\n");   // peso fold futility
+            printf("option name CorrValSee type spin default 32 min 0 max 400\n");   // peso fold SEE
+            printf("option name CorrValLmr type spin default 50 min 0 max 400\n");   // peso fold LMR
+            printf("option name MalusScaled type spin default 0 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
+            printf("option name MalusScaleCoef type spin default 45 min 0 max 200\n");
+            printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
+            printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
+            printf("option name DoShallowerMargin type spin default 9 min 0 max 200\n");
+            printf("option name BadNoisy type spin default 0 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
+            printf("option name BadNoisyCount type spin default 6 min 1 max 32\n");
+            printf("option name LMREnrich type spin default 0 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
+            printf("option name LMREnrichAmount type spin default 1 min 0 max 4\n");
+            printf("option name RazorQuadCoef type spin default 0 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
+            printf("option name RFPDepth type spin default 0 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
+            printf("option name RazorDepth type spin default 0 min 0 max 18\n");    // 0=legacy cap; widen toward SF (uncapped)
             printf("option name FutilityDepth type spin default 10 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 4 min 3 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'
-            printf("option name SmallNetThreshold type spin default 1043 min 300 max 2000\n"); // RIPRISTINATO 782->1050 (+13 Elo, A/B dedicato: higher=more Elo, 1050 picco plateau)
-            printf("option name EvalOptimism type spin default 415 min 200 max 1200\n");        // [4.2] eval-SPSA rubicon (era 345); storico 600/915
-            printf("option name EvalPawnScale type spin default 4 min 0 max 40\n");
-            printf("option name EvalComplexityDiv type spin default 56134 min 8192 max 65536\n");   // [4.2] eval-SPSA rubicon (era 58504)
-            printf("option name EvalBlendDelta type spin default 10 min 0 max 96\n");               // [4.2] eval-SPSA rubicon (era 12)
             printf("option name TMMovesToGo type spin default 23 min 12 max 60\n");        // time mgmt: quota base = remaining/questo
             printf("option name TMIncFrac type spin default 75 min 0 max 100\n");           // % incremento
             printf("option name TMMaxMult type spin default 582 min 150 max 800\n");        // burst maximum = optimum*questo/100
@@ -425,6 +459,24 @@ void uci_loop()
         else if (strncmp(input, "accstats", 8) == 0)
         {
             sf_acc_stats();
+        }
+
+        // M3: incremental NNUE eval toggle (default OFF = M2 full-refresh). The
+        // search threads must be idle + re-set; safe to send before a search/bench.
+        else if (strncmp(input, "incremental ", 12) == 0)
+        {
+            int on = strncmp(input + 12, "on", 2) == 0;
+            sf_set_incremental(on);
+            printf("incremental %s\n", on ? "on" : "off");
+            fflush(stdout);
+        }
+        // M3 DEBUG: cross-check incremental == full-refresh at every leaf eval.
+        else if (strncmp(input, "nnueverify ", 11) == 0)
+        {
+            int on = strncmp(input + 11, "on", 2) == 0;
+            sf_set_verify(on);
+            printf("nnueverify %s\n", on ? "on" : "off");
+            fflush(stdout);
         }
 
         // "bench [depth]" — suite fissa di 8 posizioni a profondita' fissa
@@ -488,8 +540,7 @@ void uci_loop()
         }
 
         // DIAGNOSTIC: "eval" -> static NNUE eval of the current position (cp,
-        // side-to-move relative). Cross-checks the SFNNv9/3072 port against the
-        // official Stockfish binary on identical FENs. No search => byte-identical.
+        // side-to-move relative), no search => byte-identical for cross-checks.
         else if (strncmp(input, "eval", 4) == 0)
         {
             printf("eval %d\n", debug_eval_position());
@@ -577,23 +628,35 @@ void uci_loop()
             init_hash_table(mb);
         }
 
-        // UCI command: "setoption name EvalFile value <path>" -> reload the big net.
-        // Default at startup is nn-rubicon-v1.nnue (fallback nn-b1a57edbea57.nnue).
+        // UCI command: "setoption name EvalFile value <path>" -> reload the SFNNv13
+        // network at runtime. Default at startup is nn-71d6d32cb962.nnue.
         else if (strncmp(input, "setoption name EvalFile value ", 30) == 0)
         {
             // Swapping the net under a running search would read half-loaded
             // weights; stop first (mirrors the Hash/Threads handlers). The next
-            // search root clears the finny cache + full-refreshes, so it's clean.
+            // search root full-refreshes from the new net, so it's clean.
             stop_search_threads();
             wait_for_search_done();
-            const char* val = input + 30;
+            char val[1024];
+            strncpy(val, input + 30, sizeof(val) - 1);
+            val[sizeof(val) - 1] = '\0';
+            char* e = val + strlen(val);              // trim stray CR/space/newline
+            while (e > val && (e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\n')) *--e = '\0';
             std::string resolved = resolve_net_path(val);
             if (resolved.empty())
                 printf("info string EvalFile: '%s' not found (kept current net)\n", val);
             else if (sf_reload_big(resolved.c_str()))
                 printf("info string EvalFile: loaded %s\n", resolved.c_str());
             else
-                printf("info string EvalFile: failed to open %s (kept current net)\n", resolved.c_str());
+                printf("info string EvalFile: failed to load %s (kept current net)\n", resolved.c_str());
+            fflush(stdout);
+        }
+
+        // UCI command: "setoption name EvalScale value N" -> % scale of the final eval
+        // (re-calibrate the SFNNv13 cp scale to the search margins). Diagnostic sweep.
+        else if (strncmp(input, "setoption name EvalScale value ", 31) == 0)
+        {
+            sf_set_eval_scale(atoi(input + 31));
             fflush(stdout);
         }
 
@@ -670,12 +733,6 @@ void uci_loop()
         {
             const char* v = input + 34;
             set_tt_static_eval(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
-        else if (strncmp(input, "setoption name UseSmallNet value ", 33) == 0)
-        {
-            extern bool g_use_small_net;   // defined in sfnnue/evaluate.cpp
-            const char* v = input + 33;
-            g_use_small_net = (strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name FastRepScan value ", 33) == 0)
         {
@@ -803,11 +860,7 @@ void uci_loop()
             const char* v = input + 30;
             set_multicut(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
-        else if (strncmp(input, "setoption name TTPv value ", 26) == 0)
-        {
-            const char* v = input + 26;
-            set_ttpv(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
-        }
+        // "setoption name TTPvAmount value N" -> generic spin handler (set_search_param).
         else if (strncmp(input, "setoption name NMPEvalScale value ", 34) == 0)
         {
             const char* v = input + 34;
@@ -964,6 +1017,12 @@ void uci_loop()
         {
             const char* v = input + 36;
             set_threat_ordering(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // ThreatHist (5.1): A/B toggle. Lo spin "ThreatHistWeight" cade nel gestore generico.
+        else if (strncmp(input, "setoption name ThreatHist value ", 32) == 0)
+        {
+            const char* v = input + 32;
+            set_threat_hist(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         // CheckOrdering (#3 SF): A/B toggle. Lo spin "CheckBonus" cade nel gestore generico.
         else if (strncmp(input, "setoption name CheckOrdering value ", 35) == 0)

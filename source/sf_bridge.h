@@ -2,49 +2,73 @@
 #ifndef SF_BRIDGE_H
 #define SF_BRIDGE_H
 
-// Thin bridge to the standalone Stockfish HalfKAv2_hm NNUE probe (in sfnnue/).
-// Keeps all Stockfish headers/types out of the rest of the engine so there is
-// no clash with Triumviratus's global macros/enums.
+// Thin bridge to the vendored Stockfish-master SFNNv13 NNUE (in sfnnue_v13/):
+// ThreatFeatureSet=FullThreats + PSQFeatureSet=HalfKAv2_hm, L1=1024, L2/L3, 8
+// LayerStacks. Keeps all Stockfish headers/types/macros out of the rest of the
+// engine so there is no clash with Triumviratus's own globals.
+//
+// M2 = full-refresh integration: every eval rebuilds the SF Position from the
+// engine's bitboards and runs Network::evaluate from scratch (correctness first).
+// M3 will reuse the master AccumulatorStack/DirtyPiece/DirtyThreats for the
+// incremental path. The Bullet own-lineage net and the legacy SFNNv10 path were
+// removed in M2 (see notes/TRIUM5_DEV_LOG.md).
 
-// Load the two networks (big + small). Call once at startup.
-void sf_init(const char* big_net, const char* small_net);
+// Initialize the shared substrate tables: bitboards + slider-magic attacks.
+// (Attacks::init() is SEPARATE from Bitboards::init() in the master.)
+void sf_init_tables(void);
 
-// Reload ONLY the big net at runtime (UCI option "EvalFile"). The small net keeps
-// the path given to sf_init(). Safe to call when no search is running: the next
-// search root clears the finny cache and does a full refresh, so no stale state.
-// Returns 1 on success (file opened + loaded), 0 if the path could not be opened.
-int sf_reload_big(const char* big_net_path);
+// Load the SFNNv13 network from a file path. Returns 1 on success (file opened +
+// arch-hash verified), 0 otherwise. Must be called once at startup before any
+// sf_pos_create() (the per-handle accumulator caches are built from the net).
+int sf_load_net(const char* net_path);
 
-// Toggle the per-thread accumulator refresh cache ("finny tables"). on != 0
-// enables it. Default OFF => byte-identical to the pre-finny engine. Pure NPS
-// optimisation: the evaluation value is bit-identical with it on or off.
+// Reload the network at runtime (UCI option "EvalFile"). Safe to call when no
+// search is running. Returns 1 on success, 0 if the path could not be loaded.
+int sf_reload_big(const char* net_path);
+
+// Toggle the per-thread accumulator refresh cache ("finny tables"). No-op in the
+// M2 full-refresh path (the master always uses the cache to accelerate refresh;
+// the eval value is identical regardless). Kept for API stability.
 void sf_set_finny(int on);
 
-// DIAGNOSTIC: print accumulator refresh vs incremental counts (and refresh %)
-// since the last call, then reset. Triggered by the UCI command "accstats".
+// DIAGNOSTIC ("accstats" UCI command). No-op stub in M2 (the v13 incremental
+// refresh counters arrive with M3).
 void sf_acc_stats(void);
 
-// Evaluate a position from scratch with the HalfKAv2_hm net (full refresh).
+// M3 incremental eval. on != 0 uses the master AccumulatorStack chain (DirtyPiece +
+// DirtyThreats per ply) instead of a full refresh per node. Default OFF (the
+// validated M2 full-refresh) until the verify oracle is clean. The handle MUST be
+// re-set (sf_pos_set) after toggling so its board/accumulator chain is consistent.
+void sf_set_incremental(int on);
+
+// DEBUG: cross-check incremental == full-refresh at every leaf eval (prints the
+// first mismatches). Halves NPS; single-thread recommended. Default OFF.
+void sf_set_verify(int on);
+
+// Eval output scale in PERCENT (default 100 = x1.0). The SFNNv13 cp formula lands on
+// a different scale than the engine's SPSA-tuned (for SFNNv10) search margins expect;
+// this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.
+void sf_set_eval_scale(int pct);
+
+// Evaluate a position from scratch (full refresh).
 //   side_white : 1 if white is to move, 0 if black
 //   pieces[i]  : Stockfish piece code (W_PAWN=1..W_KING=6, B_PAWN=9..B_KING=14)
 //   squares[i] : Stockfish square (a1=0, b1=1, ... h8=63)
 //   count      : number of entries in pieces[]/squares[]
 //   rule50     : halfmove (fifty-move) clock
-// Returns the evaluation in centipawns, relative to the side to move.
-// This is the original stateless path; kept as a fallback / verification oracle.
+// Returns the evaluation (stm-relative, Stockfish internal units == the engine's
+// eval scale). Stateless oracle for the "eval" command + the NNUE_VERIFY check.
 int sf_eval(int side_white, const int* pieces, const int* squares, int count, int rule50);
 
 // ---------------------------------------------------------------------------
-// Incremental NNUE: a per-thread Stockfish Position mirror with a StateInfo
-// stack, so the expensive accumulator is updated only for the pieces that
-// change on each move (reusing Stockfish's own incremental machinery, including
-// the HalfKAv2_hm king-bucket refresh). All squares/pieces are in Stockfish
-// encoding (translate with sf_piece_code[]/nnue_squares[] before calling).
+// Per-thread incremental position handle. In M2 it only tracks side-to-move and
+// the fifty-move clock across make/undo (sf_pos_eval receives the board via the
+// engine's own bitboards and rebuilds the SF Position each call). M3 will hang
+// the real AccumulatorStack chain off the SfMove dirty lists.
 // ---------------------------------------------------------------------------
 
-// Description of a single move in Stockfish encoding. The moving piece must be
-// movedPiece (it becomes dirtyPiece[0], which Stockfish uses to detect a king
-// move that forces a per-perspective refresh).
+// Description of a single move in Stockfish encoding (the moving piece must be
+// movedPiece). M2 reads only rule50; the rest is populated by the engine for M3.
 struct SfMove {
     int movedPiece;     // SF code of the moving piece
     int from;           // SF square the piece leaves
@@ -63,22 +87,20 @@ struct SfMove {
 void* sf_pos_create(void);
 void  sf_pos_destroy(void* handle);
 
-// (Re)initialise the mirror from a full piece list (full refresh, resets the
-// StateInfo stack to the root). Call at the start of a search from the root.
+// (Re)initialise the handle for a search from the root: set side-to-move + the
+// fifty-move clock. Call at the start of a search from the root.
 void  sf_pos_set(void* handle, int side_white, const int* pieces,
                  const int* squares, int count, int rule50);
 
-// Apply / retract a move on the mirror, keeping the accumulator chain in sync.
-// sf_pos_undo retracts the most recent move OR null move.
+// Apply / retract a move on the handle (track stm + rule50 for sf_pos_eval).
 void  sf_pos_do(void* handle, const struct SfMove* m);
 void  sf_pos_do_null(void* handle, int rule50);
 void  sf_pos_undo(void* handle);
 
-// Evaluate the current mirror position incrementally (centipawns, stm-relative).
+// Evaluate the current position (centipawns / internal units, stm-relative).
 // bb / occ are the ENGINE's own bitboards (bb[12] in P,N,B,R,Q,K,p,n,b,r,q,k
-// order; occ[3] = white,black,both) in the engine's a8=0..h1=63 square layout.
-// They are used only in SINGLE-BOARD mode to reconstruct the SF board the NNUE
-// reads; in dual-board mode they are ignored (may be nullptr).
+// order; occ[3] = white,black,both) in the engine's a8=0..h1=63 layout. They are
+// vflip'd + remapped into the SF board the NNUE reads.
 int   sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ);
 
 #endif // SF_BRIDGE_H

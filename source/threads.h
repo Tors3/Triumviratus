@@ -50,7 +50,15 @@ struct ThreadData {
     // ply index can transiently reach max_ply. Without the slack that is an OOB
     // write that aliases pv_table[0][0] -> wild loop bound -> access violation.
     int killer_moves[2][max_ply + 8];
-    int history_moves[12][64];
+    // ThreatHist (UCI "ThreatHist", default OFF) — REPLACE: la main quiet history E' threat-indexed.
+    // Primo indice = threat-bucket = from_tier*3 + to_tier, dove tier(casa) = 0 safe / 1 attaccata da
+    // pawn-o-minore / 2 attaccata da rook+ (cheapest-attacker, VALUE-AWARE, usa i nostri tier
+    // threat_by_minor/threat_all). Bucket 0 quando il toggle e' OFF -> byte-identico alla vecchia [12][64].
+    // Schema nostro (piece-to + tier d'attaccante, piu' granulare del binario from/to di SF/Reckless).
+    int history_moves[9][12][64];
+    // Threat-bucket della mossa ENTRATA in ogni ply (calcolato nel padre, al make): serve a seo /
+    // prior-bonus che aggiornano la history della mossa-precedente nel contesto-minacce del padre.
+    int hbucket_stack[max_ply + 8] = {0};
     // Counter-move heuristic: counter_moves[prev_piece][prev_to] = the quiet
     // reply that most recently caused a beta cutoff after that previous move.
     int counter_moves[12][64];
@@ -140,6 +148,7 @@ struct ThreadData {
     U64 threat_by_pawn  = 0;   // squares attacked by enemy pawns
     U64 threat_by_minor = 0;   // + enemy knights/bishops
     U64 threat_by_rook  = 0;   // + enemy rooks
+    U64 threat_all      = 0;   // ALL enemy attacks (P..K) — ThreatHist from/to-threatened bits
 
     // Check-ordering cache (CheckOrdering, default OFF). check_sq[piece type] = squares
     // from which a piece of that type gives a DIRECT check to the enemy king. Computed
@@ -306,9 +315,9 @@ extern void set_diverse_smp(bool enabled);
 // (TripleExt −75 / LMREnrich −25 / DeeperShallower: morti, RIMOSSI 2026-06-11.)
 extern void set_multicut(bool enabled);       // BAKED on: conservative singular multi-cut
 
-// ttPv (UCI "TTPv") — bit PV nella TT (bit 63): i nodi non-PV ricordati ex-PV vengono
-// ridotti meno in LMR. Default off (behaviour-preserving = bit 0 + LMR invariata).
-extern void set_ttpv(bool enabled);
+// ttPv (UCI spin "TTPvAmount", 0..2) — bit PV nella TT (bit 63): i nodi non-PV ricordati
+// ex-PV vengono ridotti di `amount` ply in meno in LMR. 0=off (behaviour-preserving).
+// Wired via set_search_param (generic spin handler), niente setter dedicato.
 
 // Candidati "notte" (2026-06-04) — tutti default OFF = byte-identico.
 extern void set_nmp_eval_scale(bool enabled);  // NMPEvalScale: R null-move += min((eval-beta)/div,3)
@@ -362,6 +371,7 @@ extern void set_statscore_lmr(bool enabled);  // butterfly history -> riduzione 
 extern void set_conthist_lmr(bool enabled);   // conthist 1/2/4 ply -> riduzione continua nella LMR
 extern void set_cutnode_lmr(bool enabled);    // riduzione extra sui cut-node
 extern void set_threat_ordering(bool enabled); // ThreatOrdering: bonus/malus quiet per pezzo minacciato da uno di valore inferiore (SF-style)
+extern void set_threat_hist(bool enabled);     // ThreatHist (5.1): history quiet condizionata dalle minacce (from/to attaccata)
 extern void set_check_ordering(bool enabled);  // CheckOrdering: bonus quiet che danno scacco diretto, filtrati SEE>=-75 (SF-style)
 extern void set_conthist36(bool enabled);      // ContHist36: aggiunge conthist 3-ply e 6-ply all'ordering quiet (SF #4)
 extern void set_prior_bonus(bool enabled);     // PriorBonus (V2): su fail-low, bonus alla mossa precedente (conthist/main + capture-hist se cattura)

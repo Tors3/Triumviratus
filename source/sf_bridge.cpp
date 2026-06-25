@@ -1,35 +1,57 @@
-// Bridge implementation: forwards to the standalone Stockfish NNUE probe.
-// This is the ONLY translation unit (besides the sfnnue/ sources) that sees
-// Stockfish headers, so the rest of the engine stays isolated from them.
+// Triumviratus 5.0 NNUE bridge — routes the engine's eval through the VENDORED
+// Stockfish-master SFNNv13 network code (sfnnue_v13/): ThreatFeatureSet=FullThreats
+// + PSQFeatureSet=HalfKAv2_hm, L1=1024, 8 LayerStacks. This is Stockfish's own
+// ultramodern NNUE machinery adapted into our isolated Stockfish:: namespace.
 //
-// Thread-safety: each search thread owns its own incremental handle (its own
-// Position mirror + StateInfo stack). The networks are immutable and only read,
-// so concurrent eval calls are safe without locking. The original stateless
-// sf_eval() builds a fresh local Position + thread_local scratch per call.
+// M2 drive model (full refresh): each search thread owns an opaque handle holding
+// an SF Position + a per-thread AccumulatorStack + AccumulatorCaches. The handle
+// tracks only side-to-move and the fifty-move clock across make/undo; the board
+// itself is rebuilt from the engine's bitboards once per evaluate() in sf_pos_eval
+// (vflip + piece remap -> Position::set_pieces), then Network::evaluate runs a
+// full refresh and we apply Stockfish's cp scaling inline. The bullet own-lineage
+// net and the legacy SFNNv10 path were removed here in M2; M3 adds the incremental
+// AccumulatorStack chain (DirtyPiece/DirtyThreats) for NPS.
+//
+// Square conventions: the engine uses a8=0..h1=63 (BBC); SF uses a1=0..h8=63. A
+// per-rank byteswap (vflip) of an engine bitboard yields the SF-layout bitboard.
 
 #include "sf_bridge.h"
-#include <string>
-#include <fstream>
-#include "sfnnue/probe.h"
-#include "sfnnue/position.h"
-#include "sfnnue/evaluate.h"
-#include "sfnnue/types.h"
-#include "sfnnue/nnue/nnue_accumulator.h"
 
-#include <vector>
-#include <cassert>
-#include <cstdio>
+#include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <vector>
 #if defined(_MSC_VER)
-    #include <cstdlib>   // _byteswap_uint64
+    #include <intrin.h>   // _byteswap_uint64, _BitScanForward64
 #endif
 
-using namespace Stockfish;
+#include "sfnnue_v13/bitboard.h"
+#include "sfnnue_v13/position.h"
+#include "sfnnue_v13/types.h"
+#include "sfnnue_v13/nnue/network.h"
+#include "sfnnue_v13/nnue/nnue_accumulator.h"
+#include "sfnnue_v13/nnue/nnue_misc.h"   // Eval::NNUE::EvalFile
 
-// Vertical flip of a bitboard (swap the 8 rank-bytes). The engine uses a8=0..
-// h1=63 (BBC layout) while Stockfish uses a1=0..h8=63, and nnue_squares[] maps
-// one to the other as sq ^ 56 == a per-rank reversal == byteswap. So an engine
-// bitboard becomes the equivalent Stockfish bitboard via a single byteswap.
+using namespace Stockfish;
+using Stockfish::Eval::NNUE::Network;
+using Stockfish::Eval::NNUE::AccumulatorStack;
+using Stockfish::Eval::NNUE::AccumulatorCaches;
+
+// ---------------------------------------------------------------------------
+// The single immutable network, loaded once at startup (sf_load_net) and
+// optionally swapped at runtime (sf_reload_big). ~90 MB of weights -> heap.
+// AccumulatorCaches are built per handle FROM this net, so it must be loaded
+// before any sf_pos_create().
+// ---------------------------------------------------------------------------
+static std::unique_ptr<Network> g_net;
+
+// Vertical flip of a bitboard (engine a8=0 <-> SF a1=0 == per-rank byteswap).
 static inline std::uint64_t vflip(std::uint64_t b) {
 #if defined(_MSC_VER)
     return _byteswap_uint64(b);
@@ -38,240 +60,362 @@ static inline std::uint64_t vflip(std::uint64_t b) {
 #endif
 }
 
-// DIAGNOSTIC (finny-tables analysis): print refresh vs incremental counts and
-// the refresh fraction accumulated since the last call, then reset. If the
-// refresh fraction is small, the finny cache cannot speed up the engine.
-void sf_acc_stats(void) {
-    unsigned long long r   = Stockfish::Eval::NNUE::g_dbg_refresh;
-    unsigned long long inc = Stockfish::Eval::NNUE::g_dbg_incremental;
-    unsigned long long tot = r + inc;
-    double             pct = tot ? (100.0 * (double) r / (double) tot) : 0.0;
-    printf("info string AccStats refresh=%llu incremental=%llu total=%llu refresh_pct=%.3f%%\n",
-           r, inc, tot, pct);
-    fflush(stdout);
-    Stockfish::Eval::NNUE::g_dbg_refresh     = 0;
-    Stockfish::Eval::NNUE::g_dbg_incremental = 0;
+static inline int ctz64(std::uint64_t b) {
+#if defined(_MSC_VER)
+    unsigned long s;
+    _BitScanForward64(&s, b);
+    return int(s);
+#else
+    return __builtin_ctzll(b);
+#endif
 }
 
-// FinnyTables (accumulator refresh cache) toggle. ON => each thread's cache
-// turns a full refresh into a cheap piece diff. OFF => rebuild from biases
-// (byte-identical to the pre-finny engine). Pure NPS lever; eval bit-identical
-// either way, validated with an interleaved A/B NPS test (not SPRT).
-// BAKED ON (2026-06-05): +6.9% NPS median (6/6 round positivi +4..+14%) +
-// node-identity verificata (startpos d19 ON==OFF = 911516 nodi). Toggle tenuto A/B.
-static bool g_finny = true;
-void        sf_set_finny(int on) { g_finny = on != 0; }
+// engine bb[] index -> SF piece code.
+static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
+                            B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING};
 
-// SINGLE-BOARD design (consolidated 2026-06-07, +2.9% NPS, eval BIT-IDENTICAL):
-// the SF Position board is NOT maintained piece-by-piece on do/undo; only the
-// StateInfo/dirtyPiece chain is kept, and the few board bitboards the NNUE reads
-// are reconstructed from the engine's own bitboards once per evaluate() (see
-// sf_pos_eval). The old dual-board path and its toggle were removed after the
-// node-identity validation.
+// Eval output scale (percent, default 100 = x1.0). The SFNNv13 cp formula lands on
+// a DIFFERENT scale than the SFNNv10 eval-wrapper the engine's search margins were
+// SPSA-tuned for (pawn ~56 vs ~332) -> the pruning thresholds are mis-sized. This
+// multiplier re-aligns the eval with the existing margins; sweep it at fixed depth.
+static int g_eval_scale_pct = 100;
 
-// Remember the small-net path so a runtime big-net reload (UCI "EvalFile") can
-// re-init with the same small net (Probe::init takes both).
-static std::string g_small_net_path;
+// Stockfish's eval cp scaling (evaluate.cpp), inlined here with optimism=0 (the
+// engine's static eval is unbiased; optimism is a search-only blend in SF). psqt
+// and positional are the stm-relative raw NNUE outputs of Network::evaluate.
+// material is computed from piece counts (set_pieces zeroes StateInfo, so we do
+// NOT use pos.non_pawn_material()). Returns stm-relative internal-unit value.
+static inline int sf_scale(const Position& pos, Value psqt, Value positional, int rule50) {
+    int nnue           = (125 * int(psqt) + 131 * int(positional)) / 128;
+    int nnueComplexity = std::abs(int(psqt) - int(positional));
+    nnue -= nnue * nnueComplexity / 18236;
 
-void sf_init(const char* big_net, const char* small_net) {
-    g_small_net_path = small_net ? small_net : "";
-    Stockfish::Probe::init(big_net, small_net);
+    int npm = int(KnightValue) * pos.count<KNIGHT>() + int(BishopValue) * pos.count<BISHOP>()
+            + int(RookValue) * pos.count<ROOK>() + int(QueenValue) * pos.count<QUEEN>();
+    int material = 534 * pos.count<PAWN>() + npm;
+
+    int v = int(std::int64_t(nnue) * (77871 + material) / 77871);
+    v -= v * rule50 / 199;
+    if (g_eval_scale_pct != 100)
+        v = int(std::int64_t(v) * g_eval_scale_pct / 100);  // re-calibrate to the search margins
+    v = std::clamp(v, int(VALUE_TB_LOSS_IN_MAX_PLY) + 1, int(VALUE_TB_WIN_IN_MAX_PLY) - 1);
+    return v;
 }
 
-int sf_reload_big(const char* big_net_path) {
-    if (!big_net_path || !*big_net_path) return 0;
+// ---------------------------------------------------------------------------
+// Net loading
+// ---------------------------------------------------------------------------
+static int load_net_impl(const char* path) {
+    if (!path || !*path)
+        return 0;
     {
-        std::ifstream f(big_net_path, std::ios::binary);
-        if (!f.good()) return 0;   // don't blow away the loaded net for a bad path
+        std::ifstream f(path, std::ios::binary);
+        if (!f.good())
+            return 0;
     }
-    Stockfish::Probe::init(big_net_path, g_small_net_path.c_str());
+    Eval::NNUE::EvalFile ef{};
+    auto net = std::make_unique<Network>(ef);
+    net->load(".", path);  // dirs {"<internal>","",rootDir}: "" opens the path as given
+    // verify() invokes the callback with a one-line SUCCESS info string when the net
+    // loaded, or with a multi-line "ERROR: ..." block followed by exit(EXIT_FAILURE)
+    // when it did not. So if verify() returns at all, the load succeeded; we just echo
+    // the info line for visibility (do NOT treat the callback as a failure signal).
+    net->verify(path, [](std::string_view s) {
+        std::printf("info string %.*s\n", int(s.size()), s.data());
+        std::fflush(stdout);
+    });
+    g_net = std::move(net);
     return 1;
 }
 
-int sf_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
-    return Stockfish::Probe::eval(pieces, squares, count, side_white != 0, rule50);
+int sf_load_net(const char* net_path) { return load_net_impl(net_path); }
+int sf_reload_big(const char* net_path) { return load_net_impl(net_path); }
+
+void sf_init_tables(void) {
+    Bitboards::init();
+    Attacks::init();  // slider magics live in attacks.cpp (separate from Bitboards::init)
 }
 
+// No-ops kept for API stability (both paths always use the refresh cache).
+void sf_set_finny(int) {}
+void sf_acc_stats(void) {}
+
+// M3 toggles. Incremental is now the DEFAULT: validated bit-exact vs full-refresh
+// (zero verify mismatches + IDENTICAL bench node counts at depth 12/14 across all 8
+// positions, exercising captures/promotions/e.p./castling) at +16% NPS. Toggle OFF
+// ("incremental off") to fall back to the M2 full-refresh A/B base.
+static bool g_incremental = true;
+static bool g_verify      = false;
+void        sf_set_incremental(int on) { g_incremental = on != 0; }
+void        sf_set_verify(int on) { g_verify = on != 0; }
+void        sf_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
+
 // ---------------------------------------------------------------------------
-// Incremental per-thread mirror
+// Per-thread handle
 // ---------------------------------------------------------------------------
 namespace {
 
-// Max search ply we mirror. Triumviratus caps the main search at max_ply (64)
-// and qsearch stays within ~max_ply+8, so 256 is a generous safety margin.
-constexpr int SF_STACK = 256;
+constexpr int SF_STACK = 1024;  // > MAX_PLY(246) + qsearch/extensions headroom
 
 struct SfPos {
-    Position              pos;
-    std::vector<StateInfo> st;   // pre-sized => element pointers stay stable
-    std::vector<SfMove>    undo;  // how to reverse each pushed move
-    std::vector<bool>      isNull;
-    int                    ply;
-    // Per-thread "finny tables" cache (~0.7 MB). Heap-allocated with the SfPos
-    // (handles are created with new), never shared between threads.
-    Stockfish::Eval::NNUE::AccumulatorCaches caches;
+    Position                           pos;
+    StateInfo                          si;
+    std::unique_ptr<AccumulatorStack>  accStack;
+    std::unique_ptr<AccumulatorCaches> caches;
 
-    SfPos() : st(SF_STACK), undo(SF_STACK), isNull(SF_STACK, false), ply(0) {
-        // Position non inizializza pos.st nel suo ctor: se un do/rescue gira PRIMA
-        // di sf_pos_set, begin_state legge prev=pos.st garbage -> SEGV (su Linux;
-        // su Windows il garbage era benigno). Puntiamo a st[0] (il vector e'
-        // value-initialized = zero) cosi' la lettura e' sempre valida.
-        pos.st = &st[0];
+    // Tracked across make/undo (sf_pos_eval gets the board but not stm/rule50).
+    Color  stm;
+    int    rule50;
+    int    ply;
+    Color  stmStack[SF_STACK];
+    int    r50Stack[SF_STACK];
+    // Incremental bookkeeping: the move applied at each ply (for board undo) and
+    // whether that ply pushed an accumulator state (null moves do not — the board
+    // is unchanged, so the accumulator chain stays at the same depth).
+    SfMove mvStack[SF_STACK];
+    bool   pushedAcc[SF_STACK];
+
+    SfPos() : stm(WHITE), rule50(0), ply(0) {
+        accStack = std::make_unique<AccumulatorStack>();
+        caches   = std::make_unique<AccumulatorCaches>(*g_net);
     }
 };
 
 inline Color flip(Color c) { return c == WHITE ? BLACK : WHITE; }
 
-// Copy the per-move scalar state and mark both accumulators dirty.
-inline void begin_state(StateInfo* ns, StateInfo* prev, int rule50) {
-    ns->previous               = prev;
-    ns->rule50                 = rule50;
-    ns->nonPawnMaterial[WHITE] = prev->nonPawnMaterial[WHITE];
-    ns->nonPawnMaterial[BLACK] = prev->nonPawnMaterial[BLACK];
-    ns->accumulatorBig.computed[WHITE]   = ns->accumulatorBig.computed[BLACK]   = false;
-    ns->accumulatorSmall.computed[WHITE] = ns->accumulatorSmall.computed[BLACK] = false;
+// Build an SF piece list from the engine bitboards bb[12] (vflip to SF coords).
+inline int build_pl_from_bb(const unsigned long long* bb, Piece* pcs, Square* sqs) {
+    int n = 0;
+    for (int i = 0; i < 12; ++i) {
+        std::uint64_t b = vflip(bb[i]);
+        while (b) {
+            int s = ctz64(b);
+            b &= b - 1;
+            pcs[n] = Piece(sfc[i]);
+            sqs[n] = Square(s);
+            ++n;
+        }
+    }
+    return n;
+}
+
+// Full-refresh eval from the engine bitboards into the given (scratch) state.
+inline int eval_full_from_bb(const unsigned long long* bb, Color stm, int rule50,
+                             Position& pos, StateInfo& si, AccumulatorStack& acc,
+                             AccumulatorCaches& cch) {
+    Piece  pcs[64];
+    Square sqs[64];
+    int    n = build_pl_from_bb(bb, pcs, sqs);
+    pos.set_pieces(pcs, sqs, n, stm, &si);
+    acc.reset();
+    auto [psqt, positional] = g_net->evaluate(pos, acc, cch);
+    return sf_scale(pos, psqt, positional, rule50);
+}
+
+// Apply SfMove m to pos (incremental), filling dp (DirtyPiece) + dts (DirtyThreats).
+// Mirrors Position::do_move's board mutation + DirtyPiece construction, driven by
+// the already-decomposed SfMove (engine king-destination castling encoding).
+inline void apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts) {
+    const Piece  pc   = Piece(m->movedPiece);
+    const Square from = Square(m->from);
+    const Square to   = Square(m->to);
+
+    dp.pc        = pc;
+    dp.from      = from;
+    dp.to        = m->promoPiece ? SQ_NONE : to;
+    dp.remove_sq = SQ_NONE;
+    dp.add_sq    = SQ_NONE;
+
+    if (m->rookPiece) {  // CASTLING: king from->to, rook rfrom->rto
+        const Piece  rook  = Piece(m->rookPiece);
+        const Square rfrom = Square(m->rookFrom);
+        const Square rto   = Square(m->rookTo);
+        dp.remove_pc = rook;
+        dp.remove_sq = rfrom;
+        dp.add_pc    = rook;
+        dp.add_sq    = rto;
+        // do_castling<true> order: remove both first (Chess960 overlap), then put both.
+        pos.remove_piece(from, &dts);
+        pos.remove_piece(rfrom, &dts);
+        pos.put_piece(pc, to, &dts);
+        pos.put_piece(rook, rto, &dts);
+        return;
+    }
+
+    const bool ep = m->capturedPiece && (m->capturedSq != m->to);
+    if (m->capturedPiece) {
+        dp.remove_pc = Piece(m->capturedPiece);
+        dp.remove_sq = Square(m->capturedSq);
+    }
+    if (m->promoPiece) {
+        dp.add_pc = Piece(m->promoPiece);
+        dp.add_sq = to;
+    }
+
+    if (ep) {
+        pos.remove_piece(Square(m->capturedSq), &dts);  // remove e.p. pawn first (do_move order)
+        pos.move_piece(from, to, &dts);                 // pawn from->to (pc == toPc)
+    } else if (m->capturedPiece) {
+        pos.remove_piece(from, &dts);
+        pos.swap_piece(to, m->promoPiece ? Piece(m->promoPiece) : pc, &dts);
+    } else if (m->promoPiece) {
+        pos.remove_piece(from, &dts);
+        pos.put_piece(Piece(m->promoPiece), to, &dts);
+    } else {
+        pos.move_piece(from, to, &dts);
+    }
+}
+
+// Reverse apply_move on pos (no dts — undo just pops the accumulator). Mirrors the
+// NET BOARD effect of Position::undo_move.
+inline void unapply_move(Position& pos, const SfMove* m) {
+    const Piece  pc   = Piece(m->movedPiece);
+    const Square from = Square(m->from);
+    const Square to   = Square(m->to);
+
+    if (m->rookPiece) {  // CASTLING: do_castling<false> (remove to/rto, put from/rfrom)
+        pos.remove_piece(to);
+        pos.remove_piece(Square(m->rookTo));
+        pos.put_piece(pc, from);
+        pos.put_piece(Piece(m->rookPiece), Square(m->rookFrom));
+        return;
+    }
+
+    if (m->promoPiece) {
+        pos.remove_piece(to);     // remove the promoted piece
+        pos.put_piece(pc, from);  // pawn back at from (pc is the pawn)
+    } else {
+        pos.move_piece(to, from);
+    }
+    if (m->capturedPiece)
+        pos.put_piece(Piece(m->capturedPiece), Square(m->capturedSq));  // capsq handles e.p.
 }
 
 }  // namespace
 
 void* sf_pos_create(void) { return new SfPos(); }
-
-void sf_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
+void  sf_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
 
 void sf_pos_set(void* handle, int side_white, const int* pieces,
                 const int* squares, int count, int rule50) {
-    SfPos* p = static_cast<SfPos*>(handle);
-    p->ply = 0;
-    // set() memsets the Position and the root StateInfo (computed=false,
-    // previous=nullptr), so the first evaluate() does a full refresh.
-    p->pos.set(pieces, squares, count, side_white != 0, rule50, &p->st[0]);
-    // Reset the finny-table cache to "empty board" at each search root. Cheap
-    // (a memset) and keeps the cache correct without relying on cross-search
-    // state; it warms up again within the search. Nets are loaded by now.
-    if (g_finny)
-        Stockfish::Eval::NNUE::clear_accumulator_caches(p->caches);
+    SfPos* p  = static_cast<SfPos*>(handle);
+    p->stm    = side_white ? WHITE : BLACK;
+    p->rule50 = rule50;
+    p->ply    = 0;
+    if (g_incremental) {
+        Piece  pcs[64];
+        Square sqs[64];
+        for (int i = 0; i < count; ++i) {
+            pcs[i] = Piece(pieces[i]);
+            sqs[i] = Square(squares[i]);
+        }
+        p->pos.set_pieces(pcs, sqs, count, p->stm, &p->si);  // root board
+        p->accStack->reset();                                // root accumulator computed lazily
+    }
 }
 
 void sf_pos_do(void* handle, const struct SfMove* m) {
-    SfPos*     p    = static_cast<SfPos*>(handle);
-    StateInfo* prev = p->pos.st;
-    assert(p->ply + 1 < SF_STACK);
-    StateInfo* ns = &p->st[++p->ply];
-
-    begin_state(ns, prev, m->rule50);
-
-    // Build the dirty-piece list. The moving piece MUST be entry 0 because
-    // Stockfish detects a king move (forcing a perspective refresh) via
-    // dirtyPiece.piece[0].
-    DirtyPiece& dp = ns->dirtyPiece;
-    int         n  = 0;
-    dp.piece[n] = Piece(m->movedPiece);
-    dp.from[n]  = Square(m->from);
-    dp.to[n]    = m->promoPiece ? SQ_NONE : Square(m->to);  // pawn vanishes on promotion
-    ++n;
-    if (m->promoPiece) {
-        dp.piece[n] = Piece(m->promoPiece);
-        dp.from[n]  = SQ_NONE;
-        dp.to[n]    = Square(m->to);
-        ++n;
+    SfPos* p = static_cast<SfPos*>(handle);
+    if (p->ply < SF_STACK) {
+        p->stmStack[p->ply]  = p->stm;
+        p->r50Stack[p->ply]  = p->rule50;
+        p->mvStack[p->ply]   = *m;
+        p->pushedAcc[p->ply] = false;
     }
-    if (m->capturedPiece) {
-        dp.piece[n] = Piece(m->capturedPiece);
-        dp.from[n]  = Square(m->capturedSq);
-        dp.to[n]    = SQ_NONE;
-        ++n;
+    if (g_incremental) {
+        auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&}
+        apply_move(p->pos, m, dirties.first, dirties.second);
+        p->pos.set_side_to_move(flip(p->pos.side_to_move()));
+        if (p->ply < SF_STACK)
+            p->pushedAcc[p->ply] = true;
     }
-    if (m->rookPiece) {
-        dp.piece[n] = Piece(m->rookPiece);
-        dp.from[n]  = Square(m->rookFrom);
-        dp.to[n]    = Square(m->rookTo);
-        ++n;
-    }
-    dp.dirty_num = n;
-
-    p->pos.st         = ns;
-    p->pos.sideToMove = flip(p->pos.sideToMove);
-    // Single-board: the SF board is NOT mutated here; it is reconstructed from the
-    // engine bitboards in sf_pos_eval. Only the StateInfo/dirtyPiece chain (above)
-    // is needed for the lazy accumulator.
-
-    // Keep non-pawn material exact (eval uses it for net selection + scaling).
-    if (m->capturedPiece) {
-        PieceType pt = type_of(Piece(m->capturedPiece));
-        if (pt != PAWN && pt != KING)
-            ns->nonPawnMaterial[color_of(Piece(m->capturedPiece))] -= PieceValue[m->capturedPiece];
-    }
-    if (m->promoPiece)
-        ns->nonPawnMaterial[color_of(Piece(m->promoPiece))] += PieceValue[m->promoPiece];
+    ++p->ply;
+    p->stm    = flip(p->stm);
+    p->rule50 = m->rule50;
 }
 
 void sf_pos_do_null(void* handle, int rule50) {
-    SfPos*     p    = static_cast<SfPos*>(handle);
-    StateInfo* prev = p->pos.st;
-    assert(p->ply + 1 < SF_STACK);
-    StateInfo* ns = &p->st[++p->ply];
-
-    begin_state(ns, prev, rule50);
-    ns->dirtyPiece.dirty_num = 0;
-    ns->dirtyPiece.piece[0]  = NO_PIECE;  // not a king => no forced refresh
-
-    p->pos.st         = ns;
-    p->pos.sideToMove = flip(p->pos.sideToMove);
+    SfPos* p = static_cast<SfPos*>(handle);
+    if (p->ply < SF_STACK) {
+        p->stmStack[p->ply]  = p->stm;
+        p->r50Stack[p->ply]  = p->rule50;
+        p->pushedAcc[p->ply] = false;  // board unchanged -> no accumulator push
+    }
+    if (g_incremental)
+        p->pos.set_side_to_move(flip(p->pos.side_to_move()));
+    ++p->ply;
+    p->stm    = flip(p->stm);
+    p->rule50 = rule50;
 }
 
 void sf_pos_undo(void* handle) {
     SfPos* p = static_cast<SfPos*>(handle);
-
-    p->pos.sideToMove = flip(p->pos.sideToMove);
-    // Single-board: no SF board to restore (it is rebuilt from the engine bitboards
-    // at the next eval); just pop the StateInfo chain.
-
     --p->ply;
-    p->pos.st = &p->st[p->ply];
+    if (g_incremental) {
+        if (p->ply >= 0 && p->ply < SF_STACK && p->pushedAcc[p->ply]) {
+            p->accStack->pop();
+            unapply_move(p->pos, &p->mvStack[p->ply]);
+        }
+        p->pos.set_side_to_move(flip(p->pos.side_to_move()));  // undo the make/null side flip
+    }
+    if (p->ply >= 0 && p->ply < SF_STACK) {
+        p->stm    = p->stmStack[p->ply];
+        p->rule50 = p->r50Stack[p->ply];
+    }
 }
 
-int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ) {
+int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* /*occ*/) {
     SfPos* p = static_cast<SfPos*>(handle);
 
-    {
-        // Rebuild the board fields the NNUE reads, from the engine's own bitboards.
-        // Engine piece order: P,N,B,R,Q,K (0..5) white, p,n,b,r,q,k (6..11) black.
-        // SF PieceType PAWN..KING = 1..6, ALL_PIECES = 0; Color WHITE=0,BLACK=1.
-        // SF bitboard = byteswap(engine bitboard) (sq ^ 56 rank flip).
-        Position& pos = p->pos;
-        pos.byColorBB[WHITE]     = vflip(occ[0]);                 // white occupancy
-        pos.byColorBB[BLACK]     = vflip(occ[1]);                 // black occupancy
-        pos.byTypeBB[ALL_PIECES] = vflip(occ[2]);                 // ALL_PIECES == 0
-        pos.byTypeBB[PAWN]       = vflip(bb[0]  | bb[6]);
-        pos.byTypeBB[KNIGHT]     = vflip(bb[1]  | bb[7]);
-        pos.byTypeBB[BISHOP]     = vflip(bb[2]  | bb[8]);
-        pos.byTypeBB[ROOK]       = vflip(bb[3]  | bb[9]);
-        pos.byTypeBB[QUEEN]      = vflip(bb[4]  | bb[10]);
-        pos.byTypeBB[KING]       = vflip(bb[5]  | bb[11]);
-        // Only count<PAWN>(c) and count<ALL_PIECES>() are read at runtime (release
-        // strips the square<>() asserts), i.e. pieceCount[W_PAWN/B_PAWN] and
-        // pieceCount[make_piece(c,ALL_PIECES)].
-        pos.pieceCount[W_PAWN]                       = popcount(bb[0]);
-        pos.pieceCount[B_PAWN]                       = popcount(bb[6]);
-        pos.pieceCount[make_piece(WHITE, ALL_PIECES)] = popcount(occ[0]);
-        pos.pieceCount[make_piece(BLACK, ALL_PIECES)] = popcount(occ[1]);
-        // The mailbox board[] is only read by the non-finny refresh (piece_on()).
-        // With the finny cache on (default) it is never touched, so rebuild it
-        // only when finny is off.
-        if (!g_finny) {
-            for (int s = 0; s < SQUARE_NB; ++s) pos.board[s] = NO_PIECE;
-            static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
-                                        B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING};
-            for (int i = 0; i < 12; ++i) {
-                std::uint64_t b = bb[i];
-                while (b) {
-                    int s = lsb(Bitboard(b));     // engine square (bit index)
-                    b &= b - 1;
-                    pos.board[s ^ 56] = Piece(sfc[i]);
-                }
-            }
+    if (!g_incremental)
+        return eval_full_from_bb(bb, p->stm, p->rule50, p->pos, p->si, *p->accStack, *p->caches);
+
+    // Incremental: the maintained pos + accumulator chain are walked by Network::evaluate.
+    auto [psqt, positional] = g_net->evaluate(p->pos, *p->accStack, *p->caches);
+    int  inc                = sf_scale(p->pos, psqt, positional, p->rule50);
+
+    if (g_verify) {
+        // Compare against a full refresh built from the engine bitboards, on a separate
+        // scratch state so the incremental chain is not disturbed.
+        thread_local std::unique_ptr<AccumulatorStack>  sAcc;
+        thread_local std::unique_ptr<AccumulatorCaches> sCch;
+        thread_local Position                           sPos;
+        thread_local StateInfo                          sSi;
+        if (!sAcc) {
+            sAcc = std::make_unique<AccumulatorStack>();
+            sCch = std::make_unique<AccumulatorCaches>(*g_net);
+        }
+        int full = eval_full_from_bb(bb, p->stm, p->rule50, sPos, sSi, *sAcc, *sCch);
+        if (inc != full) {
+            static int reported = 0;
+            if (reported++ < 64)
+                std::printf("info string NNUE MISMATCH ply=%d inc=%d full=%d\n", p->ply, inc, full);
+            std::fflush(stdout);
         }
     }
+    return inc;
+}
 
-    return Stockfish::Eval::evaluate(p->pos, g_finny ? &p->caches : nullptr);
+// Stateless full-refresh eval ("eval" command + NNUE_VERIFY oracle). pieces[] /
+// squares[] are already in SF encoding (the engine's sf_build_piece_list maps via
+// sf_piece_code[]/nnue_squares[]). Single-threaded (UI/debug only).
+int sf_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
+    static std::unique_ptr<AccumulatorStack>  s_acc;
+    static std::unique_ptr<AccumulatorCaches> s_cch;
+    static Position                           s_pos;
+    static StateInfo                          s_si;
+    if (!s_acc) {
+        s_acc = std::make_unique<AccumulatorStack>();
+        s_cch = std::make_unique<AccumulatorCaches>(*g_net);
+    }
+    Piece  pcs[64];
+    Square sqs[64];
+    for (int i = 0; i < count; ++i) {
+        pcs[i] = Piece(pieces[i]);
+        sqs[i] = Square(squares[i]);
+    }
+    s_pos.set_pieces(pcs, sqs, count, side_white ? WHITE : BLACK, &s_si);
+    s_acc->reset();
+    auto [psqt, positional] = g_net->evaluate(s_pos, *s_acc, *s_cch);
+    return sf_scale(s_pos, psqt, positional, rule50);
 }

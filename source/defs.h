@@ -12,7 +12,7 @@
 #include <vector>
 
 // Define version information
-#define VERSION " - 4.2"
+#define VERSION " - 5.0"
 #define AUTHOR "Francesco Torsello"
 #define NAME "Triumviratus"
 
@@ -90,6 +90,7 @@ extern int starttime;
 extern int stoptime;
 extern int timeset;
 extern int stopped;
+extern U64 g_node_limit;   // "go nodes N": hard node budget (0 = off). For datagen at fixed nodes.
 
 // Bit manipulations macros
 #define set_bit(bitboard, square) ((bitboard) |= (1ULL << (square)))

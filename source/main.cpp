@@ -150,31 +150,22 @@ int main()
     // Initialize hash table with default 64 MB (silent)
     init_hash_table(64);
 
-    // Resolve the NNUE nets relative to the executable so the engine works from
-    // ANY working directory. A missing net used to cause a SILENT eval=0 (junk
-    // moves under cutechess); now we fail loudly instead of playing garbage.
-    // 4.2 = FULLY OWN-NET build: big = our "rubicon" net, small = our "mini-rubicon"
-    // net (both own-lineage, no Stockfish nets shipped). Overridable at runtime via
-    // UCI "EvalFile" (big). Both nets ship next to the executable.
-    const char* bigName   = "nn-rubicon-v1.nnue";
-    const char* smallName = "mini-rubicon-v1.nnue";
-    std::string bigNet   = resolve_net_path(bigName);
-    const std::string smallNet = resolve_net_path(smallName);
-    if (bigNet.empty())
+    // Triumviratus 5.0 evaluation = the vendored Stockfish-master SFNNv13 NNUE
+    // (FullThreats + HalfKAv2_hm, L1=1024; see sfnnue_v13/ + sf_bridge). We init the
+    // shared substrate (bitboard + slider-magic attack tables) and load the network.
+    // Resolve relative to the exe so the engine works from ANY working directory; a
+    // missing net fails loudly. Override at runtime via the UCI "EvalFile" option.
+    sf_init_tables();   // bitboards + Attacks::init (substrate for the NNUE feature extraction)
+    const char* netName = "nn-71d6d32cb962.nnue";
+    std::string netPath = resolve_net_path(netName);
+    if (netPath.empty() || !sf_load_net(netPath.c_str()))
     {
-        std::cerr << "FATAL: NNUE big net not found. Place " << bigName
-                  << " next to the executable (or in the project root) and restart." << std::endl;
+        std::cerr << "FATAL: NNUE net not found/invalid. Place " << netName
+                  << " next to the executable (or in the project root) and restart."
+                  << std::endl;
         return 1;
     }
-
-    // Initialize the Stockfish HalfKAv2_hm NNUE probe. smallNet.c_str() is "" when
-    // absent -> load_networks skips an empty name (NOT nullptr: probe.cpp builds a
-    // std::string from it, and nullptr would crash). The small net is OFF by
-    // default in 4.2 (g_use_small_net = false): our own small net is a net loss
-    // in-game (big-only is stronger); toggle UseSmallNet=true to enable it.
-    sf_init(bigNet.c_str(), smallNet.c_str());
-    printf("info string Big net: %s   Small net: %s%s\n", bigName, smallName,
-           smallNet.empty() ? " (MISSING -> big-net-only)" : "");
+    printf("info string Net: %s (Stockfish SFNNv13)\n", netName);
     fflush(stdout);
 
     // (Policy-net: rimossa 2026-06-11 — capitolo chiuso, vedi notes/ §P5.)

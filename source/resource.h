@@ -4,7 +4,6 @@
 
 // Valori predefiniti successivi per i nuovi oggetti
 // 
-
 #define IDI_MAIN_ICON                   101
 
 #ifdef APSTUDIO_INVOKED
