@@ -1,12 +1,12 @@
 // Triumviratus 5.0 NNUE bridge — routes the engine's eval through the VENDORED
-// Stockfish-master SFNNv13 network code (sfnnue_v13/): ThreatFeatureSet=FullThreats
+// Stockfish-master SFNNv13 network code (nnue/): ThreatFeatureSet=FullThreats
 // + PSQFeatureSet=HalfKAv2_hm, L1=1024, 8 LayerStacks. This is Stockfish's own
 // ultramodern NNUE machinery adapted into our isolated Stockfish:: namespace.
 //
 // M2 drive model (full refresh): each search thread owns an opaque handle holding
 // an SF Position + a per-thread AccumulatorStack + AccumulatorCaches. The handle
 // tracks only side-to-move and the fifty-move clock across make/undo; the board
-// itself is rebuilt from the engine's bitboards once per evaluate() in sf_pos_eval
+// itself is rebuilt from the engine's bitboards once per evaluate() in nn_pos_eval
 // (vflip + piece remap -> Position::set_pieces), then Network::evaluate runs a
 // full refresh and we apply Stockfish's cp scaling inline. The bullet own-lineage
 // net and the legacy SFNNv10 path were removed here in M2; M3 adds the incremental
@@ -15,7 +15,7 @@
 // Square conventions: the engine uses a8=0..h1=63 (BBC); SF uses a1=0..h8=63. A
 // per-rank byteswap (vflip) of an engine bitboard yields the SF-layout bitboard.
 
-#include "sf_bridge.h"
+#include "nnue_bridge.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -31,12 +31,12 @@
     #include <intrin.h>   // _byteswap_uint64, _BitScanForward64
 #endif
 
-#include "sfnnue_v13/bitboard.h"
-#include "sfnnue_v13/position.h"
-#include "sfnnue_v13/types.h"
-#include "sfnnue_v13/nnue/network.h"
-#include "sfnnue_v13/nnue/nnue_accumulator.h"
-#include "sfnnue_v13/nnue/nnue_misc.h"   // Eval::NNUE::EvalFile
+#include "nnue/bitboard.h"
+#include "nnue/position.h"
+#include "nnue/types.h"
+#include "nnue/nnue/network.h"
+#include "nnue/nnue/nnue_accumulator.h"
+#include "nnue/nnue/nnue_misc.h"   // Eval::NNUE::EvalFile
 
 using namespace Stockfish;
 using Stockfish::Eval::NNUE::Network;
@@ -44,10 +44,10 @@ using Stockfish::Eval::NNUE::AccumulatorStack;
 using Stockfish::Eval::NNUE::AccumulatorCaches;
 
 // ---------------------------------------------------------------------------
-// The single immutable network, loaded once at startup (sf_load_net) and
-// optionally swapped at runtime (sf_reload_big). ~90 MB of weights -> heap.
+// The single immutable network, loaded once at startup (nn_load_net) and
+// optionally swapped at runtime (nn_reload_big). ~90 MB of weights -> heap.
 // AccumulatorCaches are built per handle FROM this net, so it must be loaded
-// before any sf_pos_create().
+// before any nn_pos_create().
 // ---------------------------------------------------------------------------
 static std::unique_ptr<Network> g_net;
 
@@ -85,7 +85,7 @@ static int g_eval_scale_pct = 100;
 // and positional are the stm-relative raw NNUE outputs of Network::evaluate.
 // material is computed from piece counts (set_pieces zeroes StateInfo, so we do
 // NOT use pos.non_pawn_material()). Returns stm-relative internal-unit value.
-static inline int sf_scale(const Position& pos, Value psqt, Value positional, int rule50) {
+static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
     int nnue           = (125 * int(psqt) + 131 * int(positional)) / 128;
     int nnueComplexity = std::abs(int(psqt) - int(positional));
     nnue -= nnue * nnueComplexity / 18236;
@@ -128,17 +128,17 @@ static int load_net_impl(const char* path) {
     return 1;
 }
 
-int sf_load_net(const char* net_path) { return load_net_impl(net_path); }
-int sf_reload_big(const char* net_path) { return load_net_impl(net_path); }
+int nn_load_net(const char* net_path) { return load_net_impl(net_path); }
+int nn_reload_big(const char* net_path) { return load_net_impl(net_path); }
 
-void sf_init_tables(void) {
+void nn_init_tables(void) {
     Bitboards::init();
     Attacks::init();  // slider magics live in attacks.cpp (separate from Bitboards::init)
 }
 
 // No-ops kept for API stability (both paths always use the refresh cache).
-void sf_set_finny(int) {}
-void sf_acc_stats(void) {}
+void nn_set_finny(int) {}
+void nn_acc_stats(void) {}
 
 // M3 toggles. Incremental is now the DEFAULT: validated bit-exact vs full-refresh
 // (zero verify mismatches + IDENTICAL bench node counts at depth 12/14 across all 8
@@ -146,9 +146,9 @@ void sf_acc_stats(void) {}
 // ("incremental off") to fall back to the M2 full-refresh A/B base.
 static bool g_incremental = true;
 static bool g_verify      = false;
-void        sf_set_incremental(int on) { g_incremental = on != 0; }
-void        sf_set_verify(int on) { g_verify = on != 0; }
-void        sf_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
+void        nn_set_incremental(int on) { g_incremental = on != 0; }
+void        nn_set_verify(int on) { g_verify = on != 0; }
+void        nn_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
 
 // ---------------------------------------------------------------------------
 // Per-thread handle
@@ -163,7 +163,7 @@ struct SfPos {
     std::unique_ptr<AccumulatorStack>  accStack;
     std::unique_ptr<AccumulatorCaches> caches;
 
-    // Tracked across make/undo (sf_pos_eval gets the board but not stm/rule50).
+    // Tracked across make/undo (nn_pos_eval gets the board but not stm/rule50).
     Color  stm;
     int    rule50;
     int    ply;
@@ -209,7 +209,7 @@ inline int eval_full_from_bb(const unsigned long long* bb, Color stm, int rule50
     pos.set_pieces(pcs, sqs, n, stm, &si);
     acc.reset();
     auto [psqt, positional] = g_net->evaluate(pos, acc, cch);
-    return sf_scale(pos, psqt, positional, rule50);
+    return nn_scale(pos, psqt, positional, rule50);
 }
 
 // Apply SfMove m to pos (incremental), filling dp (DirtyPiece) + dts (DirtyThreats).
@@ -293,10 +293,10 @@ inline void unapply_move(Position& pos, const SfMove* m) {
 
 }  // namespace
 
-void* sf_pos_create(void) { return new SfPos(); }
-void  sf_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
+void* nn_pos_create(void) { return new SfPos(); }
+void  nn_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
 
-void sf_pos_set(void* handle, int side_white, const int* pieces,
+void nn_pos_set(void* handle, int side_white, const int* pieces,
                 const int* squares, int count, int rule50) {
     SfPos* p  = static_cast<SfPos*>(handle);
     p->stm    = side_white ? WHITE : BLACK;
@@ -314,7 +314,7 @@ void sf_pos_set(void* handle, int side_white, const int* pieces,
     }
 }
 
-void sf_pos_do(void* handle, const struct SfMove* m) {
+void nn_pos_do(void* handle, const struct SfMove* m) {
     SfPos* p = static_cast<SfPos*>(handle);
     if (p->ply < SF_STACK) {
         p->stmStack[p->ply]  = p->stm;
@@ -334,7 +334,7 @@ void sf_pos_do(void* handle, const struct SfMove* m) {
     p->rule50 = m->rule50;
 }
 
-void sf_pos_do_null(void* handle, int rule50) {
+void nn_pos_do_null(void* handle, int rule50) {
     SfPos* p = static_cast<SfPos*>(handle);
     if (p->ply < SF_STACK) {
         p->stmStack[p->ply]  = p->stm;
@@ -348,7 +348,7 @@ void sf_pos_do_null(void* handle, int rule50) {
     p->rule50 = rule50;
 }
 
-void sf_pos_undo(void* handle) {
+void nn_pos_undo(void* handle) {
     SfPos* p = static_cast<SfPos*>(handle);
     --p->ply;
     if (g_incremental) {
@@ -364,7 +364,7 @@ void sf_pos_undo(void* handle) {
     }
 }
 
-int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* /*occ*/) {
+int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* /*occ*/) {
     SfPos* p = static_cast<SfPos*>(handle);
 
     if (!g_incremental)
@@ -372,7 +372,7 @@ int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
 
     // Incremental: the maintained pos + accumulator chain are walked by Network::evaluate.
     auto [psqt, positional] = g_net->evaluate(p->pos, *p->accStack, *p->caches);
-    int  inc                = sf_scale(p->pos, psqt, positional, p->rule50);
+    int  inc                = nn_scale(p->pos, psqt, positional, p->rule50);
 
     if (g_verify) {
         // Compare against a full refresh built from the engine bitboards, on a separate
@@ -397,9 +397,9 @@ int sf_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
 }
 
 // Stateless full-refresh eval ("eval" command + NNUE_VERIFY oracle). pieces[] /
-// squares[] are already in SF encoding (the engine's sf_build_piece_list maps via
-// sf_piece_code[]/nnue_squares[]). Single-threaded (UI/debug only).
-int sf_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
+// squares[] are already in SF encoding (the engine's nn_build_piece_list maps via
+// nn_piece_code[]/nnue_squares[]). Single-threaded (UI/debug only).
+int nn_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
     static std::unique_ptr<AccumulatorStack>  s_acc;
     static std::unique_ptr<AccumulatorCaches> s_cch;
     static Position                           s_pos;
@@ -417,5 +417,5 @@ int sf_eval(int side_white, const int* pieces, const int* squares, int count, in
     s_pos.set_pieces(pcs, sqs, count, side_white ? WHITE : BLACK, &s_si);
     s_acc->reset();
     auto [psqt, positional] = g_net->evaluate(s_pos, *s_acc, *s_cch);
-    return sf_scale(s_pos, psqt, positional, rule50);
+    return nn_scale(s_pos, psqt, positional, rule50);
 }

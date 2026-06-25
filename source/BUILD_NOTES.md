@@ -33,7 +33,7 @@ Needs VS "C++ Clang tools for Windows" (`clang-cl`, `llvm-profdata`).
 
 ## External data (NOT in the repo)
 - **NNUE net** — `nn-71d6d32cb962.nnue` (SFNNv13, Stockfish-master). Load via `EvalFile`,
-  or place next to the exe. The MSVC/PGO builds expect it at `sfnnue_v13/nn-71d6d32cb962.nnue` as source.
+  or place next to the exe. The MSVC/PGO builds expect it at `nnue/nn-71d6d32cb962.nnue` as source.
   *(This is the SF-master net used as the strong reference; the project's own-lineage net is trained separately.)*
 - **Opening book** (PGO training only) — `UHO_2024_8mvs_big_+080_+099.epd`.
 

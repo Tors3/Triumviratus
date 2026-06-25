@@ -13,7 +13,8 @@
 ## Triumviratus 5.0 · *in development*
 
 The current line: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with a
-Stockfish-faithful, SPSA-co-tuned search and multi-threaded **Lazy SMP**. An own-lineage network is in training.
+Stockfish-faithful, SPSA-co-tuned search and multi-threaded **Lazy SMP**. An own-lineage network is in training
+— see [`NETWORKS.md`](NETWORKS.md) for how each shipped network was trained.
 
 | | |
 |---|---|
@@ -33,7 +34,7 @@ The previous release, and the first to ship a **NNUE network trained by the auth
 ## License
 
 **GPLv3** — see [`COPYING`](COPYING). Triumviratus is a derivative work of **Stockfish** (the SFNNv13 NNUE
-code in `sfnnue_v13/` and the `nn-*.nnue` networks, GPLv3), so the whole project is distributed under GPLv3.
+code in `nnue/` and the `nn-*.nnue` networks, GPLv3), so the whole project is distributed under GPLv3.
 
 ## Credits
 

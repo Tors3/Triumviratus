@@ -21,13 +21,13 @@ CXX ?= g++
 CC  ?= gcc
 EXE ?= triumviratus
 
-# Vendored Stockfish-master SFNNv13 NNUE (sfnnue_v13/). We compile ONLY the subset
+# Vendored Stockfish-master SFNNv13 NNUE (nnue/). We compile ONLY the subset
 # the NNUE eval needs (mirror of the Windows vcxproj): position_min.cpp provides
 # Position::set_pieces + update_piece_threats; the heavy master position.cpp /
 # nnue_misc.cpp / evaluate.cpp / m1_evalmatch.cpp / tune/score/ucioption are NOT
 # compiled (they pull movegen/uci closures not needed for eval). Explicit list (no
 # wildcard) so those excluded files never sneak in.
-V13 := sfnnue_v13
+V13 := nnue
 CPP_SRCS := $(filter-out nnt.cpp,$(wildcard *.cpp)) \
             $(V13)/position_min.cpp $(V13)/bitboard.cpp $(V13)/attacks.cpp \
             $(V13)/misc.cpp $(V13)/memory.cpp \

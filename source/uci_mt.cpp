@@ -14,7 +14,7 @@
 #include "threads.h"
 #include "syzygy.h"
 #include "perft.h"
-#include "sf_bridge.h"   // sf_acc_stats (diagnostic "accstats" command)
+#include "nnue_bridge.h"   // nn_acc_stats (diagnostic "accstats" command)
 #include <thread>
 
 #ifdef CLANG_PGO_GEN
@@ -466,7 +466,7 @@ void uci_loop()
         // the finny-tables ceiling (refresh fraction).
         else if (strncmp(input, "accstats", 8) == 0)
         {
-            sf_acc_stats();
+            nn_acc_stats();
         }
 
         // M3: incremental NNUE eval toggle (default OFF = M2 full-refresh). The
@@ -474,7 +474,7 @@ void uci_loop()
         else if (strncmp(input, "incremental ", 12) == 0)
         {
             int on = strncmp(input + 12, "on", 2) == 0;
-            sf_set_incremental(on);
+            nn_set_incremental(on);
             printf("incremental %s\n", on ? "on" : "off");
             fflush(stdout);
         }
@@ -482,7 +482,7 @@ void uci_loop()
         else if (strncmp(input, "nnueverify ", 11) == 0)
         {
             int on = strncmp(input + 11, "on", 2) == 0;
-            sf_set_verify(on);
+            nn_set_verify(on);
             printf("nnueverify %s\n", on ? "on" : "off");
             fflush(stdout);
         }
@@ -674,7 +674,7 @@ void uci_loop()
             std::string resolved = resolve_net_path(val);
             if (resolved.empty())
                 printf("info string EvalFile: '%s' not found (kept current net)\n", val);
-            else if (sf_reload_big(resolved.c_str()))
+            else if (nn_reload_big(resolved.c_str()))
                 printf("info string EvalFile: loaded %s\n", resolved.c_str());
             else
                 printf("info string EvalFile: failed to load %s (kept current net)\n", resolved.c_str());
@@ -685,7 +685,7 @@ void uci_loop()
         // (re-calibrate the SFNNv13 cp scale to the search margins). Diagnostic sweep.
         else if (strncmp(input, "setoption name EvalScale value ", 31) == 0)
         {
-            sf_set_eval_scale(atoi(input + 31));
+            nn_set_eval_scale(atoi(input + 31));
             fflush(stdout);
         }
 

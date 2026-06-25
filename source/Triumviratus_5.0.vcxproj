@@ -35,7 +35,7 @@
     <ClInclude Include="attacks.h" />
     <ClInclude Include="defs.h" />
     <ClInclude Include="evaluation.h" />
-    <ClInclude Include="sf_bridge.h" />
+    <ClInclude Include="nnue_bridge.h" />
     <ClInclude Include="io.h" />
     <ClInclude Include="magic.h" />
     <ClInclude Include="misc.h" />
@@ -68,39 +68,39 @@
     <ClCompile Include="threads.cpp" />
     <ClCompile Include="uci_mt.cpp" />
     <ClCompile Include="zobrist.cpp" />
-    <ClCompile Include="sf_bridge.cpp" />
+    <ClCompile Include="nnue_bridge.cpp" />
     <!-- Vendored Stockfish-master SFNNv13 NNUE (FullThreats + HalfKAv2_hm, L1=1024).
          Replaces the SFNNv10 + Bullet code (removed in M2). We compile only the subset
          the NNUE eval needs: position_min.cpp provides Position::set_pieces (the heavy
          master position.cpp / nnue_misc.cpp / evaluate.cpp pull movegen/uci closures and
-         are NOT compiled). ObjectFileName routes objects to a subdir so sfnnue_v13's
+         are NOT compiled). ObjectFileName routes objects to a subdir so nnue's
          misc.cpp / attacks.cpp / bitboard.cpp do not clash with the engine's own. -->
-    <ClCompile Include="sfnnue_v13\position_min.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    <ClCompile Include="nnue\position_min.cpp">
+      <ObjectFileName>$(IntDir)nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\bitboard.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    <ClCompile Include="nnue\bitboard.cpp">
+      <ObjectFileName>$(IntDir)nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\attacks.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    <ClCompile Include="nnue\attacks.cpp">
+      <ObjectFileName>$(IntDir)nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\misc.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    <ClCompile Include="nnue\misc.cpp">
+      <ObjectFileName>$(IntDir)nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\memory.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\</ObjectFileName>
+    <ClCompile Include="nnue\memory.cpp">
+      <ObjectFileName>$(IntDir)nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\nnue\network.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\</ObjectFileName>
+    <ClCompile Include="nnue\nnue\network.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\nnue\nnue_accumulator.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\</ObjectFileName>
+    <ClCompile Include="nnue\nnue\nnue_accumulator.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\nnue\features\full_threats.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\features\</ObjectFileName>
+    <ClCompile Include="nnue\nnue\features\full_threats.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="sfnnue_v13\nnue\features\half_ka_v2_hm.cpp">
-      <ObjectFileName>$(IntDir)sfnnue_v13\nnue\features\</ObjectFileName>
+    <ClCompile Include="nnue\nnue\features\half_ka_v2_hm.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>
     <ClCompile Include="syzygy.cpp">
       <AdditionalIncludeDirectories>fathom;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -328,6 +328,7 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
 
 
 

@@ -17,7 +17,7 @@
 #include "magic.h"
 #include "attacks.h"
 #include "see.h"
-#include "sf_bridge.h"
+#include "nnue_bridge.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -46,7 +46,7 @@ tt_entry* hash_table = nullptr;
 // Stockfish piece codes indexed by Triumviratus piece (P,N,B,R,Q,K,p,n,b,r,q,k):
 //   white W_PAWN..W_KING = 1..6, black B_PAWN..B_KING = 9..14. Defined here
 //   (before td_make_move) so the make-move NNUE mirror hook can use it too.
-static const int sf_piece_code[12] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 };
+static const int nn_piece_code[12] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 };
 
 // POLICY-NET: RIMOSSA dal motore (2026-06-11). Il capitolo e' stato chiuso con tre
 // misure conclusive (notes/ANALISI_CODICE_OTTIMIZZAZIONI.md §P5): ordering −8.7,
@@ -210,7 +210,7 @@ void set_eval_cache(bool v) { g_eval_cache = v; }
 // Default OFF => byte-identical to the pre-finny engine. Forwards to the bridge
 // (the cache lives per-thread in the SfPos mirror). Pure NPS lever: eval is
 // bit-identical either way, so validate with an interleaved A/B NPS test.
-void set_finny(bool v) { sf_set_finny(v ? 1 : 0); }
+void set_finny(bool v) { nn_set_finny(v ? 1 : 0); }
 
 
 // "Improving" heuristic on/off (UCI option "Improving"). Default on; off
@@ -861,7 +861,7 @@ void init_threads(int thread_count) {
     // Free any existing incremental-NNUE handles before resizing (resize may
     // move/destroy elements); they are recreated fresh in the loop below.
     for (auto& td : thread_data)
-        if (td.sfpos) { sf_pos_destroy(td.sfpos); td.sfpos = nullptr; }
+        if (td.nnpos) { nn_pos_destroy(td.nnpos); td.nnpos = nullptr; }
 
     num_threads = thread_count;
     thread_data.resize(num_threads);
@@ -882,7 +882,7 @@ void init_threads(int thread_count) {
 
     for (int i = 0; i < num_threads; i++) {
         thread_data[i].thread_id = i;
-        thread_data[i].sfpos = sf_pos_create();
+        thread_data[i].nnpos = nn_pos_create();
         thread_data[i].nodes = 0;
         thread_data[i].best_move = 0;
         thread_data[i].best_score = -infinity;
@@ -1156,11 +1156,11 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     // Stockfish encoding. The moving piece is dirtyPiece[0] (king-refresh).
     {
         SfMove sm;
-        sm.movedPiece    = sf_piece_code[piece];
+        sm.movedPiece    = nn_piece_code[piece];
         sm.from          = nnue_squares[source];
         sm.to            = nnue_squares[target];
-        sm.promoPiece    = promoted ? sf_piece_code[promoted] : 0;
-        sm.capturedPiece = (undo.captured_piece != -1) ? sf_piece_code[undo.captured_piece] : 0;
+        sm.promoPiece    = promoted ? nn_piece_code[promoted] : 0;
+        sm.capturedPiece = (undo.captured_piece != -1) ? nn_piece_code[undo.captured_piece] : 0;
         sm.capturedSq    = (undo.captured_piece != -1) ? nnue_squares[undo.captured_square] : -1;
         sm.rookPiece = 0; sm.rookFrom = -1; sm.rookTo = -1;
         if (castling) {
@@ -1171,12 +1171,12 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
                 case g8: rpc = r; rf = h8; rt = f8; break;
                 case c8: rpc = r; rf = a8; rt = d8; break;
             }
-            sm.rookPiece = sf_piece_code[rpc];
+            sm.rookPiece = nn_piece_code[rpc];
             sm.rookFrom  = nnue_squares[rf];
             sm.rookTo    = nnue_squares[rt];
         }
         sm.rule50 = td.fifty;
-        sf_pos_do(td.sfpos, &sm);
+        nn_pos_do(td.nnpos, &sm);
     }
 
     td.plies_from_null++;   // P2.2: una mossa reale in piu' dall'ultima null
@@ -1190,7 +1190,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 
 static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
     PROF_GUARD(prof_make);
-    sf_pos_undo(td.sfpos);   // retract the move on the incremental NNUE mirror
+    nn_pos_undo(td.nnpos);   // retract the move on the incremental NNUE mirror
     td.plies_from_null--;    // P2.2 (speculare al ++ del make riuscito)
     td.side ^= 1;
 
@@ -1516,13 +1516,13 @@ static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_on
 
 // Build the Stockfish piece list (codes + squares) from a thread's board.
 // Returns the number of pieces written into pieces[]/squares[].
-static inline int sf_build_piece_list(ThreadData& td, int pieces[33], int squares[33]) {
+static inline int nn_build_piece_list(ThreadData& td, int pieces[33], int squares[33]) {
     int count = 0;
     for (int bb_piece = P; bb_piece <= k; bb_piece++) {
         U64 bb = td.bitboards[bb_piece];
         while (bb) {
             int sq = get_ls1b_index(bb);
-            pieces[count]  = sf_piece_code[bb_piece];
+            pieces[count]  = nn_piece_code[bb_piece];
             squares[count] = nnue_squares[sq];   // engine square -> SF square (a1=0..h8=63)
             count++;
             pop_bit(bb, sq);
@@ -1533,8 +1533,8 @@ static inline int sf_build_piece_list(ThreadData& td, int pieces[33], int square
 
 // DIAGNOSTIC ("eval" UCI command): static NNUE eval of the CURRENT global board
 // (the one parse_fen / "position" populate). Builds the piece list straight from
-// the global bitboards and calls the stateless oracle sf_eval (whose value is,
-// by the NNUE_VERIFY invariant, identical to the incremental sf_pos_eval =
+// the global bitboards and calls the stateless oracle nn_eval (whose value is,
+// by the NNUE_VERIFY invariant, identical to the incremental nn_pos_eval =
 // Eval::evaluate, i.e. SF's "Final evaluation"). Returns centipawns relative to
 // the side to move. Used to cross-check the SFNNv9/3072 port against the official
 // Stockfish binary on identical FENs (a correct port agrees up to SF's UCI
@@ -1546,21 +1546,21 @@ int debug_eval_position() {
         U64 bb = bitboards[bb_piece];          // GLOBAL board set by parse_fen
         while (bb) {
             int sq = get_ls1b_index(bb);
-            pieces[count]  = sf_piece_code[bb_piece];
+            pieces[count]  = nn_piece_code[bb_piece];
             squares[count] = nnue_squares[sq];
             count++;
             pop_bit(bb, sq);
         }
     }
-    return sf_eval(side == white, pieces, squares, count, fifty);
+    return nn_eval(side == white, pieces, squares, count, fifty);
 }
 
 // Re-sync the incremental NNUE mirror to the thread's current board (full
 // refresh). Called at the root of each iterative-deepening iteration.
-static inline void sf_root_sync(ThreadData& td) {
+static inline void nn_root_sync(ThreadData& td) {
     int pieces[33], squares[33];
-    int count = sf_build_piece_list(td, pieces, squares);
-    sf_pos_set(td.sfpos, td.side == white, pieces, squares, count, td.fifty);
+    int count = nn_build_piece_list(td, pieces, squares);
+    nn_pos_set(td.nnpos, td.side == white, pieces, squares, count, td.fifty);
 }
 
 static inline int td_evaluate(ThreadData& td) {
@@ -1578,9 +1578,9 @@ static inline int td_evaluate(ThreadData& td) {
     // Verification oracle: the incrementally maintained eval must EXACTLY equal
     // a full from-scratch refresh. Build with /DNNUE_VERIFY to enable.
     int pieces[33], squares[33];
-    int count = sf_build_piece_list(td, pieces, squares);
-    int full  = sf_eval(td.side == white, pieces, squares, count, td.fifty);
-    int inc   = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
+    int count = nn_build_piece_list(td, pieces, squares);
+    int full  = nn_eval(td.side == white, pieces, squares, count, td.fifty);
+    int inc   = nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
     if (full != inc) {
         std::cerr << "NNUE MISMATCH ply=" << td.ply << " full=" << full
                   << " inc=" << inc << " hash=0x" << std::hex << td.hash_key << std::dec
@@ -1591,8 +1591,8 @@ static inline int td_evaluate(ThreadData& td) {
 #else
     // Static-eval cache: hash_key mixed with fifty (see threads.h EvalCacheEntry
     // for why fifty is in the key). A hit skips the NNUE forward pass entirely;
-    // safe because sf_pos_do/undo keep the lazy accumulator's dirty chain intact
-    // whether or not we call sf_pos_eval here.
+    // safe because nn_pos_do/undo keep the lazy accumulator's dirty chain intact
+    // whether or not we call nn_pos_eval here.
     if (g_eval_cache) {
         if (g_evalcache_undamp) {
             // N1 (2026-06-12): chiave SENZA fifty, valore UNDAMPED (rule50-indip.)
@@ -1602,7 +1602,7 @@ static inline int td_evaluate(ThreadData& td) {
             // di arrotondamento sul roundtrip; il valore fresco resta esatto.
             ThreadData::EvalCacheEntry& ce = td.eval_cache[td.hash_key & ThreadData::EVAL_CACHE_MASK];
             if (ce.key == td.hash_key) return tt_eval_redamp(ce.eval, td.fifty);
-            const int v = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
+            const int v = nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
             ce.key = td.hash_key;
             ce.eval = tt_eval_undamp(v, td.fifty);
             return v;
@@ -1610,14 +1610,14 @@ static inline int td_evaluate(ThreadData& td) {
         const U64 ck = td.hash_key ^ (0x9E3779B97F4A7C15ULL * (U64)(td.fifty + 1));
         ThreadData::EvalCacheEntry& ce = td.eval_cache[ck & ThreadData::EVAL_CACHE_MASK];
         if (ce.key == ck) return ce.eval;
-        const int v = sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
+        const int v = nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
         ce.key = ck;
         ce.eval = v;
         return v;
     }
     // Incremental: the accumulator is updated only for the pieces that changed
     // (HalfKAv2_hm king-bucket refresh handled by Stockfish's transform()).
-    return sf_pos_eval(td.sfpos, td.bitboards, td.occupancies);
+    return nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
 #endif
 }
 
@@ -2680,7 +2680,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // illegal - typically a malformed input FEN (e.g. a tablebase test position
     // with the enemy king left in check). Searching it would let us actually make
     // the king-capturing move; td_make_move accepts it (our own king is safe),
-    // sf_pos_do then removes the enemy king from the NNUE mirror, and the next
+    // nn_pos_do then removes the enemy king from the NNUE mirror, and the next
     // eval indexes a king-bucket feature for a now-kingless side -> access
     // violation. Return an immediate winning score instead. In legal play the
     // side not to move is never in check, so this costs one attack probe and
@@ -2960,9 +2960,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             }
             if (R > depth - 1) R = depth - 1;
 
-            sf_pos_do_null(td.sfpos, td.fifty);
+            nn_pos_do_null(td.nnpos, td.fifty);
             score = -td_negamax(td, -beta, -beta + 1, depth - 1 - R, !is_cut_node);
-            sf_pos_undo(td.sfpos);
+            nn_pos_undo(td.nnpos);
 
             td.plies_from_null = saved_pfn;   // P2.2 restore
             td.ply--;
@@ -3722,7 +3722,7 @@ static void thread_search(int thread_id, int max_depth) {
         // Re-sync the incremental NNUE mirror to the root board (full refresh)
         // so a previously aborted iteration cannot leave the accumulator stack
         // out of step with the search.
-        sf_root_sync(td);
+        nn_root_sync(td);
 
         // Aspiration window: start narrow around the previous score and widen
         // incrementally on failures, instead of re-searching the full window.

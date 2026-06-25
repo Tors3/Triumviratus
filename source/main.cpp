@@ -8,7 +8,7 @@
 #include "tt.h"
 #include "uci.h"
 #include "threads.h"
-#include "sf_bridge.h"
+#include "nnue_bridge.h"
 
 //Added for policy network
 
@@ -151,14 +151,14 @@ int main()
     init_hash_table(64);
 
     // Triumviratus 5.0 evaluation = the vendored Stockfish-master SFNNv13 NNUE
-    // (FullThreats + HalfKAv2_hm, L1=1024; see sfnnue_v13/ + sf_bridge). We init the
+    // (FullThreats + HalfKAv2_hm, L1=1024; see nnue/ + nnue_bridge). We init the
     // shared substrate (bitboard + slider-magic attack tables) and load the network.
     // Resolve relative to the exe so the engine works from ANY working directory; a
     // missing net fails loudly. Override at runtime via the UCI "EvalFile" option.
-    sf_init_tables();   // bitboards + Attacks::init (substrate for the NNUE feature extraction)
+    nn_init_tables();   // bitboards + Attacks::init (substrate for the NNUE feature extraction)
     const char* netName = "nn-71d6d32cb962.nnue";
     std::string netPath = resolve_net_path(netName);
-    if (netPath.empty() || !sf_load_net(netPath.c_str()))
+    if (netPath.empty() || !nn_load_net(netPath.c_str()))
     {
         std::cerr << "FATAL: NNUE net not found/invalid. Place " << netName
                   << " next to the executable (or in the project root) and restart."

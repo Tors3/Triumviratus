@@ -25,7 +25,7 @@ $projDir = Split-Path $proj
 $outDir  = "$projDir\x64\Release"
 $exe     = "$outDir\Triumviratus_5.0.exe"
 $net5    = "nn-71d6d32cb962.nnue"                              # rete SFNNv13 (runtime, accanto all'exe)
-$net5src = "$projDir\sfnnue_v13\nn-71d6d32cb962.nnue"          # sorgente
+$net5src = "$projDir\nnue\nn-71d6d32cb962.nnue"          # sorgente
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsRoot  = if (Test-Path $vswhere) { (& $vswhere -latest -property installationPath) } else { "" }

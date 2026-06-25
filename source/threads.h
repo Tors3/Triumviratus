@@ -162,15 +162,15 @@ struct ThreadData {
     static constexpr int LOW_PLY_MAX = 4;
     int lowply_history[LOW_PLY_MAX][12][64];
 
-    // Opaque per-thread handle for the incremental NNUE mirror (see sf_bridge).
+    // Opaque per-thread handle for the incremental NNUE mirror (see nnue_bridge).
     // Owned here: created in init_threads, destroyed on re-init / shutdown.
-    void* sfpos = nullptr;
+    void* nnpos = nullptr;
 
     // Per-thread static-eval cache. Maps a position to its NNUE eval so we can
-    // skip the (expensive ~60% of node time) sf_pos_eval forward pass when the
+    // skip the (expensive ~60% of node time) nn_pos_eval forward pass when the
     // SAME position is evaluated again — aspiration / PVS re-searches and
     // transpositions hit this a lot. Safe because the NNUE accumulator is lazy:
-    // sf_pos_do/undo keep the dirty chain regardless, so a skipped eval is just
+    // nn_pos_do/undo keep the dirty chain regardless, so a skipped eval is just
     // computed later by the first descendant that needs it.
     //   Key = hash_key mixed with fifty: SF's eval is dampened by the 50-move
     //   counter, which hash_key does NOT encode, so fifty MUST be in the key or
@@ -254,7 +254,7 @@ extern void set_finny(bool enabled);
 
 // SingleBoard (single-board eval) and OccIncr (incremental occupancies) were
 // consolidated into the code (2026-06-07): both unconditional now, no toggle.
-// See sf_bridge.cpp (sf_pos_eval sync) and td_occ_update in threads.cpp.
+// See nnue_bridge.cpp (nn_pos_eval sync) and td_occ_update in threads.cpp.
 
 // Time-management tunables (defined in threads.cpp; used by parse_go in uci_mt.cpp).
 extern int g_tm_movestogo;
