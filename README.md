@@ -37,8 +37,10 @@ The previous release, and the first to ship a **NNUE network trained by the auth
 
 ## License
 
-**GPLv3** — see [`COPYING`](COPYING). Triumviratus is a derivative work of **Stockfish** (the SFNNv13 NNUE
-code in `nnue/` and the `nn-*.nnue` networks, GPLv3), so the whole project is distributed under GPLv3.
+**GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13
+evaluation in `nnue/`, GPLv3); the search, the rest of the engine, and the shipped network are the project's own
+(see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is
+distributed under GPLv3**, with Stockfish's copyright notices preserved.
 
 ## Credits
 
