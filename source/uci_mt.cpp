@@ -276,6 +276,9 @@ void uci_loop()
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
+            // --- Tuning / experimental / diagnostic options: hidden in the release build
+            //     (define TRIUMV_RELEASE). Dev/tuning builds expose them for SPSA. ---
+#ifndef TRIUMV_RELEASE
             printf("option name Depth type spin default 0 min 0 max 64\n");
             printf("option name DataLog type check default false\n");
             printf("option name DataFile type string default triumviratus_dataset.txt\n");
@@ -298,11 +301,15 @@ void uci_loop()
             printf("option name LMPBase type spin default 18 min 0 max 20\n");
             printf("option name LMPQuad type spin default 87 min 20 max 300\n"); // /100
             printf("option name CheckExtDepth type spin default 31 min 0 max 128\n"); // P1.9: 128 = sempre (storico)
+#endif
             printf("option name Move Overhead type spin default 50 min 0 max 5000\n"); // ms riservati a lag/GUI per mossa
+#ifndef TRIUMV_RELEASE
             printf("option name EvalCacheUndamp type check default true\n");  // N1: eval-cache senza fifty in chiave (valore undamped)
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
+#endif
             printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // SFNNv13 net (runtime-selezionabile)
+#ifndef TRIUMV_RELEASE
             printf("option name EvalScale type spin default 100 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (SFNNv13)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
@@ -441,6 +448,7 @@ void uci_loop()
             printf("option name TMMaxMult type spin default 582 min 150 max 800\n");        // burst maximum = optimum*questo/100
             printf("option name TMInstab type spin default 81 min 0 max 100\n");            // % headroom su cambio best-move
             printf("option name TMDropDiv type spin default 497 min 200 max 3000\n");       // estensione su eval che cala
+#endif
             printf("option name SyzygyPath type string default <empty>\n");
             printf("uciok\n");
             fflush(stdout);
@@ -501,6 +509,10 @@ void uci_loop()
             wait_for_search_done();
             U64 bench_nodes = 0;
             int bench_t0 = get_time_ms();
+#ifdef TRIUMV_PROFILE
+            prof_eval = prof_mg = prof_make = prof_tt = prof_score = 0;
+            unsigned long long prof_wall = 0;
+#endif
             for (int bi = 0; bi < 8; bi++) {
                 parse_fen((char*)bench_fens[bi]);
                 clear_hash_table();
@@ -521,8 +533,14 @@ void uci_loop()
                     memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
                 }
                 reset_time_control();
+#ifdef TRIUMV_PROFILE
+                unsigned long long _w = prof_now();
+#endif
                 launch_search(bdepth);
                 wait_for_search_done();
+#ifdef TRIUMV_PROFILE
+                prof_wall += prof_now() - _w;
+#endif
                 U64 bn = 0;
                 for (int i = 0; i < num_threads; i++) bn += thread_data[i].nodes;
                 bench_nodes += bn;
@@ -535,6 +553,17 @@ void uci_loop()
             printf("Nodes searched  : %llu\n", (unsigned long long)bench_nodes);
             printf("Time (ms)       : %d\n", bench_el);
             printf("Nodes/second    : %llu\n", (unsigned long long)((bench_nodes * 1000) / bench_el));
+#ifdef TRIUMV_PROFILE
+            { unsigned long long pw = prof_wall ? prof_wall : 1;
+              unsigned long long acc = prof_eval + prof_mg + prof_make + prof_tt + prof_score;
+              printf("--- PROFILE (%% of search wall) ---\n");
+              printf("  eval (NNUE fwd) : %5.1f%%\n", 100.0 * (double)prof_eval  / (double)pw);
+              printf("  movegen         : %5.1f%%\n", 100.0 * (double)prof_mg    / (double)pw);
+              printf("  make+unmake     : %5.1f%%\n", 100.0 * (double)prof_make  / (double)pw);
+              printf("  tt probe+store  : %5.1f%%\n", 100.0 * (double)prof_tt    / (double)pw);
+              printf("  move scoring    : %5.1f%%\n", 100.0 * (double)prof_score / (double)pw);
+              printf("  other (search)  : %5.1f%%\n", 100.0 * (double)(pw - acc) / (double)pw); }
+#endif
             fflush(stdout);
             parse_fen(start_position);
         }

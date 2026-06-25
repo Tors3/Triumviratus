@@ -55,12 +55,26 @@ ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
           -mavx512vbmi -mavx512vbmi2 -mavx512bitalg
 endif
 
+# `make profile` abilita i cycle-counter per-fase (eval/movegen/make/tt/score) nel
+# bench (vedi profile.h). Default = no-op, byte-identico.
+ifeq (profile,$(filter profile,$(MAKECMDGOALS)))
+  DEFS += -DTRIUMV_PROFILE
+endif
+
+# `make release` nasconde dai UCI tutti i parametri di tuning/diagnostica, lasciando
+# solo le opzioni ufficiali (Hash/Threads/Move Overhead/EvalFile/SyzygyPath).
+ifeq (release,$(filter release,$(MAKECMDGOALS)))
+  DEFS += -DTRIUMV_RELEASE
+endif
+
 OPT      := -O3 -funroll-loops
 CXXFLAGS ?= -std=c++17 $(OPT) -w $(DEFS) $(ARCH) -pthread -I. -Ifathom
 CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 
 all: $(EXE)
 avx512: $(EXE)
+profile: $(EXE)
+release: $(EXE)
 
 $(EXE): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ -lpthread -lm
@@ -75,4 +89,4 @@ $(EXE): $(OBJS)
 clean:
 	rm -f $(OBJS) $(EXE)
 
-.PHONY: all avx512 clean
+.PHONY: all avx512 profile release clean

@@ -29,6 +29,10 @@
 #include <fstream>
 #include <string>
 #include "io.h"
+#include "profile.h"
+#ifdef TRIUMV_PROFILE
+unsigned long long prof_eval = 0, prof_mg = 0, prof_make = 0, prof_tt = 0, prof_score = 0;
+#endif
 #include "defs.h"
 
 #include "syzygy.h"
@@ -1000,6 +1004,7 @@ static inline void td_pawn_key_update(ThreadData& td, int piece, int source, int
 }
 
 static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
+    PROF_GUARD(prof_make);
     undo.old_castle = td.castle;
     undo.old_enpassant = td.enpassant;
     undo.old_fifty = td.fifty;
@@ -1184,6 +1189,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 // ============================================================================
 
 static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
+    PROF_GUARD(prof_make);
     sf_pos_undo(td.sfpos);   // retract the move on the incremental NNUE mirror
     td.plies_from_null--;    // P2.2 (speculare al ++ del make riuscito)
     td.side ^= 1;
@@ -1247,6 +1253,7 @@ static inline U64 td_attackers_to(ThreadData& td, int sq, int by) {
 }
 
 static void td_generate_moves(ThreadData& td, moves* move_list, bool captures_only = false) {
+    PROF_GUARD(prof_mg);
     move_list->count = 0;
     int source_square, target_square;
     U64 bitboard, attacks;
@@ -1557,6 +1564,7 @@ static inline void sf_root_sync(ThreadData& td) {
 }
 
 static inline int td_evaluate(ThreadData& td) {
+    PROF_GUARD(prof_eval);
     // DIAGNOSTIC: skip the NNUE forward, return a cheap material eval. Used by the
     // "EvalOff" UCI option to isolate evaluation cost in an NPS profile.
     if (g_eval_off) {
@@ -1738,6 +1746,7 @@ static inline void td_compute_checks(ThreadData& td) {
 }
 
 static inline int td_score_move(ThreadData& td, int move, int tt_move) {
+    PROF_GUARD(prof_score);
     if (move == tt_move) return SCORE_TT_MOVE;
 
     int piece = get_move_piece(move);

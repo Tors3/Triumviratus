@@ -13,6 +13,7 @@
 
 #include "defs.h"
 #include <atomic>
+#include "profile.h"
 
  // Hash flags
 #define hash_flag_exact 0
@@ -206,6 +207,7 @@ inline tt_entry* tt_victim(U64 key) {
  *  ospitano ora la static eval — vedi pack_tt_data.)
  */
 inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, int& tt_eval, bool& is_pv) {
+    PROF_GUARD(prof_tt);
     tt_entry* entry = tt_find(hash_key);
 
     if (!entry) {
@@ -254,6 +256,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
  * 3. Replace if old entry is from different age
  */
 inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false, int eval = tt_eval_none) {
+    PROF_GUARD(prof_tt);
     // Ablazione P0.1 (TTMove24 off): emula il troncamento 21-bit della 3.7.
     if (!g_ttmove24) move &= 0x1FFFFF;
 
