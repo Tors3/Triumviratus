@@ -308,7 +308,11 @@ void uci_loop()
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
 #endif
-            printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // SFNNv13 net (runtime-selezionabile)
+#ifdef TRIUMV_RELEASE
+            printf("option name EvalFile type string default nn-rubicon-alea-v1.nnue\n");  // shipped own-lineage net
+#else
+            printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // dev: SFNNv13 reference net
+#endif
 #ifndef TRIUMV_RELEASE
             printf("option name EvalScale type spin default 100 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (SFNNv13)
             printf("option name EvalCache type check default true\n");

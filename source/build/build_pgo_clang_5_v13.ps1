@@ -15,8 +15,11 @@
 # =============================================================================
 param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
       [string]$Name = "Triumviratus_5.0",
-      [ValidateSet("both","avx512","avx2")][string]$Arch = "avx512")
+      [ValidateSet("both","avx512","avx2")][string]$Arch = "avx512",
+      [switch]$Release)
 $ErrorActionPreference = "Stop"
+# -Release => -DTRIUMV_RELEASE: hides tuning UCI options (ships only Hash/Threads/Move Overhead/EvalFile/SyzygyPath).
+$reldef = if ($Release) { " -DTRIUMV_RELEASE" } else { "" }
 
 $root    = $PSScriptRoot
 $proj    = "$root\Triumviratus_5\Triumviratus_5.0.vcxproj"
@@ -85,7 +88,7 @@ function Build-Variant([string]$tag) {
         if (Test-Path $profDir) { Remove-Item "$profDir\*.profraw" -Force -ErrorAction SilentlyContinue } else { New-Item -ItemType Directory -Force -Path $profDir | Out-Null }
 
         Step 1 "[$tag] FASE 1: build strumentata"
-        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN$extra /clang:-ffp-contract=off" "-t:Rebuild"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-generate -DCLANG_PGO_GEN$extra$reldef /clang:-ffp-contract=off" "-t:Rebuild"
         if ($LASTEXITCODE -ne 0) { throw "[$tag] build strumentata fallita" }
 
         # la rete deve esserci anche dopo il Rebuild
@@ -106,7 +109,7 @@ function Build-Variant([string]$tag) {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $merged)) { throw "[$tag] llvm-profdata merge fallito" }
 
         Step 4 "[$tag] FASE 4: build ottimizzata (-fprofile-use)"
-        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged$extra /clang:-ffp-contract=off" "-t:Rebuild"
+        & $msbuild $proj @common "-p:ClangPgoFlags=-fprofile-use=$merged$extra$reldef /clang:-ffp-contract=off" "-t:Rebuild"
         if ($LASTEXITCODE -ne 0) { throw "[$tag] build ottimizzata fallita" }
 
         if (-not (Test-Path "$outDir\$net5") -and (Test-Path $net5src)) { Copy-Item $net5src "$outDir\$net5" -Force }

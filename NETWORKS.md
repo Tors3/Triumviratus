@@ -47,6 +47,7 @@ explicit **threat features** (which piece attacks which) to the evaluation.
 | **Stage 2** | Leela self-play binpacks (`test79` / `test80`, 2023–2024) — lr **1.3e-3**, λ **0.74**, resumed from Stage 1 |
 | **Hardware** | GCP **g4** (RTX PRO 6000 Blackwell) |
 | **Goal** | close the gap to the strongest Stockfish net while keeping the weights own-lineage; the staged SF-data → Leela-data schedule is exactly how Stockfish trains its own nets |
+| **Result** | ≈ **−40 Elo** vs the strongest Stockfish net at long TC (gap halved from −84 at end of Stage 1 — own nets plateau below Stockfish). In the engine, Triumviratus 5.0 with this net measures **≈ +50 Elo over 4.2** (internal self-play, 20+0.2) |
 
 Trained-by-us **weights** on Stockfish's **architecture** and **trainer** — same honest position as `rubicon-v1`,
 one NNUE generation newer.

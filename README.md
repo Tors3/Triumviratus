@@ -14,11 +14,12 @@
 
 ---
 
-## Triumviratus 5.0 · *in development*
+## Triumviratus 5.0
 
-The current line: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with an
-original, heavily **SPSA-co-tuned** alpha-beta search and multi-threaded **Lazy SMP**. An own-lineage network is in training
-— see [`NETWORKS.md`](NETWORKS.md) for how each shipped network was trained.
+The current release: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with an original, heavily
+**SPSA-co-tuned** alpha-beta search and multi-threaded **Lazy SMP**. Ships the project's own-lineage network
+**`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from scratch). Measures **≈ +50 Elo over 4.2** in internal
+self-play (20+0.2) — see [`NETWORKS.md`](NETWORKS.md) for how each network was trained.
 
 | | |
 |---|---|
@@ -47,7 +48,7 @@ distributed under GPLv3**, with Stockfish's copyright notices preserved.
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing.
 - Search and engine by **Francesco Torsello**.
-- Thanks to **Maurizio Platino** for help validating 4.2 against 4.1 and for the 5.0 SPSA search-tuning,
-  generously contributing his hardware to both efforts.
+- Thanks to **Maurizio Platino** for the SPSA search-tuning and for extensive testing throughout the project,
+  generously contributing his hardware.
 
 <sub>Developed openly and with significant AI assistance.</sub>
