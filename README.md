@@ -19,7 +19,9 @@
 The current release: the **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with an original, heavily
 **SPSA-co-tuned** alpha-beta search and multi-threaded **Lazy SMP**. Ships the project's own-lineage network
 **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from scratch). Measures **≈ +50 Elo over 4.2** in internal
-self-play (20+0.2) — see [`NETWORKS.md`](NETWORKS.md) for how each network was trained.
+self-play (20+0.2), and **≈ +81 Elo over 4.2** at blitz **3min+1s** (61.5%, 100 games, tested by Maurizio Platino) —
+the gap widens at longer time control, as the stronger threats-net pays off with depth. See
+[`NETWORKS.md`](NETWORKS.md) for how each network was trained.
 
 | | |
 |---|---|
