@@ -1,5 +1,5 @@
 # =============================================================================
-#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 5.0 SFNNv13.
+#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 5.1 SFNNv13.
 #  Adattato da build_pgo_clang_5.ps1 (che era BULLET) al motore v13: la rete e'
 #  ora nn-71d6d32cb962.nnue (SFNNv13, caricata a runtime ACCANTO all'exe). Niente
 #  bullet -> niente PGO_BULLET_NET.
@@ -14,7 +14,7 @@
 #  Allena/misura a laptop SCARICO. Toolset: VS LLVM clang + llvm-profdata.
 # =============================================================================
 param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
-      [string]$Name = "Triumviratus_5.0",
+      [string]$Name = "Triumviratus_5.1",
       [ValidateSet("both","avx512","avx2")][string]$Arch = "avx512",
       [switch]$Release)
 $ErrorActionPreference = "Stop"

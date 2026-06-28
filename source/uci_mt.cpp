@@ -223,6 +223,45 @@ void parse_go(char* command)
     launch_search(depth);
 }
 
+// ---------------------------------------------------------------------------
+// SF-faithful setoption parser (mirrors Stockfish ucioption.cpp:42-59).
+// Tokenizes on whitespace: the option name may contain spaces (joined with a
+// single space) and the VALUE is the remaining tokens re-joined with single
+// spaces -> leading/trailing whitespace is trimmed and internal runs collapse,
+// EXACTLY as Stockfish reads SyzygyPath. So a GUI (Fritz/ChessBase) that sends a
+// slightly non-standard spacing is handled identically to SF. Returns true iff
+// 'input' is "setoption name <want> value ..."; writes the normalized value
+// (possibly empty) into out[0..outsz-1].
+static bool parse_setoption(const char* input, const char* want,
+                            char* out, size_t outsz)
+{
+    char buf[10000];
+    strncpy(buf, input, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    const char* SEP = " \t\r\n";
+    char* tok = strtok(buf, SEP);
+    if (!tok || strcmp(tok, "setoption") != 0) return false;
+    tok = strtok(nullptr, SEP);
+    if (!tok || strcmp(tok, "name") != 0) return false;
+
+    // option name: tokens until "value" (name may contain spaces, e.g. SF style)
+    char name[256]; name[0] = '\0';
+    while ((tok = strtok(nullptr, SEP)) != nullptr && strcmp(tok, "value") != 0) {
+        if (name[0]) strncat(name, " ", sizeof(name) - strlen(name) - 1);
+        strncat(name, tok, sizeof(name) - strlen(name) - 1);
+    }
+    if (strcmp(name, want) != 0) return false;
+
+    // value: remaining tokens joined by single spaces (trimmed + normalized)
+    out[0] = '\0';
+    while ((tok = strtok(nullptr, SEP)) != nullptr) {
+        if (out[0]) strncat(out, " ", outsz - strlen(out) - 1);
+        strncat(out, tok, outsz - strlen(out) - 1);
+    }
+    return true;
+}
+
 // main UCI loop - fully compliant with UCI protocol
 void uci_loop()
 {
@@ -269,8 +308,11 @@ void uci_loop()
         if (len > 0 && input[len-1] == '\n')
             input[len-1] = '\0';
 
-        // UCI command: "uci"
-        if (strncmp(input, "uci", 3) == 0)
+        char szpath[4096];   // scratch for SF-style SyzygyPath value parsing
+
+        // UCI command: "uci" (EXACT match: strncmp len 3 would also swallow
+        // "ucinewgame" -> its handler below would be dead code).
+        if (strcmp(input, "uci") == 0)
         {
             printf("id name %s %s\n", NAME, VERSION);
             printf("id author %s\n", AUTHOR);
@@ -313,6 +355,17 @@ void uci_loop()
 #else
             printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // dev: SFNNv13 reference net
 #endif
+            // Gruppo Syzygy STANDARD (come Stockfish & co.): SyzygyPath + le 3 compagne.
+            // Le GUI ChessBase/Fritz riconoscono un motore come "tablebase-capable" dal SET
+            // completo: con la sola SyzygyPath il campo poteva non comparire. Stampate QUI (in
+            // cima, prima del blocco-tuning) -> sempre visibili (cutechess le vede ovunque) e
+            // fuori dal guard TRIUMV_RELEASE (sempre on). SyzygyPath e' wired (carica le TB via
+            // Fathom); le 3 compagne sono advertised-only per ora (il generic-handler le accetta
+            // senza errore) -> default = comportamento reale del motore (50-move on, fino a 7 uomini).
+            printf("option name SyzygyPath type string default <empty>\n");
+            printf("option name SyzygyProbeDepth type spin default 1 min 1 max 100\n");
+            printf("option name Syzygy50MoveRule type check default true\n");
+            printf("option name SyzygyProbeLimit type spin default 7 min 0 max 7\n");
 #ifndef TRIUMV_RELEASE
             printf("option name EvalScale type spin default 100 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (SFNNv13)
             printf("option name EvalCache type check default true\n");
@@ -411,6 +464,7 @@ void uci_loop()
             printf("option name ContHistPruneDepth type spin default 1 min 1 max 12\n");  // PASSO2 SF: gate conthist-prune (SF lmrDepth<6). Col blocco si alza
             printf("option name CutoffStats type spin default 0 min 0 max 1\n");    // diagnostica move-ordering: 1=stampa 'info string FMC ...' (first-move-cutoff rate) a fine ricerca
             printf("option name TTMoveKeep type spin default 1 min 0 max 1\n");      // SF: conserva la TT move sui fail-low senza mossa -> +ttrate ai cut-node. 0=off (byte-identico), 1=on
+            printf("option name TTTwoLevel type spin default 1 min 0 max 1\n");       // 5.1 BAKE ON: TT a 2 livelli (depth-preferred + always-replace), ~-4%% nodi. 0=off (1-via), 1=on
             printf("option name HistPruneMargin type spin default 1481 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 168 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 28 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
@@ -445,6 +499,26 @@ void uci_loop()
             printf("option name RazorQuadCoef type spin default 0 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
             printf("option name RFPDepth type spin default 0 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
             printf("option name RazorDepth type spin default 0 min 0 max 18\n");    // 0=legacy cap; widen toward SF (uncapped)
+            printf("option name IID type spin default 0 min 0 max 1\n");            // Internal Iterative Deepening (5.1): mini-ricerca per OTTENERE una hash move (ordinamento ~SF); 0=off,1=on (spin per il generic handler atoi)
+            printf("option name IIDDepth type spin default 4 min 2 max 12\n");       // profondita' minima per attivare l'IID
+            printf("option name IIDReduction type spin default 2 min 1 max 6\n");    // ply tolti alla mini-ricerca
+            // ⭐ 5.1 riduzione LMR FINE ×1024 stile-SF (default OFF = byte-identico). Coeff in 1/1024 ply.
+            printf("option name LMRFine type spin default 0 min 0 max 1\n");
+            printf("option name LMRFCut type spin default 3995 min 0 max 8000\n");      // cut-node forte
+            printf("option name LMRFCutNoTT type spin default 1059 min 0 max 4000\n");
+            printf("option name LMRFTTCap type spin default 1039 min 0 max 4000\n");
+            printf("option name LMRFTTPv type spin default 2766 min 0 max 8000\n");      // protezione ex-PV
+            printf("option name LMRFPv type spin default 1017 min 0 max 4000\n");
+            printf("option name LMRFSS type spin default 445 min 0 max 2000\n");         // history continua
+            printf("option name LMRFCorr type spin default 160 min 0 max 2000\n");       // eval incerta
+            printf("option name LMRFAll type spin default 272 min 0 max 1200\n");        // scaling ALL-node
+            printf("option name LMRFImprov type spin default 1024 min 0 max 3000\n");
+            printf("option name LMRFEvalCut type spin default 1024 min 0 max 3000\n");
+            printf("option name LMRFCutoff type spin default 1100 min 0 max 4000\n");
+            // ⭐ 5.1 EVAL optimism (SF), default OFF = byte-identico
+            printf("option name EvalOptimism type spin default 0 min 0 max 1\n");
+            printf("option name EvalOptStrength type spin default 137 min 0 max 600\n");
+            printf("option name EvalOptDiv type spin default 81 min 1 max 600\n");
             printf("option name FutilityDepth type spin default 10 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 4 min 3 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name TMMovesToGo type spin default 23 min 12 max 60\n");        // time mgmt: quota base = remaining/questo
@@ -453,7 +527,8 @@ void uci_loop()
             printf("option name TMInstab type spin default 81 min 0 max 100\n");            // % headroom su cambio best-move
             printf("option name TMDropDiv type spin default 497 min 200 max 3000\n");       // estensione su eval che cala
 #endif
-            printf("option name SyzygyPath type string default <empty>\n");
+            // (SyzygyPath spostata in cima alla lista, subito dopo EvalFile — vedi sopra:
+            //  evita il troncamento delle liste lunghe nelle GUI ChessBase/Fritz.)
             printf("uciok\n");
             fflush(stdout);
         }
@@ -1089,23 +1164,20 @@ void uci_loop()
             set_lowply(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
-        // UCI command: "setoption name SyzygyPath value <dir[;dir...]>"
-        // Loading touches global tablebase state; stop any running search first.
-        else if (strncmp(input, "setoption name SyzygyPath value ", 32) == 0)
+        // UCI: "setoption name SyzygyPath value <dir[;dir...]>" — parsed EXACTLY
+        // like Stockfish (whitespace-tokenized, value trimmed/normalized) so any
+        // GUI spacing loads identically. Loading touches global tablebase state;
+        // stop any running search first. Always logs the path received so the
+        // exact string the GUI sent is visible in the engine output (diagnostic).
+        else if (parse_setoption(input, "SyzygyPath", szpath, sizeof(szpath)))
         {
             stop_search_threads();
             wait_for_search_done();
-            char path[1024];
-            strncpy(path, input + 32, sizeof(path) - 1);
-            path[sizeof(path) - 1] = '\0';
-            size_t n = strlen(path);
-            while (n > 0 && (path[n - 1] == '\n' || path[n - 1] == '\r' || path[n - 1] == ' '))
-                path[--n] = '\0';
-            if (syzygy_init(path))
-                printf("info string Syzygy: tablebases loaded (max %u-men) from %s\n",
-                       syzygy_max_pieces(), path);
+            if (syzygy_init(szpath))
+                printf("info string Syzygy: tablebases loaded (max %u-men) from \"%s\"\n",
+                       syzygy_max_pieces(), szpath);
             else
-                printf("info string Syzygy: probing disabled (no tablebases found)\n");
+                printf("info string Syzygy: probing disabled (path=\"%s\")\n", szpath);
             fflush(stdout);
         }
 

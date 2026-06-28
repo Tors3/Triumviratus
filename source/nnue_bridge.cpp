@@ -78,13 +78,19 @@ static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
 // a DIFFERENT scale than the SFNNv10 eval-wrapper the engine's search margins were
 // SPSA-tuned for (pawn ~56 vs ~332) -> the pruning thresholds are mis-sized. This
 // multiplier re-aligns the eval with the existing margins; sweep it at fixed depth.
-static int g_eval_scale_pct = 100;
+static int g_eval_scale_pct = 56;
 
 // Stockfish's eval cp scaling (evaluate.cpp), inlined here with optimism=0 (the
 // engine's static eval is unbiased; optimism is a search-only blend in SF). psqt
 // and positional are the stm-relative raw NNUE outputs of Network::evaluate.
 // material is computed from piece counts (set_pieces zeroes StateInfo, so we do
 // NOT use pos.non_pawn_material()). Returns stm-relative internal-unit value.
+// ⭐ 5.1 EVAL: optimism (SF evaluate.cpp:55,59), default OFF (g_optimism resta 0 -> termine nullo
+// -> byte-identico). g_optimism[stm] e' aggiornato dalla root (search) in unita'-interne SF; il
+// nostro static-eval lo ometteva (=0). Riacceso, ricalibra l'eval come fa SF (contempt dinamico).
+int g_eval_optimism = 1;  // [5.1 BAKE] ON di default (spsa_struct lo ha tenuto a strength=89, non spento)
+int g_optimism[2]   = {0, 0};
+
 static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
     int nnue           = (125 * int(psqt) + 131 * int(positional)) / 128;
     int nnueComplexity = std::abs(int(psqt) - int(positional));
@@ -94,7 +100,14 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
             + int(RookValue) * pos.count<ROOK>() + int(QueenValue) * pos.count<QUEEN>();
     int material = 534 * pos.count<PAWN>() + npm;
 
-    int v = int(std::int64_t(nnue) * (77871 + material) / 77871);
+    int v;
+    if (g_eval_optimism) {
+        int optimism = g_optimism[pos.side_to_move()];
+        optimism += optimism * nnueComplexity / 476;   // SF: blend optimism con la complessita'
+        v = int((std::int64_t(nnue) * (77871 + material)
+                 + std::int64_t(optimism) * (7191 + material)) / 77871);
+    } else
+        v = int(std::int64_t(nnue) * (77871 + material) / 77871);
     v -= v * rule50 / 199;
     if (g_eval_scale_pct != 100)
         v = int(std::int64_t(v) * g_eval_scale_pct / 100);  // re-calibrate to the search margins
@@ -120,9 +133,15 @@ static int load_net_impl(const char* path) {
     // loaded, or with a multi-line "ERROR: ..." block followed by exit(EXIT_FAILURE)
     // when it did not. So if verify() returns at all, the load succeeded; we just echo
     // the info line for visibility (do NOT treat the callback as a failure signal).
+    // g_startup_quiet (main.cpp): when launched by a GUI, stay silent during the
+    // net load so nothing prints before the "uci" handshake. verify() still runs
+    // (it exits on a bad net); we just suppress the success info line.
+    extern bool g_startup_quiet;
     net->verify(path, [](std::string_view s) {
-        std::printf("info string %.*s\n", int(s.size()), s.data());
-        std::fflush(stdout);
+        if (!g_startup_quiet) {
+            std::printf("info string %.*s\n", int(s.size()), s.data());
+            std::fflush(stdout);
+        }
     });
     g_net = std::move(net);
     return 1;
