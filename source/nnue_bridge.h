@@ -50,6 +50,8 @@ void nn_set_verify(int on);
 // this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.
 void nn_set_eval_scale(int pct);
 int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
+int  nn_last_unadjusted(void);  // unadjusted (pre-rule50/scale) dell'ultima nn_scale (thread-local)
+int  nn_finalize(int unadjusted, int rule50);  // ricostruisce l'eval finale dall'unadjusted
 
 // Evaluate a position from scratch (full refresh).
 //   side_white : 1 if white is to move, 0 if black

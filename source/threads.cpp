@@ -121,6 +121,10 @@ static inline int tt_eval_redamp(int v, int fifty) {
     if (fifty > 100) fifty = 100;
     return v * (200 - fifty) / 214;
 }
+// 5.1 LOSSLESS (EvalTTWrite): l'entry eval-only memorizza l'eval SMORZATA + il fifty di store.
+// La si usa SOLO se fifty_store == fifty_now -> il valore e' ESATTAMENTE quello che td_evaluate
+// darebbe (stessa posizione, stesso fifty, deterministico) = zero differenza = tree-neutro.
+// fifty diverso -> trattata come miss (eval fresca): mai un valore approssimato (niente bloat).
 
 // P2.2 (UCI "FastRepScan", default ON): td_is_repetition scandisce solo le ultime
 // min(fifty, plies_from_null) entry invece dell'INTERA storia. fifty e' un bound
@@ -534,6 +538,11 @@ int  g_malus_scale_coef = 58;        // denom = 1024 + coef*indice -> malus = bo
 static bool g_do_deeper = false;
 int  g_dodeeper_base = 43;            // do_deeper se score > best + base + 2*full_depth (SPSA target)
 int  g_doshallower_margin = 9;        // do_shallower se score < best + margin (SPSA target)
+// 5.1 HindsightExt (Pawnocchio): se un nodo non-PV e' stato RIDOTTO di >= margine plies e
+// l'eval e' girata male (static_eval + prev_eval < 0), ri-estendi (+1): la riduzione era un
+// errore "col senno di poi". Default OFF = byte-identico (reduction_stack mai letto).
+static bool g_hindsight_ext = true;   // 5.1 BAKE ON (isolata +12.7 LOS 97.6%% @682g vs 5.1; +61 LOS 100%% vs 5.0). Pawnocchio-style.
+int  g_hindsight_margin = 3;          // ply minimi di riduzione perche' scatti l'hindsight (co-tunabile)
 // BadNoisy (5.0-B, audit SF-master qsearch move-count pruning, default OFF): a nodo qsearch
 // ordinato best-first, dopo N catture provate le rimanenti sono quasi-sempre perdenti -> skip.
 // Niente ricattura/promo. OFF = nessuno skip = byte-identico.
@@ -755,6 +764,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "MalusScaleCoef"))      { g_malus_scale_coef = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "DoDeeper"))            { g_do_deeper = value != 0; return true; }
     if (!strcmp(name, "DoDeeperBase"))        { g_dodeeper_base = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "HindsightExt"))        { g_hindsight_ext = value != 0; return true; }
+    if (!strcmp(name, "HindsightMargin"))     { g_hindsight_margin = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "DoShallowerMargin"))   { g_doshallower_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "BadNoisy"))            { g_bad_noisy = value != 0; return true; }
     if (!strcmp(name, "BadNoisyCount"))       { g_bad_noisy_count = value < 1 ? 1 : value; return true; }
@@ -951,6 +962,7 @@ void init_threads(int thread_count) {
         memset(thread_data[i].pv_table, 0, sizeof(thread_data[i].pv_table));
         memset(thread_data[i].pv_length, 0, sizeof(thread_data[i].pv_length));
         memset(thread_data[i].eval_stack, 0, sizeof(thread_data[i].eval_stack));
+        memset(thread_data[i].reduction_stack, 0, sizeof(thread_data[i].reduction_stack));
         // Zero the eval cache once. Entries stay valid across searches (the
         // 64-bit key guards correctness), so we deliberately do NOT clear it
         // per-go — that preserves hits from transpositions across moves.
@@ -2436,9 +2448,12 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
         best_score = -infinity;
     }
     else {
-        // P1.1 TTStaticEval: come nel negamax (TT = de-smorzata, ri-smorza qui).
-        q_raw_eval = (g_tt_static_eval && tt_hit && tt_eval != tt_eval_none)
-                     ? tt_eval_redamp(tt_eval, td.fifty) : td_evaluate(td);
+        // P1.1 TTStaticEval: come nel negamax. flag_none = entry eval-only (EvalTTWrite):
+        // UNADJUSTED -> nn_finalize(fifty corrente), esatto su ogni trasposizione.
+        q_raw_eval = (g_tt_static_eval && tt_eval != tt_eval_none)
+                     ? (tt_flag == hash_flag_none ? nn_finalize(tt_eval, td.fifty)
+                                                  : tt_eval_redamp(tt_eval, td.fifty))
+                     : td_evaluate(td);
         int stand_pat = q_raw_eval;
         // FIX P0.4 (2026-06-09): la correction history ora corregge ANCHE lo
         // stand-pat di quiescence (dove avviene la maggioranza delle eval);
@@ -2917,16 +2932,21 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // tempo-nodo). In TT vive DE-smorzata dal rule50 -> ri-smorza col fifty
         // CORRENTE (fix staleness). raw resta PURA pre-correction (la corr e'
         // appresa/tempo-variante, si riapplica fresca qui sotto).
+        // flag_none = entry eval-only (EvalTTWrite, SF-style): l'UNADJUSTED cachato si ri-finalizza
+        // col fifty corrente (nn_finalize) -> ESATTO come td_evaluate su ogni trasposizione.
+        // Entry reale: eval de-smorzata -> redamp (path validato +44).
         node_raw_eval = (g_tt_static_eval && tt_eval != tt_eval_none)
-                        ? tt_eval_redamp(tt_eval, td.fifty) : td_evaluate(td);
+                        ? (tt_flag == hash_flag_none ? nn_finalize(tt_eval, td.fifty)
+                                                     : tt_eval_redamp(tt_eval, td.fifty))
+                        : td_evaluate(td);
         static_eval = node_raw_eval;
         if (g_corr_hist) { corr_val = td_corr_value(td, corr_idx); static_eval += corr_val; }
         td.eval_stack[td.ply] = static_eval;
-        // 5.1 (SF search.cpp:830): su un MISS abbiamo appena pagato la forward NNUE;
-        // cache l'eval PURA in TT subito (entry inerte) cosi' i nodi potati prima del
-        // fine-nodo non ricalcolano la forward alla rivisita. SAFE (no eviction mosse).
+        // 5.1 (SF :830): su un MISS abbiamo appena pagato la forward NNUE -> cache l'UNADJUSTED
+        // (nn_last_unadjusted, fifty-indep) nello slot naturale (no pollution) cosi' i nodi potati
+        // non ricalcolano la forward alla rivisita. tt_eval==none qui => td_evaluate() appena chiamato.
         if (g_eval_tt_write && tt_eval == tt_eval_none)
-            tt_cache_eval(td.hash_key, tt_eval_undamp(node_raw_eval, td.fifty));
+            tt_cache_eval(td.hash_key, nn_last_unadjusted());
     }
 
     // P1.1 (2026-06-09): "improved eval" stile SF — se la TT ha uno score il cui
@@ -2994,6 +3014,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         }
     }
 
+    // 5.1 HindsightExt (Pawnocchio): se QUESTO nodo non-PV e' stato RIDOTTO (LMR) dal padre di
+    // >= margine plies e l'eval e' girata male (static_eval + prev_eval < 0), ri-estendi (+1):
+    // la riduzione era un errore "col senno di poi". reduction_stack settato dal padre pre-recursione.
+    // Default OFF = byte-identico (reduction_stack mai letto). Non in scacco/singular/PV/root.
+    if (g_hindsight_ext && !pv_node && !excluded_move && !in_check && td.ply >= 1
+        && td.eval_stack[td.ply - 1] != EVAL_NONE
+        && td.reduction_stack[td.ply] >= g_hindsight_margin
+        && static_eval + td.eval_stack[td.ply - 1] < 0)
+        depth++;
+
     // Reverse futility pruning (skip when beta is a mate bound: don't cut a
     // potential mate search short based on a static evaluation). When improving,
     // shave one ply off the margin (easier cutoff): a rising eval is more likely
@@ -3028,6 +3058,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             td.hash_key ^= side_key;
 
             td.ply++;
+            td.reduction_stack[td.ply] = 0;   // HindsightExt: il figlio null-move non e' "ridotto-LMR"
             td.repetition_table[++td.repetition_index] = td.hash_key;
 
             // Null move: the child has no "previous move" for counter-move.
@@ -3129,6 +3160,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
                 UndoInfo undo;
                 td.ply++;
+                td.reduction_stack[td.ply] = 0;   // HindsightExt: probcut child non e' "ridotto-LMR"
                 td.repetition_table[++td.repetition_index] = td.hash_key;
                 if (!td_make_move(td, move, undo)) {
                     td.ply--;
@@ -3397,6 +3429,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
         UndoInfo undo;
         td.ply++;
+        td.reduction_stack[td.ply] = 0;   // HindsightExt: default 0 (figlio non ridotto); override sotto solo per il reduced-search LMR
         td.repetition_table[++td.repetition_index] = td.hash_key;
 
         if (!td_make_move(td, move, undo)) {
@@ -3554,11 +3587,13 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
             // Reduced-depth zero-window search (LMR). reduced_depth = depth-1-r.
             int reduced_depth = depth - 1 - reduction;
+            td.reduction_stack[td.ply] = reduction;   // HindsightExt: il figlio sa di essere stato ridotto di `reduction` plies
             score = -td_negamax(td, -alpha - 1, -alpha, reduced_depth, true);
 
             // Full-depth re-search when the reduced search fails high.
             int full_depth = depth - 1;
             if (score > alpha && reduction > 0) {
+                td.reduction_stack[td.ply] = 0;   // HindsightExt: la re-search e' a profondita' PIENA -> reduction=0 per il figlio
                 // DoDeeper/DoShallower (SF :doDeeperSearch): se la re-search batte il best
                 // di molto cerca piu' a fondo (+1), se lo batte di poco piu' a corto (-1).
                 // best_score qui = best delle mosse PRECEDENTI (running best, come SF bestValue).

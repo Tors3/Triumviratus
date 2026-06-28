@@ -19,6 +19,10 @@
 #define hash_flag_exact 0
 #define hash_flag_alpha 1
 #define hash_flag_beta 2
+// hash_flag_none (5.1): BOUND_NONE per le entry "eval-only" (no score/move/depth validi).
+// Vale 3 = valore libero del campo flag a 2 bit; i consumatori confrontano == exact/alpha/beta
+// (0/1/2) -> flag=3 IGNORATO ovunque. Definito qui (serve a probe_tt, piu' sotto).
+#define hash_flag_none 3
 
 // ABDADA busy flag - indicates node is being searched
 #define TT_BUSY_DEPTH 255
@@ -79,6 +83,9 @@ inline int unpack_ext_eval(U64 ext, U64 hash_key) {
     int v = (int)(ext & 0xFFFF) - 32768;
     return (v > 30000 || v < -30000) ? tt_eval_none : v;
 }
+// 5.1 EvalTTWrite (SF-style): l'entry eval-only memorizza l'UNADJUSTED (pre-rule50/scale,
+// fifty-independent) via pack_ext normale; in lettura nn_finalize() lo ri-finalizza col fifty
+// corrente -> esatto su QUALSIASI trasposizione (niente vincolo same-fifty = max cache-hit).
 
 // Global TT
 extern tt_entry* hash_table;
@@ -90,6 +97,12 @@ extern int current_age;
 // maps to a bucket of 4 consecutive entries; probe scans the bucket, store picks
 // an age-aware victim (prefer empty -> oldest -> shallowest).
 extern bool g_tt_4way;
+
+// 5.1: TT "two-level" (UCI "TTTwoLevel") — schema #1 nei paper (Maastricht): ogni
+// indice = bucket di 2 slot, slot0 = DEPTH-PREFERRED (tieni le entry profonde),
+// slot1 = ALWAYS-REPLACE (tieni la piu' RECENTE = recency per la ri-visitazione).
+// Mutuamente esclusivo col 4way. Mira al gap ttrate (move-availability) misurato 25% vs 46% SF.
+extern bool g_tt_twolevel;
 
 // TTMove24 (UCI "TTMove24", default ON) — ablazione del FIX P0.1: quando OFF lo
 // store tronca la mossa a 21 bit come la 3.7 (i flag double/ep/castling si perdono
@@ -155,12 +168,17 @@ inline void new_search() {
 
 // ---- Bucket addressing (1-way vs 4-way) ------------------------------------
 // Number of slots per bucket.
-inline int tt_ways() { return g_tt_4way ? 4 : 1; }
+inline int tt_ways() { return g_tt_twolevel ? 2 : (g_tt_4way ? 4 : 1); }
 
 // First slot index of the bucket for this key. For 4-way, there are
 // (hash_entries/4) buckets, each 4 slots wide; hash_entries is always a multiple
 // of 4 (= mb * 65536), so base + 3 stays in bounds.
 inline U64 tt_base_index(U64 key) {
+    if (g_tt_twolevel) {
+        U64 buckets = hash_entries >> 1;     // entries/2 bucket da 2 slot (entries multiplo di 4 -> base+1 in bounds)
+        if (buckets == 0) buckets = 1;
+        return (key % buckets) << 1;
+    }
     if (g_tt_4way) {
         U64 buckets = hash_entries >> 2;
         if (buckets == 0) buckets = 1;
@@ -238,6 +256,12 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
         entry->key  = hash_key ^ new_data;
     }
 
+    // 5.1 EvalTTWrite: l'entry eval-only (flag_none) fornisce SOLO tt_eval per saltare la
+    // forward NNUE -> NON e' un vero TT-hit. Ritorna false cosi' IIR/IID/riduzioni gated su
+    // tt_hit restano invariate (era la 2a meta' del tree-bloat). tt_eval/tt_flag(none) restano
+    // popolati per il rescale lossless ai siti di lettura. Dormiente con EvalTTWrite OFF.
+    if (tt_flag == hash_flag_none) return false;
+
     return true;
 }
 
@@ -293,6 +317,18 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
             return;
         }
     }
+    else if (g_tt_twolevel) {
+        // Two-level: slot0 DEPTH-PREFERRED, slot1 ALWAYS-REPLACE. Scrivi in slot0 se
+        // e' vuoto / di un'eta' vecchia (stale) / il nuovo e' >= profondo; altrimenti
+        // slot1 (conserva la entry profonda in slot0, la recency in slot1).
+        U64 base = tt_base_index(hash_key);
+        tt_entry* s0 = &hash_table[base];
+        bool s0_empty = (s0->key == 0 && s0->data == 0);
+        if (s0_empty || unpack_age(s0->data) != current_age || depth >= unpack_depth(s0->data))
+            entry = s0;
+        else
+            entry = &hash_table[base + 1];
+    }
     else {
         // Not present: evict an age-aware victim from the bucket.
         entry = tt_victim(hash_key);
@@ -303,6 +339,39 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
     entry->data = new_data;
     entry->key = hash_key ^ new_data;
     entry->ext = new_ext;
+}
+
+extern bool g_eval_tt_write;   // 5.1: cache static eval su MISS (SF search.cpp:830) -> NPS
+
+// Cache-only dello static eval su un nodo MISS (non ancora cercato), stile SF (:830).
+// 5.1: memorizza l'UNADJUSTED (pre-rule50/scale, fifty-independent) -> la rivisita lo
+// ri-finalizza con nn_finalize(corrente fifty), esatto su ogni trasposizione (max hit, no bloat).
+inline void tt_cache_eval(U64 hash_key, int unadjusted) {
+    U64 new_ext = pack_ext(unadjusted, hash_key);
+    if (new_ext == 0) return;
+    tt_entry* entry = tt_find(hash_key);
+    if (entry) {
+        // stessa posizione: aggiorna l'eval SOLO se gia' eval-only (stesso formato smorzato);
+        // un'entry REALE ha l'eval de-smorzata -> NON toccarla (corruzione).
+        if (unpack_flag(entry->data) == hash_flag_none) entry->ext = new_ext;
+        return;
+    }
+    // CHIAVE (fix pollution, come SF :830 ttWriter): scrivi nello slot-VICTIM NATURALE della
+    // posizione — lo STESSO che userebbe lo store reale a fine-nodo (replicando la victim-selection
+    // di store_tt) — NON in uno slot vuoto a caso. Cosi' l'eval pre-riempie l'entry naturale e lo
+    // store reale la rileva (tt_find) e la aggiorna IN PLACE: net occupancy ZERO = niente entry
+    // fantasma = niente bloat. (La versione 'solo-slot-vuoti' creava 2 entry -> +50%% nodi.)
+    if (g_tt_twolevel) {
+        U64 base = tt_base_index(hash_key);
+        tt_entry* s0 = &hash_table[base];
+        bool s0_empty = (s0->key == 0 && s0->data == 0);
+        entry = (s0_empty || unpack_age(s0->data) != current_age || 0 >= unpack_depth(s0->data))
+                ? s0 : &hash_table[base + 1];
+    } else {
+        entry = tt_victim(hash_key);     // 4-way / 1-way: identico victim di store_tt
+    }
+    U64 d = pack_tt_data(0, 0, 0, hash_flag_none, current_age, 0);
+    entry->data = d; entry->key = hash_key ^ d; entry->ext = new_ext;
 }
 
 /*

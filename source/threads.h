@@ -36,6 +36,7 @@ struct ThreadData {
     // Search state
     int ply;
     U64 nodes;
+    U64 tb_hits;   // Syzygy probe riusciti (WDL in-search) -> campo UCI "tbhits" (= "TBAs" in Fritz)
 
     // Move that led to each ply (0 = root / null move). Used by the
     // counter-move heuristic to know the "previous move" at a node.
@@ -93,6 +94,10 @@ struct ThreadData {
     // di recente. Letto nella LMR (riduci di piu' se il figlio cutta molto). +8 slack
     // come gli altri stack ply-indicizzati. Tracciato sempre; usato solo se penalty>0.
     int cutoff_cnt[max_ply + 8];
+    // 5.1 HindsightExt (Pawnocchio): riduzione LMR con cui QUESTO nodo e' stato cercato
+    // (settata dal padre prima della recursione). Se >= margine e l'eval e' girata male,
+    // il nodo ri-estende (la riduzione era un errore "col senno di poi"). +8 slack.
+    int reduction_stack[max_ply + 8];
 
     // Results
     int best_move;
@@ -113,6 +118,7 @@ struct ThreadData {
     U64 fh_move_sum = 0;
     U64 fh_tt = 0;        // cut-node con tt_move presente
     U64 fh_tt_first = 0;  // cut-node con tt_move presente E cutoff sulla 1a mossa
+    U64 fh_probe = 0;     // cut-node con ENTRY TT presente (a prescindere dalla mossa) -> disambigua move-rate vs entry-hit
 
     // Correction history: learned (search - static_eval) gap bucketed by
     // [side][pawn-structure key]. Size MUST match CORR_SIZE (1<<14) in threads.cpp.

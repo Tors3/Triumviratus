@@ -79,6 +79,10 @@ static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
 // SPSA-tuned for (pawn ~56 vs ~332) -> the pruning thresholds are mis-sized. This
 // multiplier re-aligns the eval with the existing margins; sweep it at fixed depth.
 static int g_eval_scale_pct = 56;
+// 5.1 EvalTTWrite: ultimo valore UNADJUSTED (pre-rule50, pre-EvalScale) calcolato da nn_scale
+// su QUESTO thread = lo "unadjustedStaticEval" di SF, fifty-independent -> si cacha questo e si
+// ri-finalizza col fifty corrente (hit su TUTTE le trasposizioni, sempre esatto).
+static thread_local int g_last_unadjusted = 0;
 
 // Stockfish's eval cp scaling (evaluate.cpp), inlined here with optimism=0 (the
 // engine's static eval is unbiased; optimism is a search-only blend in SF). psqt
@@ -108,6 +112,7 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
                  + std::int64_t(optimism) * (7191 + material)) / 77871);
     } else
         v = int(std::int64_t(nnue) * (77871 + material) / 77871);
+    g_last_unadjusted = v;   // PRE rule50/EvalScale: SF unadjustedStaticEval (fifty-independent)
     v -= v * rule50 / 199;
     if (g_eval_scale_pct != 100)
         v = int(std::int64_t(v) * g_eval_scale_pct / 100);  // re-calibrate to the search margins
@@ -169,6 +174,17 @@ void        nn_set_incremental(int on) { g_incremental = on != 0; }
 void        nn_set_verify(int on) { g_verify = on != 0; }
 void        nn_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
 int         nn_get_eval_scale(void) { return g_eval_scale_pct; }   // per normalizzare 'score cp' in stampa (undo EvalScale, SF-style)
+// 5.1 EvalTTWrite (SF-style): l'unadjusted dell'ultima nn_scale su questo thread (fifty-indep).
+int         nn_last_unadjusted(void) { return g_last_unadjusted; }
+// Ri-finalizza l'unadjusted col rule50 corrente: IDENTICO a un td_evaluate fresco (stesse op di
+// nn_scale 111-114) per QUALSIASI fifty -> la cache eval e' esatta su ogni trasposizione.
+int         nn_finalize(int unadjusted, int rule50) {
+    int v = unadjusted;
+    v -= v * rule50 / 199;
+    if (g_eval_scale_pct != 100)
+        v = int(std::int64_t(v) * g_eval_scale_pct / 100);
+    return std::clamp(v, int(VALUE_TB_LOSS_IN_MAX_PLY) + 1, int(VALUE_TB_WIN_IN_MAX_PLY) - 1);
+}
 
 // ---------------------------------------------------------------------------
 // Per-thread handle

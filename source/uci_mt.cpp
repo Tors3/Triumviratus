@@ -465,6 +465,7 @@ void uci_loop()
             printf("option name CutoffStats type spin default 0 min 0 max 1\n");    // diagnostica move-ordering: 1=stampa 'info string FMC ...' (first-move-cutoff rate) a fine ricerca
             printf("option name TTMoveKeep type spin default 1 min 0 max 1\n");      // SF: conserva la TT move sui fail-low senza mossa -> +ttrate ai cut-node. 0=off (byte-identico), 1=on
             printf("option name TTTwoLevel type spin default 1 min 0 max 1\n");       // 5.1 BAKE ON: TT a 2 livelli (depth-preferred + always-replace), ~-4%% nodi. 0=off (1-via), 1=on
+            printf("option name EvalTTWrite type spin default 0 min 0 max 1\n");       // cache static eval su MISS (SF :830). PROVATO 1-via=albero x1.87 (roundtrip eval). Re-test con two-level. 0=off, 1=on
             printf("option name HistPruneMargin type spin default 1481 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 168 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 28 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
@@ -491,6 +492,8 @@ void uci_loop()
             printf("option name MalusScaleCoef type spin default 45 min 0 max 200\n");
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
             printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
+            printf("option name HindsightExt type spin default 1 min 0 max 1\n");    // 5.1 BAKE ON (Pawnocchio): ri-estendi nodi ridotti se l'eval e' girata male
+            printf("option name HindsightMargin type spin default 3 min 1 max 12\n");
             printf("option name DoShallowerMargin type spin default 9 min 0 max 200\n");
             printf("option name BadNoisy type spin default 0 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
             printf("option name BadNoisyCount type spin default 6 min 1 max 32\n");
