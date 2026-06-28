@@ -3756,8 +3756,13 @@ static void print_search_info(ThreadData& td, int depth, int score) {
             depth, td.seldepth, (mate_value - score) / 2 + 1, total, nps, elapsed, tbhits);
     }
     else {
+        // Normalizza 'score cp' alla scala-pedone (SF-style): la search lavora sul valore
+        // COMPRESSO da EvalScale, ma il display va riportato alla scala vera -> cp = score*100/EvalScale.
+        // No-op a EvalScale=100 (display 5.0 invariato); a 56 ri-gonfia il numero deflazionato.
+        int es = nn_get_eval_scale();
+        int cp = (es == 100) ? score : (int)((long long)score * 100 / es);
         printf("info depth %d seldepth %d score cp %d nodes %llu nps %llu time %d tbhits %llu pv ",
-            depth, td.seldepth, score, total, nps, elapsed, tbhits);
+            depth, td.seldepth, cp, total, nps, elapsed, tbhits);
     }
 
     for (int i = 0; i < td.pv_length[0]; i++) {

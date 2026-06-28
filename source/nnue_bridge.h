@@ -49,6 +49,7 @@ void nn_set_verify(int on);
 // a different scale than the engine's SPSA-tuned (for SFNNv10) search margins expect;
 // this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.
 void nn_set_eval_scale(int pct);
+int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
 
 // Evaluate a position from scratch (full refresh).
 //   side_white : 1 if white is to move, 0 if black
