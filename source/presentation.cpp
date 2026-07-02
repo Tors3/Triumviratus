@@ -52,7 +52,7 @@ void ascii_art() {
         "    ==========================          (( \\_  \\",
         "                                         ))  `\\_)",
         "    Chess Engine                        (/     \\",
-        "    Version 4.0                         | _.-'|",
+        "    Version 5.1                         | _.-'|",
         "                                         )___(",
         "    [+] NNUE Evaluation                 (=====)",
         "    [+] Syzygy Tablebases               }====={",

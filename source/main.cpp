@@ -26,10 +26,21 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <io.h>            // _isatty/_fileno: rileva se stdin e' un terminale (no GUI)
+#define STDIN_IS_TTY (_isatty(_fileno(stdin)) != 0)
 #else
 #include <unistd.h>        // readlink (/proc/self/exe) per risolvere la dir dell'eseguibile
 #include <sys/resource.h>  // setrlimit(RLIMIT_STACK): stack grande per i thread di ricerca
+#define STDIN_IS_TTY (isatty(fileno(stdin)) != 0)
 #endif
+
+// Startup SILENZIOSO quando il motore e' lanciato da una GUI (stdin non e' un
+// TTY). Un motore UCI deve essere MUTO finche' non risponde a "uci" con
+// id/option/uciok: banner o info string PRIMA di "id name" possono corrompere il
+// modo in cui una GUI severa (ChessBase/Fritz) registra le opzioni del motore
+// (es. poi non gli invia mai SyzygyPath -> tablebase mai usate). Gli umani in
+// terminale vedono comunque banner + info. Letto da main e da nnue_bridge.
+bool g_startup_quiet = false;
 
 // Resolve an NNUE net filename to a path that exists, INDEPENDENT of the current
 // working directory. Match runners / GUIs (e.g. cutechess) often launch the
@@ -141,8 +152,12 @@ int main()
         }
     }
 #endif
-    // Banner di presentazione (appena si apre il motore)
-    ascii_art();
+    // Rileva se siamo lanciati da una GUI (stdin non-TTY) -> startup muto.
+    g_startup_quiet = !STDIN_IS_TTY;
+
+    // Banner di presentazione (solo in terminale interattivo, mai verso una GUI)
+    if (!g_startup_quiet)
+        ascii_art();
 
     // Initialize all bitboards and attack tables (silent)
     init_bitboards();
@@ -169,8 +184,10 @@ int main()
                   << std::endl;
         return 1;
     }
-    printf("info string Net: %s (Stockfish SFNNv13)\n", netName);
-    fflush(stdout);
+    if (!g_startup_quiet) {
+        printf("info string Net: %s (Stockfish SFNNv13)\n", netName);
+        fflush(stdout);
+    }
 
     // (Policy-net: rimossa 2026-06-11 — capitolo chiuso, vedi notes/ §P5.)
 
@@ -178,7 +195,7 @@ int main()
     // (x64\Release\Syzygy). The "SyzygyPath" UCI option overrides this at runtime.
     {
         std::string tbDir = default_syzygy_dir();
-        if (syzygy_init(tbDir.c_str()))
+        if (syzygy_init(tbDir.c_str()) && !g_startup_quiet)
             printf("info string Syzygy: %u-men tablebases loaded from %s\n",
                    syzygy_max_pieces(), tbDir.c_str());
     }

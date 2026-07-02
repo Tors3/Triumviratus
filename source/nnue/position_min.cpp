@@ -46,10 +46,49 @@ inline void add_dirty_threat(DirtyThreats* const dts,
                              Square              threatenedSq) {
     dts->list.push_back({pc, threatened, s, threatenedSq, putPiece});
 }
+
+#ifdef USE_AVX512ICL
+// F-009 (audit 2026-07-02): port VERBATIM del path VETTORIZZATO del master
+// (position.cpp:1160, gia' vendored in nnue/position.cpp ma mai compilato qui:
+// il primo port prese solo il ramo scalare). Emette TUTTI i tuple di minaccia
+// di una bitboard in una manciata di op AVX512-VBMI invece del loop pop_lsb
+// con load piece_on per-casella. Attivo solo su build avx512 (USE_AVX512ICL);
+// le build avx2 restano sul fallback scalare sotto.
+template<int SqShift, int PcShift>
+void write_multiple_dirties(const Position& p,
+                            Bitboard        mask,
+                            DirtyThreat     dt_template,
+                            DirtyThreats*   dts) {
+    static_assert(sizeof(DirtyThreat) == 4);
+
+    const __m512i board    = _mm512_loadu_si512(p.piece_array().data());
+    const int     dt_count = popcount(mask);
+    assert(dt_count <= 16);
+
+    const __m512i template_v = _mm512_set1_epi32(dt_template.raw());
+    auto*         write      = dts->list.make_space(dt_count);
+
+    // Extract the list of squares and upconvert to 32 bits. There are never more than 16
+    // incoming threats so this is sufficient.
+    __m512i threat_squares = _mm512_maskz_compress_epi8(mask, AllSquares);
+    threat_squares         = _mm512_cvtepi8_epi32(_mm512_castsi512_si128(threat_squares));
+
+    __m512i threat_pieces =
+      _mm512_maskz_permutexvar_epi8(0x1111111111111111ULL, threat_squares, board);
+
+    // Shift the piece and square into place
+    threat_squares = _mm512_slli_epi32(threat_squares, SqShift);
+    threat_pieces  = _mm512_slli_epi32(threat_pieces, PcShift);
+
+    const __m512i dirties =
+      _mm512_ternarylogic_epi32(template_v, threat_squares, threat_pieces, 254 /* A | B | C */);
+    _mm512_storeu_si512(write, dirties);
+}
+#endif
 }  // namespace
 
-// Ported VERBATIM from the master Position::update_piece_threats (non-ICL scalar
-// path; we never define USE_AVX512ICL). Emits the FullThreats tuples that change
+// Ported VERBATIM from the master Position::update_piece_threats (entrambi i
+// path: scalare + ICL vettorizzato — F-009 2026-07-02). Emits the FullThreats tuples that change
 // when piece `pc` is placed on (putPiece=true) / removed from (putPiece=false)
 // square `s`. ComputeRay handles discovered slider threats along a moved-piece ray;
 // noRaysContaining skips a discovered ray fully contained in the move's from|to.
@@ -122,24 +161,49 @@ void Position::update_piece_threats(Piece               pc,
           (attacks_bb<PAWN>(s, WHITE) & blackPawns) | (attacks_bb<PAWN>(s, BLACK) & whitePawns);
     }
 
+#ifdef USE_AVX512ICL
+    // F-009: emissione vettoriale. `sliders` non e' ancora consumato qui (la
+    // lambda lo svuota dopo) -> i loro attacchi DIRETTI entrano in all_attackers
+    // e process_sliders viene chiamata con addDirectAttacks=false (solo discovered).
+    DirtyThreat dt_template{pc, NO_PIECE, s, Square(0), putPiece};
+    write_multiple_dirties<DirtyThreat::ThreatenedSqOffset, DirtyThreat::ThreatenedPcOffset>(
+      *this, threatened, dt_template, dts);
+
+    Bitboard all_attackers = sliders | incoming_threats;
+
+    dt_template = {NO_PIECE, pc, Square(0), s, putPiece};
+    write_multiple_dirties<DirtyThreat::PcSqOffset, DirtyThreat::PcOffset>(*this, all_attackers,
+                                                                           dt_template, dts);
+#else
     while (threatened)
     {
         Square threatenedSq = pop_lsb(threatened);
         Piece  threatenedPc = piece_on(threatenedSq);
         add_dirty_threat(dts, putPiece, pc, threatenedPc, s, threatenedSq);
     }
+#endif
 
     if constexpr (ComputeRay)
+    {
+#ifndef USE_AVX512ICL
         process_sliders(true);
+#else  // for ICL, direct threats were processed earlier (all_attackers)
+        process_sliders(false);
+#endif
+    }
     else
+    {
         incoming_threats |= sliders;
+    }
 
+#ifndef USE_AVX512ICL
     while (incoming_threats)
     {
         Square srcSq = pop_lsb(incoming_threats);
         Piece  srcPc = piece_on(srcSq);
         add_dirty_threat(dts, putPiece, srcPc, pc, srcSq, s);
     }
+#endif
 }
 
 template void Position::update_piece_threats<true>(Piece, bool, Square, DirtyThreats* const, Bitboard) const;

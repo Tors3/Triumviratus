@@ -43,7 +43,7 @@ char mapPieceToPromotion(int piece) {
 }
 
 int quit = 0;
-int movestogo = 30;
+int movestogo = 0;   // FIX F-003: 0 = "non ricevuto dalla GUI" (vedi reset_time_control)
 int movetime = -1;
 int time_uci = -1;
 int inc = 0;

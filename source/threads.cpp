@@ -506,7 +506,10 @@ int g_fut_improving = 151;    // extra futility margin when improving           
 static bool g_cap_futility = true;   // CaptureFutility (UCI spin 0/1)
 int g_capfut_base  = 124;   // cp base margin
 int g_capfut_mult  = 199;   // cp per reduced-depth ply (mirrors our quiet g_fut_mult scale)
-int g_capfut_chist = 125;   // capture-history contribution, /1024 (SF=131; our capt-hist clamp +/-7000 -> max ~896cp)
+int g_capfut_chist = 123;   // [F-002 audit 2026-07-02: 125->123, SPSA+SPRT] capture-history contribution, /1024
+                            // (SF=131; our capt-hist clamp +/-7000 -> max ~896cp). Extremi testati: 60=-45 Elo,
+                            // 140=-25 Elo (LOS 0.4%/2%, entrambi conclusivi) -> ottimo STRETTO attorno al default;
+                            // 123 neutro/lean positivo a 10+0.1 (+0.9) e 20+0.2 (+8.7), mai negativo -> bakato.
 int g_capfut_depth = 7;     // reduced-depth gate (FIXED small int, NOT a primary SPSA target)
 // --- Other missing SF-master cut features (ported 2026-06-23, ALL default OFF/legacy = byte-identical).
 //     SPSA targets = the cp MARGINS (wide range); toggles + small-int gates are NOT primary SPSA targets.
@@ -542,7 +545,16 @@ int  g_doshallower_margin = 9;        // do_shallower se score < best + margin (
 // l'eval e' girata male (static_eval + prev_eval < 0), ri-estendi (+1): la riduzione era un
 // errore "col senno di poi". Default OFF = byte-identico (reduction_stack mai letto).
 static bool g_hindsight_ext = true;   // 5.1 BAKE ON (isolata +12.7 LOS 97.6%% @682g vs 5.1; +61 LOS 100%% vs 5.0). Pawnocchio-style.
-int  g_hindsight_margin = 3;          // ply minimi di riduzione perche' scatti l'hindsight (co-tunabile)
+int  g_hindsight_margin = 4;          // [F-006 audit 2026-07-02: 3->4, SPRT +5.96 Elo LOS75% @408g] ply minimi
+                                      // di riduzione perche' scatti l'hindsight (soglia piu' selettiva = meno
+                                      // ri-estensioni sprecate)
+// 5.1 HindsightRed (Stormphrax #300, complemento dell'extend): se un nodo non-PV e' stato RIDOTTO
+// >= margine plies e l'eval e' girata BENE (static_eval + prev_eval >= soglia), RIDUCI (-1): la
+// posizione regge nonostante la riduzione -> risparmia nodi. Default OFF (in test). Soglia in scala
+// EvalScale-compressa (Stormphrax usa 202 in scala piena ~= 113 nostra).
+static bool g_hindsight_red = false;
+int  g_hindsight_red_margin = 2;      // ply minimi di riduzione (Stormphrax usa 2)
+int  g_hindsight_red_thresh = 113;    // static_eval + prev_eval >= soglia (co-tunabile)
 // BadNoisy (5.0-B, audit SF-master qsearch move-count pruning, default OFF): a nodo qsearch
 // ordinato best-first, dopo N catture provate le rimanenti sono quasi-sempre perdenti -> skip.
 // Niente ricattura/promo. OFF = nessuno skip = byte-identico.
@@ -564,6 +576,34 @@ int  g_razor_depth_cap = 6;           // RazorDepth: >0 overrides razor depth ca
 static bool g_iid = false;
 int  g_iid_depth = 4;                  // IIDDepth: profondita' minima per attivare l'IID
 int  g_iid_reduction = 2;              // IIDReduction: ply tolti alla mini-ricerca (iid_depth = depth - r)
+// ---- F-002/F-004/F-005 (audit 2026-07-02): costanti hardcoded promosse a tunable +
+// LMR-catture. TUTTI i default = valore hardcoded storico = comportamento BIT-IDENTICO
+// (verificato via bench); si accendono solo dal tuning/SPRT.
+int g_qs_delta          = 1000;  // F-002: delta-pruning qsearch (era const DELTA=1000; a scala-56 ~1785cp reali)
+int g_singular_mpd      = 2;     // F-002: margine singular PER-DEPTH (era hardcoded 2*depth, unita'-eval)
+int g_tm_drop_thresh    = 8;     // F-002: soglia score-drop TM (era hardcoded 8, unita'-eval)
+int g_tm_drop_cap       = 200;   // F-002: cap score-drop TM (era hardcoded 200, unita'-eval)
+int g_nodetm_base       = 140;   // F-002: NodeTM scale = (base - frac*100)/100 (era 1.4)
+int g_nodetm_min        = 60;    // F-002: NodeTM clamp inferiore % (era 0.6)
+// F-008 (audit 2026-07-02): SEE a soglia con early-exit (see.cpp: td_see_ge).
+// SeeGE OFF (default) = td_see classico, byte-identico. SeeGEVerify = oracle:
+// esegue ENTRAMBI i path a ogni chiamata e segnala i mismatch (0 attesi).
+bool g_see_ge = true;    // [F-008 2026-07-02: ON] +1.81% NPS su test rigoroso (150 pos x2, depth 15,
+                         // nodi BIT-IDENTICI 73589060=73589060 -> solo velocita', zero rischio search)
+bool g_see_ge_verify = false;
+static std::atomic<long long> g_seege_checks{0}, g_seege_bad{0};
+static void seege_verify_report() {
+    if (g_seege_checks > 0) {
+        printf("info string SeeGEVerify: %lld checks, %lld mismatch\n",
+               (long long)g_seege_checks, (long long)g_seege_bad);
+        fflush(stdout);
+    }
+}
+int g_lmr_min_depth     = 3;     // F-005: depth minima per la LMR (SPSA: stabile a 3, confermato)
+int g_lmr_min_moves     = 2;     // [F-005 BAKE 2026-07-02: 3->2, SPSA+SPRT in blocco LMR] riduce dalla 3a mossa (SF dalla 2a)
+static bool g_lmr_captures = true;  // [F-004 BAKE 2026-07-02] LMR anche sulle CATTURE (SF/Stormphrax-style).
+                                    // Vettore SPSA (MinMoves=2, EvalMargin=20) SPRT: +7.38 LOS 87% @800g 8+0.08
+int g_lmr_cap_scale     = 50;    // F-004: % della lmr_table applicata alle catture (50 = dimezzata; SPSA confermo' ~50)
 int g_singular_dmargin = 57;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
 int g_hist_red_div = 3357;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
 int g_asp_init_delta = 19;    // aspiration: initial window half-width               [SPSA-tuned: 25->31]
@@ -663,7 +703,7 @@ int g_cutnode_lmr_extra = 1;  // CutNodeLMR: ply extra di riduzione sui cut-node
 // NMP + LMR-enrichment tunables.
 int g_nmp_base = 3;     // null-move reduction: R = g_nmp_base + depth/g_nmp_div
 int g_nmp_div = 2;
-int g_lmr_eval_margin = 33;   // LMR: reduce +1 more when static_eval + margin < alpha
+int g_lmr_eval_margin = 20;   // [F-004/005 BAKE 2026-07-02: 33->20, SPSA in blocco LMR] LMR: reduce +1 more when static_eval + margin < alpha
 int g_lmr_ttdepth = 1;     // LMR: reduce LESS by this when TT depth >= depth   [SPSA-tuned: 0->2]
 // CORE LMR formula coefficients (*100).
 int g_lmr_base_x100 = 13;    // baseline reduction floor [3.7 BAKE 41->37; SPSA 75->47; BAKED #1 47->41]
@@ -766,6 +806,9 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "DoDeeperBase"))        { g_dodeeper_base = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "HindsightExt"))        { g_hindsight_ext = value != 0; return true; }
     if (!strcmp(name, "HindsightMargin"))     { g_hindsight_margin = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "HindsightRed"))        { g_hindsight_red = value != 0; return true; }
+    if (!strcmp(name, "HindsightRedMargin"))  { g_hindsight_red_margin = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "HindsightRedThresh"))  { g_hindsight_red_thresh = value; return true; }
     if (!strcmp(name, "DoShallowerMargin"))   { g_doshallower_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "BadNoisy"))            { g_bad_noisy = value != 0; return true; }
     if (!strcmp(name, "BadNoisyCount"))       { g_bad_noisy_count = value < 1 ? 1 : value; return true; }
@@ -792,6 +835,18 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "EvalOptimism"))        { g_eval_optimism = value != 0; if (!g_eval_optimism) { g_optimism[0] = g_optimism[1] = 0; } return true; }
     if (!strcmp(name, "EvalOptStrength"))     { g_opt_strength = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "EvalOptDiv"))          { g_opt_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "SeeGE"))               { g_see_ge = (value != 0); return true; }
+    if (!strcmp(name, "SeeGEVerify"))         { g_see_ge_verify = (value != 0); if (value) { g_seege_checks = 0; g_seege_bad = 0; } else seege_verify_report(); return true; }
+    if (!strcmp(name, "QSDeltaMargin"))       { g_qs_delta = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "SingularMarginPD"))    { g_singular_mpd = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TMDropThresh"))        { g_tm_drop_thresh = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TMDropCap"))           { g_tm_drop_cap = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "NodeTMBase"))          { g_nodetm_base = value < 100 ? 100 : value; return true; }
+    if (!strcmp(name, "NodeTMMin"))           { g_nodetm_min = value < 10 ? 10 : (value > 100 ? 100 : value); return true; }
+    if (!strcmp(name, "LMRMinDepth"))         { g_lmr_min_depth = value < 2 ? 2 : value; return true; }
+    if (!strcmp(name, "LMRMinMoves"))         { g_lmr_min_moves = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "LMRCaptures"))         { g_lmr_captures = value != 0; return true; }
+    if (!strcmp(name, "LMRCapScale"))         { g_lmr_cap_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "TMMovesToGo"))         { g_tm_movestogo = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "TMIncFrac"))           { g_tm_inc_frac        = value; return true; }
     if (!strcmp(name, "TMMaxMult"))           { g_tm_max_mult = value < 100 ? 100 : value; return true; }
@@ -885,6 +940,25 @@ int soft_time_limit = 0;
 // ============================================================================
 // LMR TABLE
 // ============================================================================
+
+// F-008: helper SEE-a-soglia (toggle g_see_ge/g_see_ge_verify definiti sopra,
+// prima di set_search_param). In verify si gioca col CLASSICO (invariato).
+static inline int td_see_at_least(ThreadData& td, int move, int thr) {
+    if (g_see_ge_verify) {
+        const int ge = td_see_ge(td, move, thr);
+        const int cl = (td_see(td, move) >= thr) ? 1 : 0;
+        ++g_seege_checks;
+        if (ge != cl) {
+            const long long b = ++g_seege_bad;
+            std::lock_guard<std::mutex> lk(output_mutex);
+            printf("info string SeeGE MISMATCH #%lld move=%d thr=%d ge=%d classic=%d (checks=%lld)\n",
+                   b, move, thr, ge, cl, (long long)g_seege_checks);
+            fflush(stdout);
+        }
+        return cl;
+    }
+    return g_see_ge ? td_see_ge(td, move, thr) : ((td_see(td, move) >= thr) ? 1 : 0);
+}
 
 int lmr_table[64][64];
 
@@ -1846,7 +1920,7 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
         // definition (no SEE needed). Only run SEE for "attacker > victim"
         // captures, which might be losing. Losing captures (SEE < 0) are
         // ordered AFTER all quiets (still searched, just last).
-        if (see_piece_values[piece] <= see_piece_values[victim] || td_see(td, move) >= 0)
+        if (see_piece_values[piece] <= see_piece_values[victim] || td_see_at_least(td, move, 0))
             return SCORE_GOOD_CAPTURE + mvv_lva[piece][victim] + caphist;
         else
             return SCORE_BAD_CAPTURE + mvv_lva[piece][victim] + caphist;
@@ -1926,7 +2000,7 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     // SCACCO DIRETTO e non sono blunder (SEE>=-75), come SF. check_sq calcolate 1x/nodo.
     if (g_check_ordering) {
         if (td.check_key != td.hash_key) td_compute_checks(td);
-        if (get_bit(td.check_sq[piece % 6], target) && td_see(td, move) >= -75)
+        if (get_bit(td.check_sq[piece % 6], target) && td_see_at_least(td, move, -75))
             h += g_check_bonus;
     }
     // Low-ply history (#5, default OFF -> byte-identico): segnale per-ply near-root,
@@ -2470,8 +2544,8 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
         best_score = stand_pat;
         if (stand_pat >= beta) return stand_pat;
 
-        const int DELTA = 1000;
-        if (stand_pat + DELTA < alpha) return stand_pat;
+        // F-002: era `const int DELTA = 1000` (unita'-eval, mai ricalibrato post-EvalScale).
+        if (stand_pat + g_qs_delta < alpha) return stand_pat;
 
         if (stand_pat > alpha) alpha = stand_pat;
     }
@@ -2523,7 +2597,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
                 if (!qs_checks_here) continue;
                 if (td.check_key != td.hash_key) td_compute_checks(td);
                 if (!get_bit(td.check_sq[get_move_piece(move) % 6], get_move_target(move))) continue;
-                if (td_see(td, move) < -75) continue;
+                if (!td_see_at_least(td, move, -75)) continue;
             } else {
                 // BadNoisy (SF qsearch move-count pruning, gated OFF): le catture sono
                 // ordinate best-first -> dopo le prime N le rimanenti sono quasi-sempre
@@ -2556,7 +2630,7 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
                         }
                     }
                 }
-                if (!get_move_promoted(move) && td_see(td, move) < 0) continue;
+                if (!get_move_promoted(move) && !td_see_at_least(td, move, 0)) continue;
             }
         }
 
@@ -3023,6 +3097,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         && td.reduction_stack[td.ply] >= g_hindsight_margin
         && static_eval + td.eval_stack[td.ply - 1] < 0)
         depth++;
+    // 5.1 HindsightRed (Stormphrax #300, complemento): nodo ridotto >= margine ma eval girata BENE
+    // (static_eval + prev_eval >= soglia) -> RIDUCI (-1): la posizione regge, risparmia nodi.
+    // else-if -> mutuamente esclusivo con l'extend (sum<0 vs sum>=soglia). depth>=2 per non azzerare.
+    else if (g_hindsight_red && !pv_node && !excluded_move && !in_check && depth >= 2 && td.ply >= 1
+        && td.eval_stack[td.ply - 1] != EVAL_NONE
+        && td.reduction_stack[td.ply] >= g_hindsight_red_margin
+        && static_eval + td.eval_stack[td.ply - 1] >= g_hindsight_red_thresh)
+        depth--;
 
     // Reverse futility pruning (skip when beta is a mate bound: don't cut a
     // potential mate search short based on a static evaluation). When improving,
@@ -3156,7 +3238,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 if (!get_move_capture(move)) continue;
                 // The capture's material swing must be able to bridge the eval
                 // up to probcut_beta, else it can't plausibly cause the cutoff.
-                if (td_see(td, move) < probcut_beta - eval) continue;
+                if (!td_see_at_least(td, move, probcut_beta - eval)) continue;
 
                 UndoInfo undo;
                 td.ply++;
@@ -3337,7 +3419,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (!pv_node && !in_check && !is_promotion && depth <= g_see_depth && best_score > -mate_score) {
             int see_margin = is_capture ? (-g_see_cap_margin * depth) : (-g_see_quiet_margin * depth * depth);
             if (g_corrval_ext) see_margin -= (corr_val < 0 ? -corr_val : corr_val) * g_corrval_see / 128;   // heavy corr -> prune less (soglia piu' negativa)
-            if (td_see(td, move) < see_margin) {
+            if (!td_see_at_least(td, move, see_margin)) {
                 if (is_quiet) quiets_searched++;
                 // Phase-2: if this move came from MPS_BAD_TACTICAL it means every
                 // subsequent bad capture has an equal-or-worse SEE (they are yielded
@@ -3377,7 +3459,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (excluded_move == 0 && move == tt_move && depth >= 8 && td.ply &&
             tt_hit && tt_depth >= depth - 3 && tt_flag != hash_flag_alpha &&
             tt_score > -mate_score && tt_score < mate_score) {
-            int singular_beta = tt_score - 2 * depth;
+            int singular_beta = tt_score - g_singular_mpd * depth;   // F-002: era hardcoded 2*depth
             int singular_depth = (depth - 1) / 2;
             int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
             if (s < singular_beta) {
@@ -3461,7 +3543,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         else {
             int reduction = 0;
 
-            if (depth >= 3 && moves_searched >= 3 && is_quiet && !in_check && !gives_check) {
+            // F-005: gate LMR promossi a tunable (erano hardcoded 3/3; SF riduce da depth>=2, 2a mossa).
+            if (depth >= g_lmr_min_depth && moves_searched >= g_lmr_min_moves && is_quiet && !in_check && !gives_check) {
                 int d_idx = (depth < 63) ? depth : 63;
                 int m_idx = (moves_searched < 63) ? moves_searched : 63;
               if (!g_lmr_fine) {
@@ -3583,6 +3666,25 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
                 if (reduction < 0) reduction = 0;
                 if (reduction > depth - 2) reduction = depth - 2;
+            }
+            // F-004 (audit 2026-07-02): LMR anche sulle CATTURE (SF/Stormphrax riducono le
+            // noisy tardive; noi mai = gap strutturale). Riduzione dalla stessa lmr_table
+            // scalata % (default 50 = dimezzata), MAI su promozioni/scacchi, con esenzione
+            // RICATTURA sulla casa appena mossa dall'avversario (stessa esenzione della
+            // QFutility: potare/ridurre il recupero = perdere la valutazione dello scambio).
+            // Default OFF = byte-identico.
+            else if (g_lmr_captures && is_capture && !is_promotion && !in_check && !gives_check
+                     && depth >= g_lmr_min_depth && moves_searched >= g_lmr_min_moves) {
+                int prev_mv = td.move_stack[td.ply - 1];
+                int prev_sq = prev_mv ? get_move_target(prev_mv) : -1;
+                if (get_move_target(move) != prev_sq) {
+                    int d_idx = (depth < 63) ? depth : 63;
+                    int m_idx = (moves_searched < 63) ? moves_searched : 63;
+                    reduction = lmr_table[d_idx][m_idx] * g_lmr_cap_scale / 100;
+                    if (!pv_node) reduction++;
+                    if (reduction < 0) reduction = 0;
+                    if (reduction > depth - 2) reduction = depth - 2;
+                }
             }
 
             // Reduced-depth zero-window search (LMR). reduced_depth = depth-1-r.
@@ -3949,8 +4051,8 @@ static void thread_search(int thread_id, int max_depth) {
             // grant extra time, scaled by the drop, capped at ~25% of the headroom.
             if (g_time_mgmt && current_depth > start_depth) {
                 int drop = prev_completed_score - score;   // >0 = got worse
-                if (drop > 8) {
-                    int d = (drop > 200) ? 200 : drop;
+                if (drop > g_tm_drop_thresh) {             // F-002: era hardcoded 8/200 (unita'-eval)
+                    int d = (drop > g_tm_drop_cap) ? g_tm_drop_cap : drop;
                     soft += (stoptime - soft_time_limit) * d / g_tm_drop_div;
                 }
             }
@@ -3963,9 +4065,10 @@ static void thread_search(int thread_id, int max_depth) {
             if (g_node_tm && current_depth >= 6 && iter_nodes > 0) {
                 double frac = (double)td.root_bestmove_nodes / (double)iter_nodes;
                 if (frac > 1.0) frac = 1.0;
-                double scale = 1.4 - frac;                 // frac>=0.4 -> <1.0 (reduce); else capped
+                double scale = g_nodetm_base / 100.0 - frac;   // F-002: era hardcoded 1.4/0.6
                 if (scale > 1.0) scale = 1.0;
-                if (scale < 0.6) scale = 0.6;
+                double smin = g_nodetm_min / 100.0;
+                if (scale < smin) scale = smin;
                 int dur = soft - starttime;                // current optimum duration (ms)
                 if (dur < 0) dur = 0;
                 soft = starttime + (int)(dur * scale);

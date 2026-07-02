@@ -14,4 +14,8 @@ static const int see_piece_values[12] = {
 // Static Exchange Evaluation for thread-local state
 int td_see(ThreadData& td, int move);
 
+// F-008: SEE a SOGLIA con early-exit (stile SF see_ge). Ritorna 1 se
+// td_see(move) >= threshold, 0 altrimenti — senza simulare lo scambio completo.
+int td_see_ge(ThreadData& td, int move, int threshold);
+
 #endif
