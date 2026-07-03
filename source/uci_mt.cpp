@@ -209,6 +209,13 @@ void parse_go(char* command)
             optimum = remaining / mtg + inc * g_tm_inc_frac / 100;    // quota base + % incremento (tunable)
             maximum = optimum * g_tm_max_mult / 100;                   // burst su posizioni difficili (tunable)
             int cap = remaining * 4 / 5;                    // never risk more than ~80% of the clock
+            // FIX time-forfeit (2026-07-03): a orologio basso con incremento alto il termine
+            // inc*IncFrac rende OPTIMUM > cap (es. 30s+0.5: sotto ~0.6s residui optimum~485ms
+            // sfora l'orologio) e il vecchio "if (maximum < optimum) maximum = optimum"
+            // SCAVALCAVA il cap -> stoptime oltre il tempo disponibile -> perdita per tempo.
+            // Bug latente pre-esistente (anche 5.0); clampare ANCHE optimum lo chiude.
+            if (cap < 1) cap = 1;
+            if (optimum > cap) optimum = cap;
             if (maximum > cap) maximum = cap;
             if (maximum < optimum) maximum = optimum;
         }
