@@ -97,6 +97,13 @@ def run_worker(worker_id, exe, positions, times, total_searches, t0):
     send("uci"); wait("uciok")
     send("setoption name Hash value 256")
     send("setoption name Threads value 1")
+    # If PGO_BULLET_NET is set, route eval through the BULLET path so the PGO profile
+    # covers the bullet hot code (head/apply_col/update). Without it the profile only
+    # sees the SFNNv10 path and PGO gives ~0 on the bullet path (5.0 ships bullet).
+    # Unset for 4.x -> unchanged behaviour.
+    _bnet = os.environ.get("PGO_BULLET_NET")
+    if _bnet:
+        send(f"setoption name BulletNet value {_bnet}")
     send("isready"); wait("readyok")
 
     done = 0
