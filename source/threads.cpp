@@ -90,6 +90,14 @@ void set_tt_age_refresh(bool v) { g_tt_age_refresh = v; }
 static bool g_pawn_key_incr = true;
 void set_pawn_key_incr(bool v) { g_pawn_key_incr = v; }
 
+// CorrNonPawn: np_key[2] (Zobrist non-pedoni PER COLORE) incrementale in make/unmake,
+// stesso schema self-inverse di P2.1. Mantenuta SEMPRE (costo ~2-6 XOR/mossa) cosi'
+// il toggle CorrNonPawn puo' accendersi al volo senza chiavi stale. NPKeyIncr=false
+// = fallback rescan per l'oracle node-identity (deve dare nodi IDENTICI a parita'
+// di CorrNonPawn, per costruzione).
+static bool g_np_key_incr = true;
+void set_np_key_incr(bool v) { g_np_key_incr = v; }
+
 // ---- Wave 3b (2026-06-11): P1.1 static-eval-in-TT + P2.2 + P2.3 -------------
 
 // P1.1 (UCI "TTStaticEval", default ON): usa l'eval statica salvata nella TT
@@ -258,6 +266,17 @@ void set_corr_multi(bool v) { g_corr_multi = v; }
 static bool g_corr_cont = false;
 void set_corr_cont(bool v) { g_corr_cont = v; }
 int g_corr_cont_weight = 270;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
+
+// Non-pawn correction history PER-LATO (port Pawnocchio/SF nonPawnCorrectionHistory,
+// 2026-07-03). Due tabelle extra, chiave = Zobrist dei NON-pedoni di UN SOLO colore
+// (re incluso): traccia l'errore-eval della configurazione bianca SEPARATAMENTE da
+// quella nera (le esistenti minor/major mescolano i due colori in una chiave sola).
+// Era una delle DUE uniche tecniche dei rivali studiati assenti da noi (l'altra,
+// HindsightExt, ha pagato +12.7). Default OFF = byte-identico; A/B via UCI
+// CorrNonPawn, contributo pesato /100 via CorrNonPawnWeight (co-tunabile).
+static bool g_corr_nonpawn = false;
+void set_corr_nonpawn(bool v) { g_corr_nonpawn = v; }
+int g_corr_np_weight = 100;   // /100 sul contributo delle due tabelle non-pawn
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di ordering
 // per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale. Tabella per-thread
@@ -473,11 +492,11 @@ void set_time_mgmt(bool v) { g_time_mgmt = v; }
 // Statici (usati in parse_go, uci_mt.cpp): quota base = remaining/TMMovesToGo +
 // inc*TMIncFrac/100; maximum = optimum*TMMaxMult/100. Dinamici (loop ID, sotto):
 // instabilita' best-move += headroom*TMInstab/100; eval che cala += headroom*d/TMDropDiv.
-int g_tm_movestogo = 24;    // assunzione moves-to-go quando ignota (minore = piu' tempo/mossa)
-int g_tm_inc_frac  = 94;    // % dell'incremento da spendere
-int g_tm_max_mult  = 592;   // maximum = optimum * questo/100 (burst su posizioni difficili)
-int g_tm_instab    = 64;    // % dell'headroom aggiunta al soft su cambio best-move
-int g_tm_drop_div  = 570;   // divisore dell'estensione su score-drop (minore = piu' tempo)
+int g_tm_movestogo = 27;    // assunzione moves-to-go quando ignota (minore = piu' tempo/mossa) [BAKE 2026-07-03 TM post-F-003, TC15 SPSA avg30: 24->27, SPRT +20.0 LOS94%]
+int g_tm_inc_frac  = 94;    // % dell'incremento da spendere [BAKE 2026-07-03 TM post-F-003: invariato, 94->94]
+int g_tm_max_mult  = 614;   // maximum = optimum * questo/100 (burst su posizioni difficili) [BAKE 2026-07-03 TM post-F-003: 592->614]
+int g_tm_instab    = 59;    // % dell'headroom aggiunta al soft su cambio best-move [BAKE 2026-07-03 TM post-F-003: 64->59]
+int g_tm_drop_div  = 508;   // divisore dell'estensione su score-drop (minore = piu' tempo) [BAKE 2026-07-03 TM post-F-003: 570->508]
 
 // Aggressive LMR on/off (UCI "AggrLMR"). Default OFF. When ON, the history- and
 // continuation-history-based LMR reductions use a SMALLER divisor and a WIDER
@@ -581,10 +600,10 @@ int  g_iid_reduction = 2;              // IIDReduction: ply tolti alla mini-rice
 // (verificato via bench); si accendono solo dal tuning/SPRT.
 int g_qs_delta          = 1000;  // F-002: delta-pruning qsearch (era const DELTA=1000; a scala-56 ~1785cp reali)
 int g_singular_mpd      = 2;     // F-002: margine singular PER-DEPTH (era hardcoded 2*depth, unita'-eval)
-int g_tm_drop_thresh    = 8;     // F-002: soglia score-drop TM (era hardcoded 8, unita'-eval)
-int g_tm_drop_cap       = 200;   // F-002: cap score-drop TM (era hardcoded 200, unita'-eval)
-int g_nodetm_base       = 140;   // F-002: NodeTM scale = (base - frac*100)/100 (era 1.4)
-int g_nodetm_min        = 60;    // F-002: NodeTM clamp inferiore % (era 0.6)
+int g_tm_drop_thresh    = 6;     // F-002: soglia score-drop TM (era hardcoded 8, unita'-eval) [BAKE 2026-07-03 TM post-F-003: 8->6]
+int g_tm_drop_cap       = 160;   // F-002: cap score-drop TM (era hardcoded 200, unita'-eval) [BAKE 2026-07-03 TM post-F-003: 200->160]
+int g_nodetm_base       = 133;   // F-002: NodeTM scale = (base - frac*100)/100 (era 1.4) [BAKE 2026-07-03 TM post-F-003: 140->133]
+int g_nodetm_min        = 58;    // F-002: NodeTM clamp inferiore % (era 0.6) [BAKE 2026-07-03 TM post-F-003: 60->58]
 // F-008 (audit 2026-07-02): SEE a soglia con early-exit (see.cpp: td_see_ge).
 // SeeGE OFF (default) = td_see classico, byte-identico. SeeGEVerify = oracle:
 // esegue ENTRAMBI i path a ogni chiamata e segnala i mismatch (0 attesi).
@@ -776,6 +795,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CorrCap"))             { g_corr_cap         = value; return true; }
     if (!strcmp(name, "CorrLearnDiv"))        { g_corr_lr_div      = value; return true; }
     if (!strcmp(name, "CorrContWeight"))      { g_corr_cont_weight = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "CorrNonPawnWeight"))   { g_corr_np_weight   = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
     if (!strcmp(name, "HistPruneMargin"))     { g_histprune_margin = value; return true; }
     if (!strcmp(name, "LmrDepthPrune"))       { g_lmrdepth_prune = value < 0 ? 0 : value; return true; }
@@ -1044,6 +1064,7 @@ void init_threads(int thread_count) {
         memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
         memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
         memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+        memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));
         memset(thread_data[i].cont_corr_hist, 0, sizeof(thread_data[i].cont_corr_hist));
         memset(thread_data[i].pawn_history, 0, sizeof(thread_data[i].pawn_history));
     }
@@ -1063,6 +1084,17 @@ void copy_board_to_thread(ThreadData& td) {
     for (int pc = P; pc <= p; pc += (p - P)) {
         U64 bb = td.bitboards[pc];
         while (bb) { int sq = get_ls1b_index(bb); td.pawn_key ^= piece_keys[pc][sq]; pop_bit(bb, sq); }
+    }
+    // CorrNonPawn: np_key per colore — full init dal board di root, poi mantenute
+    // in make/unmake da td_np_key_update (XOR self-inverse).
+    td.np_key[white] = td.np_key[black] = 0;
+    for (int pc = N; pc <= K; pc++) {
+        U64 bb = td.bitboards[pc];
+        while (bb) { int sq = get_ls1b_index(bb); td.np_key[white] ^= piece_keys[pc][sq]; pop_bit(bb, sq); }
+    }
+    for (int pc = n; pc <= k; pc++) {
+        U64 bb = td.bitboards[pc];
+        while (bb) { int sq = get_ls1b_index(bb); td.np_key[black] ^= piece_keys[pc][sq]; pop_bit(bb, sq); }
     }
     // P2.2: alla radice non ci sono null nel cammino -> finestra limitata solo
     // da fifty/storia. 1024 = "nessuna null vista".
@@ -1144,6 +1176,38 @@ static inline void td_pawn_key_update(ThreadData& td, int piece, int source, int
     }
     if (captured_piece == P || captured_piece == p)
         td.pawn_key ^= piece_keys[captured_piece][captured_square];
+}
+
+// CorrNonPawn: aggiorna td.np_key[colore] (Zobrist NON-pedoni per colore) via XOR.
+// Self-inverse -> stessa chiamata nei 3 siti di td_pawn_key_update. Casi:
+// mover non-pedone (via da source, atterra su target); PROMOZIONE (il pezzo promosso
+// APPARE su target — il pedone che sparisce e' affare del pawn_key); cattura di
+// non-pedone (via da captured_square, chiave del colore CATTURATO); ARROCCO (la
+// torre si muove — caso assente nel pawn-key, i pedoni non arroccano).
+static inline void td_np_key_update(ThreadData& td, int piece, int source, int target,
+                                    int promoted, int captured_piece, int captured_square,
+                                    int castling) {
+    if (piece != P && piece != p) {
+        const int c = (piece >= p) ? black : white;
+        td.np_key[c] ^= piece_keys[piece][source];
+        td.np_key[c] ^= piece_keys[piece][target];
+    }
+    else if (promoted) {
+        const int c = (promoted >= p) ? black : white;
+        td.np_key[c] ^= piece_keys[promoted][target];
+    }
+    if (captured_piece != -1 && captured_piece != P && captured_piece != p) {
+        const int c = (captured_piece >= p) ? black : white;
+        td.np_key[c] ^= piece_keys[captured_piece][captured_square];
+    }
+    if (castling) {
+        switch (target) {
+        case g1: td.np_key[white] ^= piece_keys[R][h1] ^ piece_keys[R][f1]; break;
+        case c1: td.np_key[white] ^= piece_keys[R][a1] ^ piece_keys[R][d1]; break;
+        case g8: td.np_key[black] ^= piece_keys[r][h8] ^ piece_keys[r][f8]; break;
+        case c8: td.np_key[black] ^= piece_keys[r][a8] ^ piece_keys[r][d8]; break;
+        }
+    }
 }
 
 static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
@@ -1249,6 +1313,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
     if (g_pawn_key_incr)
         td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
+    td_np_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square, castling);
 
     td.side ^= 1;
     td.hash_key ^= side_key;
@@ -1287,6 +1352,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
         td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
         if (g_pawn_key_incr)
             td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
+        td_np_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square, castling);
 
         return 0;
     }
@@ -1373,6 +1439,7 @@ static inline void td_unmake_move(ThreadData& td, int move, UndoInfo& undo) {
     td_occ_update(td, td.side, source, target, undo.captured_square, undo.captured_piece, castling);
     if (g_pawn_key_incr)
         td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square);
+    td_np_key_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square, castling);
 }
 
 // ============================================================================
@@ -2719,6 +2786,19 @@ static inline int td_corr_index_major(ThreadData& td) {
     const int pcs[4] = { R, Q, r, q };
     return td_corr_index_pieces(td, pcs, 4);
 }
+// Non-pawn key di UN SOLO colore (re incluso, come SF nonPawnKey) — CorrNonPawn only.
+// Default: chiave INCREMENTALE (np_key, make/unmake). NPKeyIncr=false = rescan
+// (oracle: nodi identici per costruzione a parita' di CorrNonPawn).
+static inline int td_corr_index_np_white(ThreadData& td) {
+    if (g_np_key_incr) return (int)(td.np_key[white] & CORR_MASK);
+    const int pcs[5] = { N, B, R, Q, K };
+    return td_corr_index_pieces(td, pcs, 5);
+}
+static inline int td_corr_index_np_black(ThreadData& td) {
+    if (g_np_key_incr) return (int)(td.np_key[black] & CORR_MASK);
+    const int pcs[5] = { n, b, r, q, k };
+    return td_corr_index_pieces(td, pcs, 5);
+}
 
 // Continuation-correction bucket for the current node: keyed by the move 2-ply back
 // and the move 1-ply back (the path INTO this node). Returns nullptr if either is
@@ -2742,6 +2822,10 @@ static inline int td_corr_value(ThreadData& td, int idx) {
     if (g_corr_multi) {
         sum += td.corr_hist_minor[td.side][td_corr_index_minor(td)];
         sum += td.corr_hist_major[td.side][td_corr_index_major(td)];
+    }
+    if (g_corr_nonpawn) {
+        sum += g_corr_np_weight * (td.corr_hist_np[0][td.side][td_corr_index_np_white(td)]
+             +                     td.corr_hist_np[1][td.side][td_corr_index_np_black(td)]) / 100;
     }
     if (g_corr_cont) {
         if (int16_t* cc = td_cont_corr_bucket(td))
@@ -2779,6 +2863,10 @@ static inline void td_corr_update(ThreadData& td, int idx, int static_eval,
     if (g_corr_multi) {
         td_corr_bucket_update(td.corr_hist_minor[td.side][td_corr_index_minor(td)], target, w, lim);
         td_corr_bucket_update(td.corr_hist_major[td.side][td_corr_index_major(td)], target, w, lim);
+    }
+    if (g_corr_nonpawn) {
+        td_corr_bucket_update(td.corr_hist_np[0][td.side][td_corr_index_np_white(td)], target, w, lim);
+        td_corr_bucket_update(td.corr_hist_np[1][td.side][td_corr_index_np_black(td)], target, w, lim);
     }
     if (g_corr_cont) {
         if (int16_t* cc = td_cont_corr_bucket(td)) {

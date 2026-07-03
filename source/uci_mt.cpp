@@ -335,6 +335,7 @@ void uci_loop()
             printf("option name TTCutBonusScale type spin default 126 min 0 max 400\n");  // /100 del stat_bonus; SPSA
             printf("option name TTAgeRefresh type check default true\n");      // P1.10a probe-hit rinfresca l'age
             printf("option name PawnKeyIncr type check default true\n");       // P2.1 pawn key incrementale (node-identical)
+            printf("option name NPKeyIncr type check default true\n");         // CorrNonPawn: np_key incrementale (node-identical; false=rescan oracle)
             printf("option name TTStaticEval type check default true\n");      // P1.1 static eval in TT (salva la forward NNUE)
             printf("option name FastRepScan type check default true\n");       // P2.2 repetition scan a finestra
             printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
@@ -393,6 +394,8 @@ void uci_loop()
             printf("option name CorrHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
             printf("option name CorrHistCont type check default false\n");    // continuation correction history (SF): corregge la static eval per le ultime 2 mosse nel cammino
             printf("option name CorrContWeight type spin default 270 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
+            printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
+            printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 248 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
@@ -460,10 +463,10 @@ void uci_loop()
             // Default = comportamento storico bit-identico; leve per SPSA (preset 5.1 in SPSA Lab).
             printf("option name QSDeltaMargin type spin default 1000 min 200 max 4000\n");   // delta-pruning qsearch (unita'-eval)
             printf("option name SingularMarginPD type spin default 2 min 1 max 10\n");        // margine singular per-depth
-            printf("option name TMDropThresh type spin default 8 min 1 max 100\n");           // soglia score-drop TM
-            printf("option name TMDropCap type spin default 200 min 50 max 1000\n");          // cap score-drop TM
-            printf("option name NodeTMBase type spin default 140 min 100 max 200\n");         // NodeTM: scale=(base-frac*100)/100
-            printf("option name NodeTMMin type spin default 60 min 30 max 100\n");            // NodeTM: clamp inferiore %%
+            printf("option name TMDropThresh type spin default 6 min 1 max 100\n");           // soglia score-drop TM; BAKE 2026-07-03 TM post-F-003 8->6
+            printf("option name TMDropCap type spin default 160 min 50 max 1000\n");          // cap score-drop TM; BAKE 2026-07-03 TM post-F-003 200->160
+            printf("option name NodeTMBase type spin default 133 min 100 max 200\n");         // NodeTM: scale=(base-frac*100)/100; BAKE 2026-07-03 TM post-F-003 140->133
+            printf("option name NodeTMMin type spin default 58 min 30 max 100\n");            // NodeTM: clamp inferiore %%; BAKE 2026-07-03 TM post-F-003 60->58
             printf("option name LMRMinDepth type spin default 3 min 2 max 6\n");              // gate depth LMR (SF=2)
             printf("option name LMRMinMoves type spin default 2 min 1 max 8\n");              // gate move-count LMR (SF=2)
             printf("option name LMRCaptures type check default true\n");                     // F-004: LMR sulle catture (OFF=byte-identico)
@@ -545,11 +548,11 @@ void uci_loop()
             printf("option name EvalOptDiv type spin default 269 min 1 max 600\n");
             printf("option name FutilityDepth type spin default 4 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 3 min 3 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'
-            printf("option name TMMovesToGo type spin default 24 min 12 max 60\n");        // time mgmt: quota base = remaining/questo
-            printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento
-            printf("option name TMMaxMult type spin default 592 min 150 max 800\n");        // burst maximum = optimum*questo/100
-            printf("option name TMInstab type spin default 64 min 0 max 100\n");            // % headroom su cambio best-move
-            printf("option name TMDropDiv type spin default 570 min 200 max 3000\n");       // estensione su eval che cala
+            printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
+            printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
+            printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614
+            printf("option name TMInstab type spin default 59 min 0 max 100\n");            // % headroom su cambio best-move; BAKE 2026-07-03 TM post-F-003 64->59
+            printf("option name TMDropDiv type spin default 508 min 200 max 3000\n");       // estensione su eval che cala; BAKE 2026-07-03 TM post-F-003 570->508
 #endif
             // (SyzygyPath spostata in cima alla lista, subito dopo EvalFile — vedi sopra:
             //  evita il troncamento delle liste lunghe nelle GUI ChessBase/Fritz.)
@@ -860,6 +863,11 @@ void uci_loop()
         {
             const char* v = input + 33;
             set_pawn_key_incr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name NPKeyIncr value ", 31) == 0)
+        {
+            const char* v = input + 31;
+            set_np_key_incr(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name TTStaticEval value ", 34) == 0)
         {
@@ -1174,6 +1182,13 @@ void uci_loop()
         {
             const char* v = input + 34;
             set_corr_cont(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // CorrNonPawn (corrhist non-pedoni per-lato, port Pawnocchio/SF): A/B toggle.
+        // Lo spin "CorrNonPawnWeight" cade nel gestore generico (nome diverso).
+        else if (strncmp(input, "setoption name CorrNonPawn value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_corr_nonpawn(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         // V2 PriorBonus + #5 LowPlyHistory: A/B toggle. Gli spin (PriorBonusScale/LowPlyWeight)
         // cadono nel gestore generico (25esimo/22esimo char != ' ' di " value ").

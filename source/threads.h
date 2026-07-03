@@ -24,6 +24,7 @@ struct ThreadData {
     int castle;
     U64 hash_key;
     U64 pawn_key;        // P2.1: Zobrist solo-pedoni, mantenuta incrementale in make/unmake
+    U64 np_key[2];       // CorrNonPawn: Zobrist NON-pedoni per colore [white,black] (re incluso), incrementale in make/unmake
     int fifty;
     int plies_from_null; // P2.2: mosse reali dall'ultima null nel cammino corrente
     bool in_nmp_verif;   // P1.6: dentro una verification search (null disattivata)
@@ -130,6 +131,11 @@ struct ThreadData {
     int corr_hist_minor[2][1 << 14];
     int corr_hist_major[2][1 << 14];
 
+    // Non-pawn correction PER-LATO (CorrNonPawn, default OFF — port Pawnocchio/SF
+    // nonPawnCorrectionHistory): [colore-della-chiave][side-to-move][bucket], chiave
+    // = Zobrist dei non-pedoni (re incluso) di QUEL colore. ~256 KB/thread.
+    int corr_hist_np[2][2][1 << 14];
+
     // Continuation correction history (CorrHistCont, default OFF): SF-style learned
     // (search - static_eval) gap keyed by the TWO moves that led INTO this node —
     // the move 1-ply back and 2-ply back: [piece2ply][to2ply][piece1ply][to1ply].
@@ -233,6 +239,7 @@ extern void set_ttcut_bonus(bool enabled);     // P1.13 history bonus al ttMove 
 extern int  g_ttcut_bonus_scale;               //       spin TTCutBonusScale (/100, SPSA)
 extern void set_tt_age_refresh(bool enabled);  // P1.10a age refresh al probe-hit (def. threads.cpp, usato in tt.h)
 extern void set_pawn_key_incr(bool enabled);   // P2.1  pawn key incrementale (node-identical)
+extern void set_np_key_incr(bool enabled);     // CorrNonPawn: np_key incrementale (node-identical)
 // ---- Wave 3b (2026-06-11) ------------------------------------------------------
 extern void set_tt_static_eval(bool enabled);  // P1.1  eval statica in TT (salva la forward NNUE)
 extern void set_fast_rep_scan(bool enabled);   // P2.2  repetition scan a finestra min(fifty, plies_from_null)
@@ -290,6 +297,9 @@ extern void set_corr_multi(bool enabled);
 // Continuation correction history on/off (UCI option "CorrHistCont") — corrects the
 // static eval by the learned gap keyed by the last two moves into the node. Default off.
 extern void set_corr_cont(bool enabled);
+
+// Non-pawn correction per-lato on/off (UCI "CorrNonPawn", port Pawnocchio/SF). Default off.
+extern void set_corr_nonpawn(bool enabled);
 
 // Pawn history on/off (UCI option "PawnHistory") — quiet-move ordering term keyed by
 // pawn structure (SF-style, weighted 2x). Default off (byte-identical when off).

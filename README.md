@@ -19,14 +19,17 @@
 The current release. It keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained
 from scratch) and matures the engine around it: a **recalibrated evaluation scale**, a **two-level
 transposition table**, **hindsight search extensions**, faster **SEE** (threshold early-exit) and **AVX-512**
-accumulator updates, plus **time-management** and **GUI-compatibility** fixes. Measures **≈ +27 Elo over 5.0**
-at blitz **10+0.1** (LOS 99%, 300 games); tests at longer time controls are underway, and the margin is
-expected to widen with depth — as it did from 5.0 over 4.2.
+accumulator updates, a **re-tuned time-management** (fixed a dead sudden-death fallback, then re-tuned the
+whole block around it), plus assorted **GUI-compatibility** and LMR fixes. Measures **≈ +27 Elo over 5.0** at
+blitz **10+0.1** (LOS 99%, 300 games) and **+36 Elo at 3min+1s** (54%, 100 games, tested by Maurizio Platino —
+before the time-management re-tune, which independently measured **+20 Elo** at 15+0.15 and is expected to add
+further at this time control); the margin is expected to keep widening with depth, as it did from 5.0 over 4.2.
 
 | | |
 |---|---|
 | **Evaluation** | NNUE, SFNNv13 — own-lineage `nn-rubicon-alea-v1`, loaded at runtime via `EvalFile` (not embedded) |
-| **Search** | PVS · LMR / NMP / futility / razoring / SEE pruning · singular & multi-cut extensions · ProbCut · correction & continuation history · threat-aware ordering |
+| **Search** | PVS · LMR (incl. on captures) / NMP / futility / razoring / SEE pruning · singular & multi-cut extensions · ProbCut · correction & continuation history · threat-aware ordering |
+| **Time management** | Re-tuned soft/hard budget, score-drop and node-based extensions |
 | **Parallel** | Lazy SMP (`Threads`) |
 | **Endgames** | Syzygy via Fathom (`SyzygyPath`) |
 
