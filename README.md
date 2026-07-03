@@ -50,11 +50,11 @@ The first release to ship a **NNUE network trained by the author**.
 
 | Match | Time control | Book | Games | Score | Elo | LOS |
 |---|---|---|---|---|---|---|
-| 5.1 vs 5.0 | 30+0.2 | UHO (unbalanced) | 600 | 58.7% draws | **+31.5 ± 17.6** | 99.98% |
+| 5.1 vs 5.0 | 30+0.2 | UHO | 600 | 58.7% draws | **+31.5 ± 17.6** | 99.98% |
 | 5.1 vs 5.0 | 10+0.1 | UHO | 300 | — | **+27** | 99% |
-| 5.1 vs 5.0 | 3min+1s | balanced | 100 | 54% | **+36** | — |
-| 5.0 vs 4.2 | 20+0.2 | — | self-play | — | **+50** | — |
-| 5.0 vs 4.2 | 3min+1s | balanced | 100 | 61.5% | **+81** | — |
+| 5.1 vs 5.0 | 3min+1s | UHO | 100 | 54% | **+36** | — |
+| 5.0 vs 4.2 | 20+0.2 | — | UHO | — | **+50** | — |
+| 5.0 vs 4.2 | 3min+1s | UHO | 100 | 61.5% | **+81** | — |
 
 The gap tends to widen at longer time control, as the stronger network pays off with depth. Balanced-book
 matches naturally run a much higher draw rate than the unbalanced UHO set — treat the sign and LOS as
