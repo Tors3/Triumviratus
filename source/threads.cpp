@@ -3986,6 +3986,13 @@ static void print_search_info(ThreadData& td, int depth, int score) {
         // No-op a EvalScale=100 (display 5.0 invariato); a 56 ri-gonfia il numero deflazionato.
         int es = nn_get_eval_scale();
         int cp = (es == 100) ? score : (int)((long long)score * 100 / es);
+        // [5.1 release 2026-07-03] Normalizzazione WDL del DISPLAY (SF NormalizeToPawnValue-style):
+        // la scala intrinseca di rubicon-alea e' ~4x gonfiata rispetto alla convenzione
+        // "100cp = 50% probabilita' di vittoria". NORM_CP misurato empiricamente con fit
+        // logistico su 191.514 posizioni (1953 partite 5.1, TC 6-60s): P(win)=50% a +392
+        // displayed (win% 51.3 nel bucket 342-442). SOLO display: search/TM/TT intatti.
+        constexpr int NORM_CP = 392;
+        cp = (int)((long long)cp * 100 / NORM_CP);
         printf("info depth %d seldepth %d score cp %d nodes %llu nps %llu time %d tbhits %llu pv ",
             depth, td.seldepth, cp, total, nps, elapsed, tbhits);
     }
