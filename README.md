@@ -20,10 +20,14 @@ The current release. It keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`**
 from scratch) and matures the engine around it: a **recalibrated evaluation scale**, a **two-level
 transposition table**, **hindsight search extensions**, faster **SEE** (threshold early-exit) and **AVX-512**
 accumulator updates, a **re-tuned time-management** (fixed a dead sudden-death fallback, then re-tuned the
-whole block around it), plus assorted **GUI-compatibility** and LMR fixes. Measures **≈ +27 Elo over 5.0** at
-blitz **10+0.1** (LOS 99%, 300 games) and **+36 Elo at 3min+1s** (54%, 100 games, tested by Maurizio Platino —
-before the time-management re-tune, which independently measured **+20 Elo** at 15+0.15 and is expected to add
-further at this time control); the margin is expected to keep widening with depth, as it did from 5.0 over 4.2.
+whole block around it), a **display-only eval normalization** (empirically fitted so "+1.00" means "50% win
+probability", matching engine convention), plus assorted **GUI-compatibility** and LMR fixes. Measures **≈ +27
+Elo over 5.0** at blitz **10+0.1** (LOS 99%, 300 games) and **+36 Elo at 3min+1s** (54%, 100 games, tested by
+Maurizio Platino — before the time-management re-tune below); the margin is expected to keep widening with
+depth, as it did from 5.0 over 4.2. The time-management re-tune itself measured **+20 Elo at 15+0.15s**, but the
+gain shrinks to statistical noise at longer time control (+3.9 Elo, LOS 61%, inconclusive at 60+0.6s over 280+
+games) — kept as the new default (never negative at any tested time control), but treat the Elo gain as
+demonstrated only at blitz-and-faster, not proven at slower time controls.
 
 | | |
 |---|---|
