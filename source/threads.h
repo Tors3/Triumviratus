@@ -99,11 +99,20 @@ struct ThreadData {
     // (settata dal padre prima della recursione). Se >= margine e l'eval e' girata male,
     // il nodo ri-estende (la riduzione era un errore "col senno di poi"). +8 slack.
     int reduction_stack[max_ply + 8];
+    // F-018.3d (TTCutMalus): mosse gia' esaminate al nodo di ogni ply (scritto dal padre
+    // prima della recursione); il figlio che cutta subito su TT raffredda la mossa del
+    // padre solo se il padre aveva visto poche mosse. +8 slack come gli altri.
+    int seen_stack[max_ply + 8] = {0};
+    // F-018.6b (SingularDECap): lunghezza della catena di double-extension singular sul
+    // path fino a questo ply (Berserk ss->de). Slot figlio scritto al make.
+    int de_stack[max_ply + 8] = {0};
 
     // Results
     int best_move;
     int best_score;
     int depth;
+    // F-018.6c (SingularPlyGuard): depth dell'iterazione ID in corso (per il gate ply < 2*rootDepth).
+    int root_depth = 0;
 
     // Node-based time management: nodes spent on the current best root move in
     // the last completed iteration. Compared to the iteration's total nodes to

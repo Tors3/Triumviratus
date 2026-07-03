@@ -173,15 +173,16 @@ int make_move(int move, int move_flag)
 
         if (double_push)
         {
-            if (side == white)
+            // F-017 EPKeyFix (default OFF, toggle in threads.cpp): ep nel board/key SOLO se
+            // un pedone nemico puo' catturarlo — DEVE restare identico al make del thread
+            // (threads.cpp td_make_move) o le chiavi root-history/search divergono.
+            extern bool g_ep_key_fix;
+            int ep_sq = (side == white) ? target_square + 8 : target_square - 8;
+            if (!g_ep_key_fix ||
+                (pawn_attacks[side][ep_sq] & bitboards[(side == white) ? p : P]))
             {
-                enpassant = target_square + 8;
-                hash_key ^= enpassant_keys[target_square + 8];
-            }
-            else
-            {
-                enpassant = target_square - 8;
-                hash_key ^= enpassant_keys[target_square - 8];
+                enpassant = ep_sq;
+                hash_key ^= enpassant_keys[ep_sq];
             }
         }
 

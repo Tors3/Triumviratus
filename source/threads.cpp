@@ -662,7 +662,7 @@ void set_threat_ordering(bool v) { g_threat_ordering = v; }
 // pesato ThreatHistWeight. Schema nostro: [from_thr][to_thr][piece][target] (piece-to, additivo).
 // Usa td.threat_all (tutte le minacce nemiche), calcolato in td_compute_threats quando uno dei
 // due toggle threat e' acceso. OFF = tabella mai letta/scritta = byte-identico.
-static bool g_threat_hist = false;
+static bool g_threat_hist = true;   // [BAKE 2026-07-03 secondo audit: combo ThreatHist+flow, -30.48 base LOS0.06% @320g 12+0.12]
 void set_threat_hist(bool v) { g_threat_hist = v; }
 int g_threat_hist_weight = 100;   // /100 del contributo threat-history allo scoring quiet. Spin ThreatHistWeight (co-tune).
 int g_threat_scale = 4580;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
@@ -706,6 +706,38 @@ int g_seo_mult = 9;  // [4.1 BAKE 14->6] (SEO neutro a ogni valore; 6 = valore d
 // cuttato molto di recente. g_cutoffcnt_penalty: 0=off (default, byte-identico), 1=SF
 // (r+=1 se cutoff_cnt figlio > 3). Spin CutoffCntPenalty [0,3]. Co-tunabile.
 int g_cutoffcnt_penalty = 0;
+// ==== F-018 (SECONDO AUDIT 2026-07-03): micro-tecniche da Obsidian/Berserk ====
+// TUTTE default OFF/neutro = byte-identico (bench-verificato). Una leva = un toggle/spin,
+// testabili una alla volta o co-tunate a blocchi. Dettagli: Triumviratus_5/SECOND_PASS_FEATURES.md.
+static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-search post-LMR (mainline SF)
+int  g_postlmr_scale         = 100;    //    /100 del td_stat_bonus applicato
+static bool g_ttcut_refine   = true;   // #3a-c cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty<soglia [BAKE 2026-07-03]
+int  g_ttcut_fifty           = 90;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina)
+static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus)
+int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
+int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
+static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score (smorza il rumore)
+static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
+int  g_singular_mindepth     = 8;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6)
+int  g_singular_de_cap       = 0;      // #6b cap catena double-extension sul path (0=off; Berserk 6)
+static bool g_singular_plyguard = false; // #6c niente singular oltre ply >= 2*rootDepth (anti-esplosione)
+int  g_negext_alpha          = 0;      // #6d negext se ttScore <= alpha (0=off; Berserk 1)
+static bool g_fh_smooth      = true;   // #7 fail-high: return (score+beta)/2 su RFP e qsearch (bound TT meno gonfiati) [BAKE 2026-07-03]
+static bool g_nmp_static_margin = false; // #8a NMP solo se static_eval >= beta - mult*depth + bias (SF)
+int  g_nmp_sm_mult           = 21;
+int  g_nmp_sm_bias           = 421;
+static bool g_nmp_ttnoisy    = false;  // #8b R+1 se la TT move e' una cattura (Obsidian)
+static bool g_alpha_depth_dec = true;  // #9 depth-- per le mosse restanti quando una mossa alza alpha (2<=depth<=11) [BAKE 2026-07-03]
+int  g_fhboost_margin        = 0;      // #10a bonus history a depth+1 se best > beta+margine (0=off; Obsidian 95, Berserk 75)
+static bool g_hist_triv_guard = false; // #10b niente bonus al cutoff "gratis" (depth<=3, nessun quiet prima)
+int  g_malus_pct             = 100;    // #10c malus = bonus * pct/100 (costanti malus separate dal bonus)
+static bool g_easycap_gate   = false;  // #11 niente NMP se abbiamo un pezzo in presa "facile" (Berserk)
+int  g_rfp_hist_thresh       = 0;      // #12 RFP solo se hash-move non-quiet o con history > soglia (0=off)
+static bool g_killer_reset   = false;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
+int  g_qs_move_cap           = 0;      // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
+// ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
+static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) anche in qsearch
+bool g_ep_key_fix            = false;  // F-017: ep nella hash key SOLO se la cattura ep e' pseudo-legale (anche movegen.cpp)
 // CutoffStats (diagnostica move-ordering, default OFF = byte-identico): se ON, conta sui
 // beta-cutoff il first-move-cutoff rate (fh_first/fh_nodes) + indice medio della mossa al
 // cutoff, e li stampa come "info string FMC ..." a fine ricerca. Il gap vs SF e' l'ordering
@@ -748,7 +780,7 @@ int g_lmrf_cutoff   = 1402;   // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto
 // EvalOptimism (5.1): alimenta g_optimism (nnue_bridge) dalla root col contempt dinamico di SF
 // (optimism = strength*score/(|score|+div)). OFF = g_optimism resta 0 = byte-identico.
 extern int g_eval_optimism;   // definito in nnue_bridge.cpp
-extern int g_optimism[2];
+extern std::atomic<int> g_optimism[2];   // F-019: atomic (main scrive, helper leggono)
 int g_opt_strength = 153;      // [5.1 BAKE 137->89]  optimism = strength*score/(|score|+div)
 int g_opt_div      = 269;      // [5.1 BAKE 81->72]
 int g_histprune_margin = 1912;  // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune late quiet if combined hist < -margin*depth
@@ -890,6 +922,35 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LowPlyWeight"))        { g_lowply_weight = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "StatEvalDiffMult"))    { g_seo_mult = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CutoffCntPenalty"))    { g_cutoffcnt_penalty = value < 0 ? 0 : value; return true; }
+    // F-018 (secondo audit): micro-tecniche Obsidian/Berserk, default OFF/neutro.
+    if (!strcmp(name, "PostLMRHist"))         { g_postlmr_hist = value != 0; return true; }
+    if (!strcmp(name, "PostLMRHistScale"))    { g_postlmr_scale = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "TTCutRefine"))         { g_ttcut_refine = value != 0; return true; }
+    if (!strcmp(name, "TTCutFifty"))          { g_ttcut_fifty = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TTCutMalus"))          { g_ttcut_malus = value != 0; return true; }
+    if (!strcmp(name, "TTCutMalusSeen"))      { g_ttcut_malus_seen = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "GoodCapHistDiv"))      { g_goodcap_hist_div = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "AspAvg"))              { g_asp_avg = value != 0; return true; }
+    if (!strcmp(name, "AspFHRed"))            { g_asp_fhred = value != 0; return true; }
+    if (!strcmp(name, "SingularMinDepth"))    { g_singular_mindepth = value < 4 ? 4 : value; return true; }
+    if (!strcmp(name, "SingularDECap"))       { g_singular_de_cap = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "SingularPlyGuard"))    { g_singular_plyguard = value != 0; return true; }
+    if (!strcmp(name, "NegExtAlpha"))         { g_negext_alpha = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "FailHighSmooth"))      { g_fh_smooth = value != 0; return true; }
+    if (!strcmp(name, "NMPStaticMargin"))     { g_nmp_static_margin = value != 0; return true; }
+    if (!strcmp(name, "NMPStaticMult"))       { g_nmp_sm_mult = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "NMPStaticBias"))       { g_nmp_sm_bias = value; return true; }
+    if (!strcmp(name, "NMPTTNoisy"))          { g_nmp_ttnoisy = value != 0; return true; }
+    if (!strcmp(name, "AlphaDepthDec"))       { g_alpha_depth_dec = value != 0; return true; }
+    if (!strcmp(name, "FHBoostMargin"))       { g_fhboost_margin = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "HistTrivGuard"))       { g_hist_triv_guard = value != 0; return true; }
+    if (!strcmp(name, "MalusPct"))            { g_malus_pct = value < 10 ? 10 : value; return true; }
+    if (!strcmp(name, "EasyCapGate"))         { g_easycap_gate = value != 0; return true; }
+    if (!strcmp(name, "RFPHistThresh"))       { g_rfp_hist_thresh = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "KillerReset"))         { g_killer_reset = value != 0; return true; }
+    if (!strcmp(name, "QSMoveCap"))           { g_qs_move_cap = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "QSDrawCheck"))         { g_qs_draw_check = value != 0; return true; }
+    if (!strcmp(name, "EPKeyFix"))            { g_ep_key_fix = value != 0; return true; }
     if (!strcmp(name, "CutoffStats"))         { g_cutoff_stats = value != 0; return true; }
     if (!strcmp(name, "EvalTTWrite"))         { g_eval_tt_write = value != 0; return true; }
     if (!strcmp(name, "TTTwoLevel"))          { g_tt_twolevel = value != 0; return true; }
@@ -1272,8 +1333,16 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
     td.enpassant = no_sq;
 
     if (double_push) {
-        td.enpassant = (td.side == white) ? target + 8 : target - 8;
-        td.hash_key ^= enpassant_keys[td.enpassant];
+        int ep_sq = (td.side == white) ? target + 8 : target - 8;
+        // F-017 EPKeyFix (default OFF): ep nel board/key SOLO se un pedone nemico puo'
+        // catturarlo (pseudo-legale, come SF). Niente "phantom ep" -> le trasposizioni
+        // a2a3+a3a4 vs a2a4 hanno la stessa chiave = piu' TT-hit. Nessun effetto sul
+        // movegen: senza capturer la casella ep era comunque inusabile.
+        if (!g_ep_key_fix ||
+            (pawn_attacks[td.side][ep_sq] & td.bitboards[(td.side == white) ? p : P])) {
+            td.enpassant = ep_sq;
+            td.hash_key ^= enpassant_keys[ep_sq];
+        }
     }
 
     if (castling) {
@@ -1939,6 +2008,18 @@ static inline int td_hbucket(ThreadData& td, int move) {
     return td_sq_tier(td, get_move_source(move)) * 3 + td_sq_tier(td, get_move_target(move));
 }
 
+// F-018.11 (EasyCapGate): vero se un NOSTRO pezzo e' attaccato da un pezzo nemico di
+// valore INFERIORE (presa "facile": N/B/R/Q da pedone, R/Q da minore, Q da torre).
+// Riusa i tier di td_compute_threats (cache su hash_key -> gratis se gia' calcolati).
+static inline bool td_has_easy_capture(ThreadData& td) {
+    if (td.threat_key != td.hash_key) td_compute_threats(td);
+    const int base = td.side * 6;
+    return (td.threat_by_pawn  & (td.bitboards[base + N] | td.bitboards[base + B]
+                                | td.bitboards[base + R] | td.bitboards[base + Q]))
+        || (td.threat_by_minor & (td.bitboards[base + R] | td.bitboards[base + Q]))
+        || (td.threat_by_rook  &  td.bitboards[base + Q]);
+}
+
 // Check-ordering helper: check_sq[pt] = squares from which a piece of type pt would give
 // a DIRECT check to the enemy king (= squares a pt-attacker reaches the king square from).
 // Computed once per node (caller checks td.check_key == td.hash_key). Only when CheckOrdering on.
@@ -1987,7 +2068,12 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
         // definition (no SEE needed). Only run SEE for "attacker > victim"
         // captures, which might be losing. Losing captures (SEE < 0) are
         // ordered AFTER all quiets (still searched, just last).
-        if (see_piece_values[piece] <= see_piece_values[victim] || td_see_at_least(td, move, 0))
+        // F-018.4 GoodCapHistDiv (0=off): soglia good/bad DIPENDENTE dallo score
+        // (Obsidian: -score/32) — una cattura con caphist ottima resta "good" anche con
+        // SEE leggermente negativo, una con storia pessima deve vincere materiale netto.
+        int gc_thresh = g_goodcap_hist_div
+                        ? -(mvv_lva[piece][victim] + caphist) / g_goodcap_hist_div : 0;
+        if (see_piece_values[piece] <= see_piece_values[victim] || td_see_at_least(td, move, gc_thresh))
             return SCORE_GOOD_CAPTURE + mvv_lva[piece][victim] + caphist;
         else
             return SCORE_BAD_CAPTURE + mvv_lva[piece][victim] + caphist;
@@ -2550,6 +2636,13 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
         if (td_is_square_attacked(td, opp_king_sq, td.side))
             return mate_value - td.ply;
     }
+
+    // F-015 QSDrawCheck (default OFF): draw-detection anche in qsearch (SF is_draw). Con
+    // QSChecks ON la qsearch gioca fino a 2 ply quiet e puo' chiudere un ciclo col cammino
+    // PRE-qsearch (perpetuo all'orizzonte) — senza questo check lo valuta stand-pat.
+    if (g_qs_draw_check && td.ply && (td_is_repetition(td) || td.fifty >= 100))
+        return g_draw_dither ? (1 - (int)(td.nodes & 2)) : 0;
+
     if ((td.nodes & 4095) == 0) {
         if (stop_threads.load(std::memory_order_relaxed)) return 0;
         if (timeset && get_time_ms() > stoptime) {
@@ -2609,7 +2702,10 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
              (tt_flag == hash_flag_alpha && tt_score < stand_pat)))
             stand_pat = tt_score;
         best_score = stand_pat;
-        if (stand_pat >= beta) return stand_pat;
+        // F-018.7 FailHighSmooth: midpoint verso beta sul fail-high statico (Obsidian/Berserk).
+        if (stand_pat >= beta)
+            return (g_fh_smooth && stand_pat < mate_score && stand_pat > -mate_score)
+                   ? (stand_pat + beta) / 2 : stand_pat;
 
         // F-002: era `const int DELTA = 1000` (unita'-eval, mai ricalibrato post-EvalScale).
         if (stand_pat + g_qs_delta < alpha) return stand_pat;
@@ -2633,6 +2729,10 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
     int qcaptures = 0;   // catture ESAMINATE a questo nodo (per BadNoisy move-count pruning)
 
     for (int count = 0; count < move_list->count; count++) {
+
+        // F-018.14 QSMoveCap (0=off): le mosse sono ordinate best-first -> oltre le prime N
+        // (non in scacco) il resto e' quasi sempre inutile (Obsidian: 3).
+        if (g_qs_move_cap && !in_check && legal_moves >= g_qs_move_cap) break;
 
         // --- INIZIO PICK-NEXT: Cerca la mossa migliore tra quelle rimaste ---
         int best_idx = count;
@@ -2734,6 +2834,11 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
 
     if (in_check && legal_moves == 0)
         return -mate_value + td.ply;
+
+    // F-018.7 FailHighSmooth: midpoint verso beta anche sul best finale (come Obsidian,
+    // che lo salva cosi' pure in TT: bound meno gonfiato = meno re-search dei padri).
+    if (g_fh_smooth && best_score >= beta && best_score < mate_score && best_score > -mate_score)
+        best_score = (best_score + beta) / 2;
 
     int store_flag = (best_score >= beta) ? hash_flag_beta : hash_flag_alpha;
     store_tt(td.hash_key, best_move, best_score, 0, store_flag, td.ply, false, tt_eval_undamp(q_raw_eval, td.fifty));
@@ -2928,8 +3033,31 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
     // P1.11 draw dither (SF value_draw): ±1cp dal node-count invece di 0 secco,
     // rompe la cecita' da ripetizione fra linee "ugualmente patte".
-    if (td.ply && (td_is_repetition(td) || td.fifty >= 100))
+    if (td.ply && (td_is_repetition(td) || td.fifty >= 100)) {
+        // F-013 (2026-07-03): alla 100a semimossa il MATTO prevale sulla patta (FIDE/SF
+        // rule50 gate). Ramo freddissimo: paga la verifica "esiste una mossa legale?"
+        // solo con fifty>=100 E lato al tratto sotto scacco.
+        if (td.fifty >= 100) {
+            int ksq50 = get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+            if (td_is_square_attacked(td, ksq50, td.side ^ 1)) {
+                moves ml50[1];
+                td_generate_moves(td, ml50, false);
+                bool any_legal = false;
+                for (int i50 = 0; i50 < ml50->count; i50++) {
+                    UndoInfo u50;
+                    td.ply++;
+                    td.repetition_table[++td.repetition_index] = td.hash_key;
+                    if (!td_make_move(td, ml50->moves[i50], u50)) { td.ply--; td.repetition_index--; continue; }
+                    td_unmake_move(td, ml50->moves[i50], u50);
+                    td.ply--; td.repetition_index--;
+                    any_legal = true;
+                    break;
+                }
+                if (!any_legal) return -mate_value + td.ply;   // scacco matto: niente patta-50
+            }
+        }
         return g_draw_dither ? (1 - (int)(td.nodes & 2)) : 0;
+    }
 
     // P1.4 mate-distance pruning: un matto trovato a questa profondita' non puo'
     // battere uno gia' provato piu' corto -> stringe la finestra e taglia subito.
@@ -2975,6 +3103,17 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             if (tt_score < -mate_score) tt_score += td.ply;
             if (tt_score > mate_score) tt_score -= td.ply;
 
+            // F-018.3a-c TTCutRefine (default OFF): (a) i fail-high richiedono 1 ply di
+            // depth TT in piu'; (b) coerenza bound/tipo-nodo (cutNode == fail-high);
+            // (c) niente cutoff con la patta-50 vicina (lo score TT ignora il fifty).
+            bool ttcut_ok = true;
+            if (g_ttcut_refine) {
+                bool tt_fh = tt_score >= beta;
+                ttcut_ok = (!tt_fh || tt_depth >= depth + 1)
+                        && (is_cut_node == tt_fh)
+                        && td.fifty < g_ttcut_fifty;
+            }
+
             // P1.13 (SF): il cutoff servito dalla TT non passa dal loop mosse ->
             // senza questo bonus la history del ttMove quiet si raffredda anche se
             // la mossa continua a tagliare. Scala SPSA-tunable (TTCutBonusScale).
@@ -2984,9 +3123,31 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 td_update_history(td.history_moves[td_hbucket(td, tt_move)][get_move_piece(tt_move)][get_move_target(tt_move)], bonus);
             }
 
-            if (tt_flag == hash_flag_exact) return tt_score;
-            if (tt_flag == hash_flag_alpha && tt_score <= alpha) return tt_score; // fail-soft
-            if (tt_flag == hash_flag_beta && tt_score >= beta) return tt_score; // fail-soft
+            if (ttcut_ok) {
+                bool would_cut = (tt_flag == hash_flag_exact)
+                              || (tt_flag == hash_flag_alpha && tt_score <= alpha)
+                              || (tt_flag == hash_flag_beta  && tt_score >= beta);
+                if (would_cut) {
+                    // F-018.3d TTCutMalus (default OFF, duale di TTCutBonus): la quiet
+                    // AVVERSARIA che porta a un nodo che cutta subito su TT era una mossa
+                    // debole -> raffreddala nell'ordering del PADRE (solo se il padre
+                    // aveva visto poche mosse: il segnale conta all'inizio della lista).
+                    if (g_ttcut_malus && tt_score >= beta && tt_flag != hash_flag_alpha) {
+                        int pm = td.move_stack[td.ply];
+                        if (pm && td.captured_stack[td.ply] == -1 && !get_move_promoted(pm)
+                            && td.seen_stack[td.ply - 1] <= g_ttcut_malus_seen) {
+                            int tmalus = td_stat_bonus(depth);
+                            td_update_history(td.history_moves[td.hbucket_stack[td.ply]][get_move_piece(pm)][get_move_target(pm)], -tmalus);
+                            if (td.ply >= 2) {
+                                int pm2 = td.move_stack[td.ply - 1];
+                                if (pm2)
+                                    td_update_history(td.continuation_history[get_move_piece(pm2)][get_move_target(pm2)][get_move_piece(pm)][get_move_target(pm)], -tmalus);
+                            }
+                        }
+                    }
+                    return tt_score; // fail-soft
+                }
+            }
         }
     }
 
@@ -3200,19 +3361,32 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // to hold above beta.
     int rfp_cap = g_rfp_depth_cap > 0 ? g_rfp_depth_cap : (g_rfp_depth8 ? 8 : 6);
     if (!pv_node && !in_check && depth <= rfp_cap && beta < mate_score) {
+        // F-018.12 RFPHistThresh (0=off): se la hash move e' una quiet con history scarsa,
+        // il fail-high statico non e' affidabile -> non tagliare (Berserk).
+        bool rfp_ok = true;
+        if (g_rfp_hist_thresh && tt_move && !get_move_capture(tt_move) && !get_move_promoted(tt_move))
+            rfp_ok = td.history_moves[td_hbucket(td, tt_move)][get_move_piece(tt_move)][get_move_target(tt_move)]
+                     > g_rfp_hist_thresh;
         int rfp_depth = depth - ((g_improving && improving) ? 1 : 0);
         int rfp_margin = g_rfp_margin * rfp_depth;
         if (opp_worsening) rfp_margin -= g_opp_worse_margin;                 // opp worse -> prune more
         if (g_corrval_margin) rfp_margin += (corr_val < 0 ? -corr_val : corr_val) * g_corrval_rfp / 128;  // heavy corr -> prune less
         if (rfp_margin < 0) rfp_margin = 0;
-        if (eval - rfp_margin >= beta)
-            return eval - rfp_margin;
+        if (rfp_ok && eval - rfp_margin >= beta)
+            // F-018.7 FailHighSmooth: midpoint verso beta = bound TT meno gonfiato -> meno re-search.
+            return g_fh_smooth ? (eval - rfp_margin + beta) / 2 : eval - rfp_margin;
     }
 
     // Null move pruning (not when beta is a mate score)
     // P1.6 NMPVerif (default OFF): (a) mai due null consecutive (move_stack==0 =
     // il padre ha appena nullato); (b) durante una search di verifica niente null.
     if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score && eval >= beta &&
+        // F-018.8a NMPStaticMargin (default OFF): la STATIC eval (non quella TT-improved)
+        // deve superare beta di un margine depth-dipendente (SF: 21*depth - 421).
+        (!g_nmp_static_margin || static_eval >= beta - g_nmp_sm_mult * depth + g_nmp_sm_bias) &&
+        // F-018.11 EasyCapGate (default OFF): con un nostro pezzo in presa "facile" la null
+        // lo lascia li' un ply in piu' -> fail-high fasulli (Berserk).
+        (!g_easycap_gate || !td_has_easy_capture(td)) &&
         (!g_nmp_verif || (td.move_stack[td.ply] != 0 && !td.in_nmp_verif))) {
         U64 our_pieces = (td.side == white) ?
             (td.bitboards[N] | td.bitboards[B] | td.bitboards[R] | td.bitboards[Q]) :
@@ -3229,6 +3403,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
             td.ply++;
             td.reduction_stack[td.ply] = 0;   // HindsightExt: il figlio null-move non e' "ridotto-LMR"
+            td.de_stack[td.ply] = td.de_stack[td.ply - 1];   // F-018.6b: la catena double-ext attraversa la null
             td.repetition_table[++td.repetition_index] = td.hash_key;
 
             // Null move: the child has no "previous move" for counter-move.
@@ -3247,6 +3422,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 if (e > 3) e = 3;
                 if (e > 0) R += e;
             }
+            // F-018.8b NMPTTNoisy (default OFF): TT move cattura = posizione tattica gia'
+            // "risolta" da una noisy -> la null puo' permettersi un ply in piu' (Obsidian).
+            if (g_nmp_ttnoisy && tt_move && get_move_capture(tt_move)) R++;
             if (R > depth - 1) R = depth - 1;
 
             nn_pos_do_null(td.nnpos, td.fifty);
@@ -3403,6 +3581,13 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     int searched_captures[64];
     int n_searched_captures = 0;
 
+    // F-018.13 KillerReset (default OFF): azzera i killer del ply FIGLIO prima del loop
+    // mosse — i killer ereditati da sottoalberi FRATELLI sono stale (Obsidian/Berserk).
+    if (g_killer_reset && td.ply + 1 < max_ply + 8) {
+        td.killer_moves[0][td.ply + 1] = 0;
+        td.killer_moves[1][td.ply + 1] = 0;
+    }
+
     int move;
     while ((move = mp_next(td, mp)) != 0) {
         // Ora move   garantita essere la migliore
@@ -3544,7 +3729,11 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // g_singular_dmargin: how far below singular_beta the alternatives must
         // fall for a DOUBLE extension (bigger = rarer/safer). SPSA-tunable.
         int extension = 0;
-        if (excluded_move == 0 && move == tt_move && depth >= 8 && td.ply &&
+        // F-018.6a SingularMinDepth (default 8 = storico; Obsidian 5, Berserk 6: a 6 il
+        // blocco scatta ~2x piu' spesso). F-018.6c SingularPlyGuard: anti-esplosione oltre
+        // ply >= 2*rootDepth (entrambi i rivali ce l'hanno).
+        if (excluded_move == 0 && move == tt_move && depth >= g_singular_mindepth && td.ply &&
+            (!g_singular_plyguard || td.ply < 2 * td.root_depth) &&
             tt_hit && tt_depth >= depth - 3 && tt_flag != hash_flag_alpha &&
             tt_score > -mate_score && tt_score < mate_score) {
             int singular_beta = tt_score - g_singular_mpd * depth;   // F-002: era hardcoded 2*depth
@@ -3555,7 +3744,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // Double extension: the TT move beats every alternative by a wide
                 // margin (hyper-forced) -> extend 2 plies. Non-PV only, to bound the
                 // search blow-up that uncapped double extensions can cause.
-                if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin) {
+                // F-018.6b SingularDECap (0=off): limita la CATENA di double-extension sul
+                // path (Berserk ss->de <= 6) — senza cap le catene lunghe esplodono l'albero.
+                if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin
+                    && (!g_singular_de_cap || td.de_stack[td.ply] <= g_singular_de_cap)) {
                     extension = 2;
                     // Triple extension (SF :1244): beats alternatives by an even wider
                     // margin -> +3. tmargin > dmargin so this nests inside the double.
@@ -3580,6 +3772,11 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             else if (g_negext_tt > 0 && tt_score >= beta) {
                 extension = -g_negext_tt;
             }
+            // F-018.6d NegExtAlpha (0=off): la TT move non batte nemmeno alpha -> il nodo
+            // non e' singolare ne' promettente, riduci l'estensione (Berserk: -1).
+            else if (g_negext_alpha > 0 && tt_score <= alpha) {
+                extension = -g_negext_alpha;
+            }
             else if (g_negext_cut > 0 && is_cut_node) {
                 extension = -g_negext_cut;
             }
@@ -3598,8 +3795,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         int move_hbucket = td_hbucket(td, move);
 
         UndoInfo undo;
+        td.seen_stack[td.ply] = moves_searched;   // F-018.3d: mosse gia' viste a QUESTO nodo (il figlio le legge su TT-cut)
         td.ply++;
         td.reduction_stack[td.ply] = 0;   // HindsightExt: default 0 (figlio non ridotto); override sotto solo per il reduced-search LMR
+        td.de_stack[td.ply] = td.de_stack[td.ply - 1] + (extension >= 2 ? 1 : 0);   // F-018.6b: catena double-ext sul path
         td.repetition_table[++td.repetition_index] = td.hash_key;
 
         if (!td_make_move(td, move, undo)) {
@@ -3625,6 +3824,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
         // PVS + LMR
         U64 root_nodes_before = is_root_node ? td.nodes : 0;
+        int postlmr_bonus = 0;   // F-018.1: esito della re-search post-LMR (applicato dopo l'unmake)
         if (moves_searched == 0) {
             score = -td_negamax(td, -beta, -alpha, depth - 1 + extension, false);
         }
@@ -3792,8 +3992,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     bool do_shallower = score < best_score + g_doshallower_margin;
                     full_depth += (int)do_deeper - (int)do_shallower;
                 }
-                if (full_depth > reduced_depth)
+                if (full_depth > reduced_depth) {
                     score = -td_negamax(td, -alpha - 1, -alpha, full_depth, !is_cut_node);
+                    // F-018.1 PostLMRHist (default OFF): la re-search full-depth VERIFICA la
+                    // riduzione — se conferma il fail-high la mossa merita bonus conthist, se
+                    // smentisce merita malus (mainline SF, presente in Obsidian e Berserk).
+                    if (g_postlmr_hist)
+                        postlmr_bonus = (score <= alpha ? -td_stat_bonus(full_depth)
+                                       : score >= beta ?  td_stat_bonus(full_depth) : 0)
+                                        * g_postlmr_scale / 100;
+                }
             }
 
             // PV full-window re-search (uses the possibly-adjusted full_depth so a
@@ -3808,6 +4016,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         td.repetition_index--;
 
         if (stop_threads.load(std::memory_order_relaxed)) return 0;
+
+        // F-018.1 PostLMRHist: update conthist DOPO l'unmake (convenzioni ply del nodo,
+        // come il blocco fail-high sotto). Su ogni tipo di mossa, come SF.
+        if (postlmr_bonus) {
+            int plh_prev = td.move_stack[td.ply];
+            if (plh_prev)
+                td_update_history(td.continuation_history[get_move_piece(plh_prev)][get_move_target(plh_prev)]
+                                                         [get_move_piece(move)][get_move_target(move)], postlmr_bonus);
+            td_conthist_multi_update(td, move, postlmr_bonus);
+        }
 
         moves_searched++;
         if (is_quiet && n_searched_quiets < 64)
@@ -3829,6 +4047,13 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 for (int i = td.ply + 1; i < td.pv_length[td.ply + 1]; i++)
                     td.pv_table[td.ply][i] = td.pv_table[td.ply + 1][i];
                 td.pv_length[td.ply] = td.pv_length[td.ply + 1];
+
+                // F-018.9 AlphaDepthDec (default OFF): trovato un best "vero" (alpha alzato,
+                // niente cutoff), le mosse RESTANTI meritano meno sforzo -> depth-1 per il
+                // resto del loop (Berserk/SF; il TT store finale usa la depth ridotta).
+                if (g_alpha_depth_dec && score < beta && score > -mate_score && score < mate_score
+                    && depth >= 2 && depth <= 11)
+                    depth--;
 
                 if (score >= beta) {
                     // CutoffStats (diagnostica, off-default): fail-high node. moves_searched
@@ -3859,11 +4084,19 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                         int pct = prev_cm ? get_move_target(prev_cm) : 0;
                         if (prev_cm)
                             td.counter_moves[pcp][pct] = move;
-                        int bonus = td_stat_bonus(depth);
+                        // F-018.10a FHBoostMargin (0=off): fail-high LARGO = segnale piu' forte
+                        // -> bonus/malus calcolati a depth+1 (Obsidian +95, Berserk +75).
+                        int bonus = td_stat_bonus(depth
+                            + ((g_fhboost_margin && best_score > beta + g_fhboost_margin) ? 1 : 0));
                         // PawnHistory: indice dal board corrente (= board del nodo qui,
                         // la cutoff-move e' gia' stata unmade -> corretto). Locale = no
                         // staleness da ricorsione.
                         int pawn_pk = g_pawn_hist ? (td_corr_index(td) & ThreadData::PAWN_HIST_MASK) : 0;
+                        // F-018.10b HistTrivGuard (default OFF): cutoff "gratis" (depth bassa,
+                        // nessun quiet provato prima) -> niente bonus: gonfierebbe mosse che
+                        // hanno tagliato senza concorrenza (Obsidian/Berserk/Ethereal).
+                        bool triv_cut = g_hist_triv_guard && depth <= 3 && n_searched_quiets <= 1;
+                        if (!triv_cut) {
                         td_update_history(td.history_moves[move_hbucket][get_move_piece(move)][get_move_target(move)], bonus);
                         if (prev_cm)
                             td_update_history(td.continuation_history[pcp][pct][get_move_piece(move)][get_move_target(move)], bonus);
@@ -3872,13 +4105,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                             td_update_history(td.pawn_history[pawn_pk][get_move_piece(move)][get_move_target(move)], bonus);
                         if (g_lowply && td.ply < ThreadData::LOW_PLY_MAX)
                             td_update_history(td.lowply_history[td.ply][get_move_piece(move)][get_move_target(move)], bonus);
+                        }
                         // malus: quiet moves tried before the cutoff get penalized
                         for (int q = 0; q < n_searched_quiets; q++) {
                             int qm = searched_quiets[q];
                             if (qm == move) continue;
                             // MalusScaled (default OFF -> qmalus=bonus=piatto): le quiet TARDIVE (q grande)
                             // ricevono malus MINORE (come Reckless): denom = 1024 + coef*q.
-                            int qmalus = g_malus_scaled ? bonus * 1024 / (1024 + g_malus_scale_coef * q) : bonus;
+                            // F-018.10c MalusPct (100=identico al bonus): costanti malus separate.
+                            int qmalus = (g_malus_scaled ? bonus * 1024 / (1024 + g_malus_scale_coef * q) : bonus)
+                                         * g_malus_pct / 100;
                             td_update_history(td.history_moves[td_hbucket(td, qm)][get_move_piece(qm)][get_move_target(qm)], -qmalus);
                             if (prev_cm)
                                 td_update_history(td.continuation_history[pcp][pct][get_move_piece(qm)][get_move_target(qm)], -qmalus);
@@ -3904,7 +4140,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                     // vengono sovra-ordinate -> -Elo. (Era il bug che rendeva la feature
                     // negativa: -21 @div1, -12 @div16.)
                     if (g_capture_hist) {
-                        int cap_malus = td_stat_bonus(depth);
+                        int cap_malus = td_stat_bonus(depth) * g_malus_pct / 100;   // F-018.10c
                         for (int c = 0; c < n_searched_captures; c++) {
                             int cm = searched_captures[c];
                             if (cm == move) continue;   // la cattura-cutoff ha gia' il bonus
@@ -3973,8 +4209,10 @@ static void print_search_info(ThreadData& td, int depth, int score) {
     std::lock_guard<std::mutex> lock(output_mutex);
 
     if (score > -mate_value && score < -mate_score) {
+        // F-014 (2026-07-03): tolto il "-1" (off-by-one ereditato da BBC): mattati in N
+        // semimosse (score = -mate_value + N, N pari) -> UCI "mate -(N/2)", non -(N/2)-1.
         printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d tbhits %llu pv ",
-            depth, td.seldepth, -(score + mate_value) / 2 - 1, total, nps, elapsed, tbhits);
+            depth, td.seldepth, -(score + mate_value) / 2, total, nps, elapsed, tbhits);
     }
     else if (score > mate_score && score < mate_value) {
         printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d tbhits %llu pv ",
@@ -4038,6 +4276,7 @@ static void thread_search(int thread_id, int max_depth) {
     int prev_score = 0;
     int prev_best_move = 0;
     int prev_completed_score = 0;   // last completed iteration's score (TimeMgmt drop)
+    int avg_score = infinity;       // F-018.5a AspAvg: media mobile degli score (infinity = non ancora inizializzata)
 
     // Stagger starting depths for thread diversity
     int start_depth = 1 + (thread_id % 2);
@@ -4080,19 +4319,32 @@ static void thread_search(int thread_id, int max_depth) {
         // out of step with the search.
         nn_root_sync(td);
 
+        td.root_depth = current_depth;   // F-018.6c SingularPlyGuard: gate ply < 2*rootDepth
+
         // Aspiration window: start narrow around the previous score and widen
         // incrementally on failures, instead of re-searching the full window.
+        // F-018.5a AspAvg (default OFF): centro = media mobile degli score invece del
+        // prev_score secco -> il rumore iterazione-su-iterazione non sposta la finestra.
         int alpha = -infinity, beta = infinity, delta = g_asp_init_delta;
         if (current_depth >= 4) {
-            alpha = (prev_score - delta > -infinity) ? prev_score - delta : -infinity;
-            beta  = (prev_score + delta <  infinity) ? prev_score + delta :  infinity;
+            int center = (g_asp_avg && avg_score != infinity) ? avg_score : prev_score;
+            alpha = (center - delta > -infinity) ? center - delta : -infinity;
+            beta  = (center + delta <  infinity) ? center + delta :  infinity;
         }
 
         int score;
         U64 iter_nodes = 0;
+        int fail_high_cnt = 0;   // F-018.5b AspFHRed
         while (true) {
             U64 nodes_before_call = td.nodes;
-            score = td_negamax(td, alpha, beta, current_depth, false);
+            // F-018.5b AspFHRed (default OFF): ogni fail-high consecutivo ri-cerca a depth-1
+            // (Obsidian/Berserk/SF: la conferma del fail-high non serve a profondita' piena).
+            int search_depth = current_depth;
+            if (g_asp_fhred && fail_high_cnt > 0) {
+                search_depth = current_depth - fail_high_cnt;
+                if (search_depth < 1) search_depth = 1;
+            }
+            score = td_negamax(td, alpha, beta, search_depth, false);
             iter_nodes = td.nodes - nodes_before_call;   // nodes of the last (in-window) search
             if (stop_threads.load(std::memory_order_relaxed)) break;
 
@@ -4100,10 +4352,12 @@ static void thread_search(int thread_id, int max_depth) {
                 beta = (alpha + beta) / 2;
                 alpha = (score - delta > -infinity) ? score - delta : -infinity;
                 delta += delta * g_asp_grow / 100;
+                fail_high_cnt = 0;           // F-018.5b: la depth piena torna sul fail-low (SF)
             }
             else if (score >= beta) {        // fail high: raise beta
                 beta = (score + delta < infinity) ? score + delta : infinity;
                 delta += delta * g_asp_grow / 100;
+                if (score < mate_score) fail_high_cnt++;
             }
             else {
                 break;                       // score is inside the window
@@ -4113,6 +4367,7 @@ static void thread_search(int thread_id, int max_depth) {
         if (stop_threads.load(std::memory_order_relaxed)) break;
 
         prev_score = score;
+        avg_score = (avg_score == infinity) ? score : (avg_score + score) / 2;   // F-018.5a
         // EvalOptimism (5.1): aggiorna il contempt dinamico per i sottoalberi successivi (SF lo
         // ricava dall'averageScore della root). Solo main thread scrive (gli helper leggono soft).
         if (g_eval_optimism && thread_id == 0) {

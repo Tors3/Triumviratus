@@ -18,6 +18,7 @@
 #include "nnue_bridge.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -93,7 +94,10 @@ static thread_local int g_last_unadjusted = 0;
 // -> byte-identico). g_optimism[stm] e' aggiornato dalla root (search) in unita'-interne SF; il
 // nostro static-eval lo ometteva (=0). Riacceso, ricalibra l'eval come fa SF (contempt dinamico).
 int g_eval_optimism = 1;  // [5.1 BAKE] ON di default (spsa_struct lo ha tenuto a strength=89, non spento)
-int g_optimism[2]   = {0, 0};
+// F-019 (2026-07-03): atomic relaxed-di-fatto — il main scrive a fine iterazione, gli
+// helper leggono nella eval; su int non-atomici era UB formale (TSan-visibile). Su x86
+// load/store atomici su int = stessa istruzione: zero costo, stesso comportamento.
+std::atomic<int> g_optimism[2] = {0, 0};
 
 static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
     int nnue           = (125 * int(psqt) + 131 * int(positional)) / 128;
