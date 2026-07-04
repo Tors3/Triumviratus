@@ -667,7 +667,7 @@ void set_threat_hist(bool v) { g_threat_hist = v; }
 // Cablato e SPRT-ato: >100 negativo (130 perde LOS87.75% @194g, run#6), <100 POSITIVO (75 vince LOS94.46%
 // @400g, run#7) — coerente: MainHistWeight basso (67) => il sistema vuole MENO enfasi butterfly.
 // [BAKE 2026-07-04: 100->75, SPRT +13.90 Elo per il candidato, LOS 94.46% @400g 10+0.1]
-int g_threat_hist_weight = 75;   // /100, scala extra del termine threat-history in td_score_move
+int g_threat_hist_weight = 60;   // /100, scala extra del termine threat-history in td_score_move [BAKE 2026-07-04 75->60, SPRT -9.39 Elo base LOS82.13% @296g + gradiente SPSA concorde (discesa 75->68-73)]
 int g_threat_scale = 4580;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
 // ---- Check-ordering (#3 SF, 2026-06-07) -------------------------------------
 // SF da' un bonus ai quiet che danno SCACCO DIRETTO (forcing), filtrati per non essere
