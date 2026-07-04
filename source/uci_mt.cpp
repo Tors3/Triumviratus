@@ -416,7 +416,7 @@ void uci_loop()
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
             printf("option name ThreatScale type spin default 4580 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
             printf("option name ThreatHist type check default true\n");                   // [BAKE 2026-07-03] history quiet condizionata dalle minacce (from/to attaccata)
-            printf("option name ThreatHistWeight type spin default 100 min 0 max 400\n"); // /100 del contributo threat-history; co-tunabile
+            printf("option name ThreatHistWeight type spin default 75 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75, +13.90 Elo LOS94.46% @400g]
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 12898 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
@@ -492,16 +492,16 @@ void uci_loop()
             printf("option name PostLMRHist type check default false\n");                     // #1 conthist update post re-search LMR (SF mainline)
             printf("option name PostLMRHistScale type spin default 100 min 0 max 400\n");
             printf("option name TTCutRefine type check default true\n");                      // [BAKE 2026-07-03] cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty gate
-            printf("option name TTCutFifty type spin default 90 min 50 max 100\n");
+            printf("option name TTCutFifty type spin default 87 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                      // #3d malus quiet avversaria su TT-cut (duale TTCutBonus)
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
             printf("option name GoodCapHistDiv type spin default 0 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
-            printf("option name SingularMinDepth type spin default 8 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
-            printf("option name SingularDECap type spin default 0 min 0 max 16\n");           // #6b cap catena double-ext (0=off, Berserk 6)
+            printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
+            printf("option name SingularDECap type spin default 1 min 0 max 16\n");           // #6b cap catena double-ext (0=off, Berserk 6)
             printf("option name SingularPlyGuard type check default false\n");                // #6c niente singular oltre ply >= 2*rootDepth
-            printf("option name NegExtAlpha type spin default 0 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1)
+            printf("option name NegExtAlpha type spin default 2 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1)
             printf("option name FailHighSmooth type check default true\n");                   // [BAKE 2026-07-03] return (score+beta)/2 su RFP/qsearch
             printf("option name NMPStaticMargin type check default false\n");                 // #8a NMP: static_eval >= beta - mult*depth + bias (SF)
             printf("option name NMPStaticMult type spin default 21 min 0 max 100\n");
@@ -515,7 +515,7 @@ void uci_loop()
             printf("option name RFPHistThresh type spin default 0 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
             printf("option name KillerReset type check default false\n");                     // #13 azzera killer del ply figlio a ogni nodo
             printf("option name QSMoveCap type spin default 0 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
-            printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch (bug-fix a toggle)
+            printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch (ripristinato a toggle: SPRT necessario, effetto NPS grosso e variabile)
             printf("option name EPKeyFix type check default false\n");                        // F-017 niente phantom-ep nella hash key (bug-fix a toggle)
             printf("option name HistReductionDiv type spin default 3357 min 500 max 8000\n"); // bakato: 3500->1041
             printf("option name AspInitDelta type spin default 19 min 8 max 60\n");       // bakato: 25->31

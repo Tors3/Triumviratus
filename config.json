@@ -1,0 +1,186 @@
+{
+    "resign": {
+        "move_count": 4,
+        "score": 900,
+        "twosided": true,
+        "enabled": true
+    },
+    "draw": {
+        "move_number": 40,
+        "move_count": 8,
+        "score": 10,
+        "enabled": true
+    },
+    "maxmoves": {
+        "move_count": 1,
+        "enabled": false
+    },
+    "tb_adjudication": {
+        "syzygy_dirs": "",
+        "max_pieces": 0,
+        "ignore_50_move_rule": false,
+        "enabled": false
+    },
+    "opening": {
+        "file": "C:\\Users\\franc\\source\\repos\\Triumviratus_3.0\\OpeningBooks\\uho_2024\\UHO_2024_+085_+094\\UHO_2024_8mvs_big_+080_+099.epd",
+        "format": 0,
+        "order": 0,
+        "plies": -1,
+        "start": 1
+    },
+    "pgn": {
+        "additional_lines_rgx": [],
+        "event_name": "Fastchess Tournament",
+        "site": "?",
+        "file": "",
+        "notation": 0,
+        "append_file": true,
+        "track_nodes": false,
+        "track_seldepth": false,
+        "track_nps": false,
+        "track_hashfull": false,
+        "track_tbhits": false,
+        "track_timeleft": false,
+        "track_latency": false,
+        "track_pv": false,
+        "min": false,
+        "crc": false
+    },
+    "epd": {
+        "file": "",
+        "append_file": true
+    },
+    "sprt": {
+        "alpha": 0.05,
+        "beta": 0.05,
+        "elo0": 0.0,
+        "elo1": 5.0,
+        "model": "normalized",
+        "enabled": true
+    },
+    "config_name": "config.json",
+    "output": 0,
+    "seed": 5775735940455332982,
+    "variant": 0,
+    "type": 0,
+    "gauntlet_seeds": 1,
+    "ratinginterval": 50,
+    "scoreinterval": 1,
+    "wait": 0,
+    "autosaveinterval": 20,
+    "games": 2,
+    "rounds": 500,
+    "concurrency": 14,
+    "force_concurrency": false,
+    "recover": true,
+    "noswap": false,
+    "reverse": false,
+    "report_penta": true,
+    "affinity": false,
+    "show_latency": false,
+    "log": {
+        "file": "",
+        "level": 2,
+        "append_file": true,
+        "compress": false,
+        "realtime": true,
+        "engine_coms": false
+    },
+    "engines": [
+        {
+            "name": "base_thw75",
+            "dir": "",
+            "cmd": "C:\\Users\\franc\\source\\repos\\Triumviratus_3.0\\Triumviratus_5\\x64\\Release\\Triumviratus_5.1fix_avx512.exe",
+            "args": "",
+            "restart": false,
+            "options": [
+                [
+                    "EvalFile",
+                    "C:\\Users\\franc\\source\\repos\\Triumviratus_3.0\\Triumviratus_5\\x64\\Release\\nn-rubicon-alea-v1.nnue"
+                ],
+                [
+                    "Hash",
+                    "64"
+                ],
+                [
+                    "Threads",
+                    "1"
+                ],
+                [
+                    "Move Overhead",
+                    "100"
+                ],
+                [
+                    "ThreatHistWeight",
+                    "75"
+                ]
+            ],
+            "limit": {
+                "tc": {
+                    "increment": 100,
+                    "fixed_time": 0,
+                    "time": 10000,
+                    "moves": 0,
+                    "timemargin": 150
+                },
+                "nodes": 0,
+                "plies": 0
+            },
+            "variant": 0
+        },
+        {
+            "name": "cand_thw40",
+            "dir": "",
+            "cmd": "C:\\Users\\franc\\source\\repos\\Triumviratus_3.0\\Triumviratus_5\\x64\\Release\\Triumviratus_5.1fix_avx512.exe",
+            "args": "",
+            "restart": false,
+            "options": [
+                [
+                    "EvalFile",
+                    "C:\\Users\\franc\\source\\repos\\Triumviratus_3.0\\Triumviratus_5\\x64\\Release\\nn-rubicon-alea-v1.nnue"
+                ],
+                [
+                    "Hash",
+                    "64"
+                ],
+                [
+                    "Threads",
+                    "1"
+                ],
+                [
+                    "Move Overhead",
+                    "100"
+                ],
+                [
+                    "ThreatHistWeight",
+                    "40"
+                ]
+            ],
+            "limit": {
+                "tc": {
+                    "increment": 100,
+                    "fixed_time": 0,
+                    "time": 10000,
+                    "moves": 0,
+                    "timemargin": 150
+                },
+                "nodes": 0,
+                "plies": 0
+            },
+            "variant": 0
+        }
+    ],
+    "stats": {
+        "base_thw75 vs cand_thw40": {
+            "wins": 8,
+            "losses": 10,
+            "draws": 22,
+            "penta_WW": 0,
+            "penta_WD": 3,
+            "penta_WL": 5,
+            "penta_DD": 7,
+            "penta_LD": 5,
+            "penta_LL": 0
+        }
+    }
+}

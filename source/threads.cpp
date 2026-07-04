@@ -657,14 +657,17 @@ void set_cutnode_lmr(bool v) { g_cutnode_lmr = v; }
 // hash_key) -> niente costo per-mossa.
 static bool g_threat_ordering = true;   // BAKED FULL 2026-06-07
 void set_threat_ordering(bool v) { g_threat_ordering = v; }
-// ThreatHist (UCI "ThreatHist", default OFF — 5.1 roadmap, audit Reckless/SF-master 2026-06-24):
-// history quiet condizionata dalle MINACCE (from/to attaccata dal nemico). Termine additivo
-// pesato ThreatHistWeight. Schema nostro: [from_thr][to_thr][piece][target] (piece-to, additivo).
-// Usa td.threat_all (tutte le minacce nemiche), calcolato in td_compute_threats quando uno dei
-// due toggle threat e' acceso. OFF = tabella mai letta/scritta = byte-identico.
+// ThreatHist (UCI "ThreatHist", BAKED ON 2026-07-03): la main quiet history E' threat-indexed —
+// history_moves[9][12][64], bucket = from_tier*3 + to_tier (tier 0 safe / 1 attaccata da pedone-o-
+// minore / 2 da torre+). td_hbucket ritorna il bucket quando ON, 0 quando OFF (= tabella piatta).
 static bool g_threat_hist = true;   // [BAKE 2026-07-03 secondo audit: combo ThreatHist+flow, -30.48 base LOS0.06% @320g 12+0.12]
 void set_threat_hist(bool v) { g_threat_hist = v; }
-int g_threat_hist_weight = 100;   // /100 del contributo threat-history allo scoring quiet. Spin ThreatHistWeight (co-tune).
+// ThreatHistWeight (2026-07-04 CABLATO): scala EXTRA sul contributo della threat-history nell'ordering
+// (td_score_move), applicata SOPRA MainHistWeight. 100 = identita' (byte-identico al release SPRT +30 combo).
+// Cablato e SPRT-ato: >100 negativo (130 perde LOS87.75% @194g, run#6), <100 POSITIVO (75 vince LOS94.46%
+// @400g, run#7) — coerente: MainHistWeight basso (67) => il sistema vuole MENO enfasi butterfly.
+// [BAKE 2026-07-04: 100->75, SPRT +13.90 Elo per il candidato, LOS 94.46% @400g 10+0.1]
+int g_threat_hist_weight = 75;   // /100, scala extra del termine threat-history in td_score_move
 int g_threat_scale = 4580;    // contributo = scale/100 * pieceValue * (from_minacciato - to_minacciato). Spin ThreatScale (SPSA). Default basso = nudge (1500 = +75% nodi a d20 = disturba l'ordering tarato); il co-tune trova il valore nostro.
 // ---- Check-ordering (#3 SF, 2026-06-07) -------------------------------------
 // SF da' un bonus ai quiet che danno SCACCO DIRETTO (forcing), filtrati per non essere
@@ -712,16 +715,16 @@ int g_cutoffcnt_penalty = 0;
 static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-search post-LMR (mainline SF)
 int  g_postlmr_scale         = 100;    //    /100 del td_stat_bonus applicato
 static bool g_ttcut_refine   = true;   // #3a-c cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty<soglia [BAKE 2026-07-03]
-int  g_ttcut_fifty           = 90;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina)
+int  g_ttcut_fifty           = 87;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
 static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus)
 int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
 int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
 static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score (smorza il rumore)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
-int  g_singular_mindepth     = 8;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6)
-int  g_singular_de_cap       = 0;      // #6b cap catena double-extension sul path (0=off; Berserk 6)
+int  g_singular_mindepth     = 6;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
+int  g_singular_de_cap       = 1;      // #6b cap catena double-extension sul path (0=off; Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
 static bool g_singular_plyguard = false; // #6c niente singular oltre ply >= 2*rootDepth (anti-esplosione)
-int  g_negext_alpha          = 0;      // #6d negext se ttScore <= alpha (0=off; Berserk 1)
+int  g_negext_alpha          = 2;      // #6d negext se ttScore <= alpha (0=off; Berserk 1) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
 static bool g_fh_smooth      = true;   // #7 fail-high: return (score+beta)/2 su RFP e qsearch (bound TT meno gonfiati) [BAKE 2026-07-03]
 static bool g_nmp_static_margin = false; // #8a NMP solo se static_eval >= beta - mult*depth + bias (SF)
 int  g_nmp_sm_mult           = 21;
@@ -736,8 +739,10 @@ int  g_rfp_hist_thresh       = 0;      // #12 RFP solo se hash-move non-quiet o 
 static bool g_killer_reset   = false;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
 int  g_qs_move_cap           = 0;      // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
 // ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
-static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) anche in qsearch
+static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) in qsearch (ripristinato a toggle 2026-07-04)
 bool g_ep_key_fix            = false;  // F-017: ep nella hash key SOLO se la cattura ep e' pseudo-legale (anche movegen.cpp)
+                                        // ⚠️ nps_ab_test.py 80pos/depth13: nodi +16%, NPS -7.5% (INATTESO, non e' un
+                                        // regalo NPS) — NON hardenare, resta OFF, da capire prima di ritentare.
 // CutoffStats (diagnostica move-ordering, default OFF = byte-identico): se ON, conta sui
 // beta-cutoff il first-move-cutoff rate (fh_first/fh_nodes) + indice medio della mossa al
 // cutoff, e li stampa come "info string FMC ..." a fine ricerca. Il gap vs SF e' l'ordering
@@ -2091,6 +2096,10 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     // (ContHistWeight, default 1). I conthist sono sommati e poi pesati, cosi' il
     // co-tune puo' bilanciare conthist vs main/pawn senza toccare il loro uso in LMR.
     int h = g_mainhist_weight * td.history_moves[td_hbucket(td, move)][piece][target] / 100;
+    // ThreatHistWeight (cablato 2026-07-04): scala extra del termine (threat-indexed) di butterfly
+    // history nell'ordering. 100 = identita' -> nessun effetto (baseline). Solo con ThreatHist ON.
+    if (g_threat_hist && g_threat_hist_weight != 100)
+        h = h * g_threat_hist_weight / 100;
     int ch = 0;
     if (prev)
         ch += td.continuation_history[get_move_piece(prev)][get_move_target(prev)][piece][target];
@@ -2637,9 +2646,11 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
             return mate_value - td.ply;
     }
 
-    // F-015 QSDrawCheck (default OFF): draw-detection anche in qsearch (SF is_draw). Con
-    // QSChecks ON la qsearch gioca fino a 2 ply quiet e puo' chiudere un ciclo col cammino
-    // PRE-qsearch (perpetuo all'orizzonte) — senza questo check lo valuta stand-pat.
+    // F-015 (RIPRISTINATO A TOGGLE 2026-07-04 sera): draw-detection anche in qsearch (SF
+    // is_draw). L'hardening precedente e' stato ANNULLATO — il test nps_ab_test.py a 80
+    // posizioni dava -1.2% nodi (trascurabile), ma il bench a 8 posizioni dava +17.6% (781516
+    // vs 664743): scarto troppo grande per essere solo "posizioni diverse", da capire prima
+    // di ri-proporre l'hardening. Default OFF finche' non e' chiarito il meccanismo.
     if (g_qs_draw_check && td.ply && (td_is_repetition(td) || td.fifty >= 100))
         return g_draw_dither ? (1 - (int)(td.nodes & 2)) : 0;
 
