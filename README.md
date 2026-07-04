@@ -6,9 +6,22 @@
 
 **A strong UCI chess engine in C++** — NNUE evaluation · SPSA-tuned alpha-beta search · Syzygy tablebases
 
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
+[![C++](https://img.shields.io/badge/language-C%2B%2B-00599C.svg)](source/)
+![UCI](https://img.shields.io/badge/protocol-UCI-brightgreen.svg)
+![NNUE](https://img.shields.io/badge/evaluation-NNUE-orange.svg)
+
 **by Francesco Torsello**
 
 <sub>in collaboration with Maurizio Platino</sub>
+
+</div>
+
+---
+
+<div align="center">
+
+[Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -46,8 +59,10 @@ First release with a **NNUE network trained by the author**. *(CCRL rating: to b
 ## Results
 
 #### 5.1 final version-bump verification (2026-07-05)
-`v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only — the two
-versions use different eval-display scales, so score-based resign/draw thresholds would be asymmetric).
+
+> [!NOTE]
+> `v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only — the two versions use different eval-display scales, so score-based resign/draw thresholds would be asymmetric).
+
 Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
 
 | Time control | Threads | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
@@ -66,7 +81,10 @@ Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
 | Pawnocchio 1.9.1 | 20+0.2 | 512 MB | 558 | 48.9% | **-7.5 ± 14.8** | 15.9% |
 | Berserk 14 | 25+0.25 | 1024 MB | 322 | 46.3% | **-25.9 ± 18.1** | 0.24% |
 
-#### Historical
+<details>
+<summary><b>Historical</b></summary>
+<br>
+
 | Date | Match | Time control | Book | Games | Score | Elo | LOS |
 |---|---|---|---|---|---|---|---|
 | 2026-07-03 | 5.1 vs 5.0 | 10+0.2 | UHO | 250 | 60.8% | **+76.25 ± 29.82** | 100.00% |
@@ -77,15 +95,17 @@ Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
 | — | 5.0 vs 4.2 | 20+0.2 | self-play | — | — | **+50** | — |
 | — | 5.0 vs 4.2 | 3min+1s | UHO | 100 | 61.5% | **+81** | — |
 
+</details>
+
 Gap widens at longer TC (deeper search rewards the stronger network). Balanced-book matches draw far more
 than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo number.
 
 ## License
 
-**GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13
-evaluation in `nnue/`, GPLv3); the search, the rest of the engine, and the shipped network are the project's own
-(see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is
-distributed under GPLv3**, with Stockfish's copyright notices preserved.
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
+
+> [!IMPORTANT]
+> **GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13 evaluation in `nnue/`, GPLv3); the search, the rest of the engine, and the shipped network are the project's own (see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is distributed under GPLv3**, with Stockfish's copyright notices preserved.
 
 ## Credits
 
