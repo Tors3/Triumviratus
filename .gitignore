@@ -1,0 +1,3 @@
+# local fastchess / tuning artifacts (do not belong in the repo)
+config.json
+*.pgn

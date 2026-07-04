@@ -24,10 +24,11 @@ normalization** (empirically fitted so "+1.00" means "50% win probability"), plu
 and LMR fixes.
 
 **Latest patch** — Fixed: mate-vs-50-move-rule bug, `score mate` off-by-one, repetition-table overflow,
-benign data race. Added, **ON by default** (+30 Elo, SPRT-confirmed, see [Results](#results)):
-threat-indexed history, refined TT-cutoff, aspiration fail-high depth reduction, alpha-raise depth
-decrement, fail-high score smoothing. Added, **OFF by default** (needs tuning): ~15 more search toggles
-(NMP margin, singular gates, post-LMR history bonus, and others).
+benign data race. Added, **ON by default** (**+26 Elo cumulative** vs the pre-patch release, SPRT-confirmed,
+see [Results](#results)): threat-indexed quiet history (weight-tuned), refined TT-cutoff, aspiration
+fail-high depth reduction, alpha-raise depth decrement, fail-high score smoothing, plus an SPSA-tuned
+singular/extension vector. Added, **OFF by default** (screened, not currently a net gain): ~15 more search
+toggles (post-LMR history update, NMP static margin / easy-capture gate, and others), kept for future tuning.
 
 | | |
 |---|---|
@@ -57,7 +58,7 @@ The first release to ship a **NNUE network trained by the author**.
 | Date | Match | Time control | Book | Games | Score | Elo | LOS |
 |---|---|---|---|---|---|---|---|
 | 2026-07-03 | 5.1 vs 5.0 | 10+0.2 | UHO | 250 | 60.8% | **+76.25 ± 29.82** | 100.00% |
-| 2026-07-03 | 5.1-patched vs 5.1 | 12+0.12 | UHO | 320 | 54.4% | **+30.5 ± 18.6** | 99.94% |
+| 2026-07-04 | 5.1-patched vs 5.1 (all patch improvements) | 12+0.12 | UHO | 500 | 53.8% | **+26.5 ± 15.4** | 99.96% |
 | 2026-07-03 | 5.1 vs 5.0 | 30+0.2 | UHO | 600 | 58.7% draws | **+31.5 ± 17.6** | 99.98% |
 | — | 5.1 vs 5.0 | 10+0.1 | UHO | 300 | — | **+27** | 99% |
 | — | 5.1 vs 5.0 | 3min+1s | UHO | 100 | 54% | **+36** | — |

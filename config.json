@@ -172,15 +172,15 @@
     ],
     "stats": {
         "base_thw75 vs cand_thw40": {
-            "wins": 8,
-            "losses": 10,
-            "draws": 22,
-            "penta_WW": 0,
-            "penta_WD": 3,
-            "penta_WL": 5,
-            "penta_DD": 7,
-            "penta_LD": 5,
-            "penta_LL": 0
+            "wins": 213,
+            "losses": 220,
+            "draws": 567,
+            "penta_WW": 5,
+            "penta_WD": 110,
+            "penta_WL": 93,
+            "penta_DD": 167,
+            "penta_LD": 123,
+            "penta_LL": 2
         }
     }
 }

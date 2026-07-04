@@ -489,7 +489,7 @@ void uci_loop()
             printf("option name SeeGEVerify type check default false\n");                     // F-008: oracle cross-check dei due path SEE (diagnostica)
             printf("option name LMRCapScale type spin default 50 min 10 max 150\n");          // %% lmr_table sulle catture
             // ==== F-018 (secondo audit 2026-07-03): micro-tecniche Obsidian/Berserk, default OFF/neutro ====
-            printf("option name PostLMRHist type check default false\n");                     // #1 conthist update post re-search LMR (SF mainline)
+            printf("option name PostLMRHist type check default false\n");                     // conthist update post re-search LMR (SF mainline); test pulito neutro -> OFF, candidato tuning
             printf("option name PostLMRHistScale type spin default 100 min 0 max 400\n");
             printf("option name TTCutRefine type check default true\n");                      // [BAKE 2026-07-03] cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty gate
             printf("option name TTCutFifty type spin default 87 min 50 max 100\n");

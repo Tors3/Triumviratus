@@ -712,7 +712,7 @@ int g_cutoffcnt_penalty = 0;
 // ==== F-018 (SECONDO AUDIT 2026-07-03): micro-tecniche da Obsidian/Berserk ====
 // TUTTE default OFF/neutro = byte-identico (bench-verificato). Una leva = un toggle/spin,
 // testabili una alla volta o co-tunate a blocchi. Dettagli: Triumviratus_5/SECOND_PASS_FEATURES.md.
-static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-search post-LMR (mainline SF)
+static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-search post-LMR (mainline SF). Il "+18.55" era same-binary; test PULITO build-matched (current vs 549b737, 8+0.08) = -3.50 NEUTRO -> tenuto OFF, candidato a tuning futuro (forse TC-dipendente).
 int  g_postlmr_scale         = 100;    //    /100 del td_stat_bonus applicato
 static bool g_ttcut_refine   = true;   // #3a-c cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty<soglia [BAKE 2026-07-03]
 int  g_ttcut_fifty           = 87;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
