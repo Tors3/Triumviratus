@@ -16,45 +16,57 @@
 
 ## Triumviratus 5.1
 
-The current release. It keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained
-from scratch) and matures the engine around it: a **recalibrated evaluation scale**, a **two-level
-transposition table**, **hindsight search extensions**, faster **SEE** (threshold early-exit) and **AVX-512**
-accumulator updates, a **re-tuned time management** (including a time-forfeit fix), a **display-only eval
-normalization** (empirically fitted so "+1.00" means "50% win probability"), plus assorted **GUI-compatibility**
-and LMR fixes.
-
-**Latest patch** — Fixed: mate-vs-50-move-rule bug, `score mate` off-by-one, repetition-table overflow,
-benign data race. Added, **ON by default** (**+26 Elo cumulative** vs the pre-patch release, SPRT-confirmed,
-see [Results](#results)): threat-indexed quiet history (weight-tuned), refined TT-cutoff, aspiration
-fail-high depth reduction, alpha-raise depth decrement, fail-high score smoothing, plus an SPSA-tuned
-singular/extension vector. Added, **OFF by default** (screened, not currently a net gain): ~15 more search
-toggles (post-LMR history update, NMP static margin / easy-capture gate, and others), kept for future tuning.
+Current release. Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from
+scratch). Adds a recalibrated eval scale, two-level TT, hindsight extensions, faster SEE/AVX-512
+accumulators, re-tuned time management, a display-only eval normalization ("+1.00" ≈ 50% win probability),
+and a **second-audit patch** (**+26 Elo cumulative**, SPRT-confirmed — see [Results](#results)): threat-indexed
+quiet history, refined TT-cutoff, aspiration/alpha-raise/fail-high tweaks, an SPSA-tuned singular/extension
+vector. ~15 more search toggles were screened and left off by default (no net gain yet), kept for future tuning.
 
 | | |
 |---|---|
 | **Evaluation** | NNUE, SFNNv13 — own-lineage `nn-rubicon-alea-v1`, loaded at runtime via `EvalFile` (not embedded) |
-| **Search** | PVS · LMR (incl. on captures) / NMP / futility / razoring / SEE pruning · singular & multi-cut extensions · ProbCut · correction & continuation history · threat-aware ordering |
+| **Search** | PVS · LMR (incl. captures) / NMP / futility / razoring / SEE pruning · singular & multi-cut extensions · ProbCut · correction & continuation history · threat-aware ordering |
 | **Time management** | Re-tuned soft/hard budget, score-drop and node-based extensions |
 | **Parallel** | Lazy SMP (`Threads`) |
 | **Endgames** | Syzygy via Fathom (`SyzygyPath`) |
 
-Source code is in [`source/`](source/). **Build** — see [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md):
-Linux `make`, MSVC `Triumviratus_5.0.vcxproj`, or clang-PGO.
+Source in [`source/`](source/). Build: see [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md) (Linux `make`,
+MSVC `Triumviratus_5.0.vcxproj`, or clang-PGO).
 
 ## Triumviratus 5.0
 
-The **SFNNv13** NNUE evaluation (`Full_Threats + HalfKAv2_hm`) paired with an original, heavily
-**SPSA-co-tuned** alpha-beta search and multi-threaded **Lazy SMP**. Ships the project's own-lineage network
-**`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from scratch). See [`NETWORKS.md`](NETWORKS.md) for how each
-network was trained.
+**SFNNv13** NNUE (`Full_Threats + HalfKAv2_hm`) with an SPSA-co-tuned alpha-beta search and Lazy SMP. Ships
+the own-lineage network **`nn-rubicon-alea-v1`**. See [`NETWORKS.md`](NETWORKS.md) for training details.
 
 ## Triumviratus 4.2
 
-The first release to ship a **NNUE network trained by the author**.
-*(CCRL rating: to be added.)*
+First release with a **NNUE network trained by the author**. *(CCRL rating: to be added.)*
 
 ## Results
 
+#### 5.1 final version-bump verification (2026-07-05)
+`v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only — the two
+versions use different eval-display scales, so score-based resign/draw thresholds would be asymmetric).
+Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
+
+| Time control | Threads | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
+|---|---|---|---|---|---|---|
+| 20+0.2 | 1 | 384 MB | 666 | 59.1% | **+63.8 ± 13.2** | 100.00% |
+| 40+0.4 | 1 | 384 MB | 626 | 60.3% | **+72.6 ± 13.0** | 100.00% |
+| 15+0.15 | 4 | 1024 MB | 100* | 59.0% | **+63.2 ± 37.1** | 99.97% |
+
+<sub>*Stopped early by choice, not by SPRT bound — smaller sample, wider error bar.</sub>
+
+#### vs. external engines
+`v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
+
+| Opponent | Time control | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
+|---|---|---|---|---|---|---|
+| Pawnocchio 1.9.1 | 20+0.2 | 512 MB | 558 | 48.9% | **-7.5 ± 14.8** | 15.9% |
+| Berserk 14 | 25+0.25 | 1024 MB | 322 | 46.3% | **-25.9 ± 18.1** | 0.24% |
+
+#### Historical
 | Date | Match | Time control | Book | Games | Score | Elo | LOS |
 |---|---|---|---|---|---|---|---|
 | 2026-07-03 | 5.1 vs 5.0 | 10+0.2 | UHO | 250 | 60.8% | **+76.25 ± 29.82** | 100.00% |
@@ -65,9 +77,8 @@ The first release to ship a **NNUE network trained by the author**.
 | — | 5.0 vs 4.2 | 20+0.2 | self-play | — | — | **+50** | — |
 | — | 5.0 vs 4.2 | 3min+1s | UHO | 100 | 61.5% | **+81** | — |
 
-The gap tends to widen at longer time control, as the stronger network pays off with depth. Balanced-book
-matches naturally run a much higher draw rate than the unbalanced UHO set — treat the sign and LOS as
-comparable across rows, not the raw Elo number.
+Gap widens at longer TC (deeper search rewards the stronger network). Balanced-book matches draw far more
+than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo number.
 
 ## License
 
