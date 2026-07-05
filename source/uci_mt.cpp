@@ -588,6 +588,9 @@ void uci_loop()
             printf("option name EvalOptDiv type spin default 269 min 1 max 600\n");
             printf("option name FutilityDepth type spin default 4 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 3 min 3 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'
+            printf("option name SEELmrDepth type check default false\n");            // S-05: gate/margine SEE su prune_depth (LMR-ridotta) invece che su depth piena
+            printf("option name SEELmrQuietMargin type spin default 185 min 0 max 600\n"); // margine quadratico dedicato al percorso SEELmrDepth (disaccoppiato da SEEQuietMargin), SPSA-tunabile
+            printf("option name SEELmrPruneCap type spin default 32 min 2 max 40\n");      // cap su prune_depth per il percorso SEELmrDepth (32=praticamente illimitato); abbassare = meno reach ma meno chiamate SEE
             printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
             printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614

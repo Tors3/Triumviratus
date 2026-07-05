@@ -807,6 +807,25 @@ int g_lmrdepth_histdiv = 4368;
 int g_see_cap_margin   = 60;
 int g_see_quiet_margin = 185;    // [3.7 BAKE 98->96; BAKED #1 era 50]
 int g_see_depth = 3;             // gate profondita' del SEE pruning (alzare = potare piu' in profondita'). UCI SEEPruneDepth, tunabile.
+// S-05 (2026-07-06, terzo audit): default OFF. Oggi il gate/margine SEE usa la depth PIENA del
+// nodo -> una mossa tardiva/ridotta-LMR a node-depth alto non viene MAI SEE-potata (depth<=3
+// non scatta mai oltre il ply 3). `prune_depth` (gia' calcolato sopra per futility/conthist,
+// vedi LmrDepthPrune) e' esattamente la profondita'-effettiva ridotta per le mosse quiet
+// tardive (per le catture prune_depth==depth, quindi ON questo toggle non le tocca) — usarlo
+// al posto di depth chiude il gap di DOMINIO (non di costanti) segnalato da SF Step 14.
+static bool g_see_lmr_depth = false;
+// Dedicated margin for the SEELmrDepth quiet path: g_see_quiet_margin is shared with the
+// always-on capped path (depth<=g_see_depth), so tuning it would also perturb that default
+// behavior. This one only feeds the prune_depth-based quadratic when the toggle is ON -> SPSA
+// can search it independently. Same starting value as g_see_quiet_margin (185) until tuned.
+int g_see_lmr_quiet_margin = 185;
+// Dedicated cap on prune_depth for the SEELmrDepth path (separate from SEEPruneDepth, which
+// still gates the raw-depth/capture path). Without ANY cap we pay a real td_see_at_least()
+// call for every quiet move at every prune_depth, even where the quadratic margin is so
+// permissive it mathematically can never prune -> wasted cycles past some point. Default 32
+// is practically unbounded (prune_depth rarely reaches it), matching the tested no-cap
+// behavior; SPSA can search LOWER values to trade reach for NPS.
+int g_see_lmr_prune_cap = 32;
 // (The SFNNv10 eval-wrapper tunables — g_small_net_threshold / g_eval_optimism /
 // g_eval_pawn_scale / g_eval_complexity_div / g_eval_blend_delta — were removed in
 // M2: the SFNNv13 bridge applies Stockfish's fixed cp scaling, so they no longer
@@ -823,6 +842,9 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "FutilityMult"))        { g_fut_mult         = value; return true; }
     if (!strcmp(name, "FutilityDepth"))       { g_fut_depth        = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "SEEPruneDepth"))       { g_see_depth        = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "SEELmrDepth"))         { g_see_lmr_depth    = value != 0; return true; }
+    if (!strcmp(name, "SEELmrQuietMargin"))   { g_see_lmr_quiet_margin = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "SEELmrPruneCap"))      { g_see_lmr_prune_cap = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "FutilityImproving"))   { g_fut_improving    = value; return true; }
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
@@ -3700,8 +3722,18 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
         // SEE pruning: scarta a bassa profondita' le catture in perdita oltre un
         // margine, prima di cercarle (riduttore di nodi). Promozioni escluse.
-        if (!pv_node && !in_check && !is_promotion && depth <= g_see_depth && best_score > -mate_score) {
-            int see_margin = is_capture ? (-g_see_cap_margin * depth) : (-g_see_quiet_margin * depth * depth);
+        // S-05 SEELmrDepth (default OFF, corretto 2026-07-06): per le QUIET usa prune_depth
+        // (LMR-ridotta) SENZA il cap g_see_depth (come SF Step 14: nessun cap — il quadrato
+        // in prune_depth svanisce da solo alle mosse non tardive/non ridotte, es. a
+        // prune_depth=15 il margine e' -185*225, mai raggiungibile). Le catture restano
+        // invariate (prune_depth==depth per loro comunque; SF le compensa con un termine
+        // capthist che non abbiamo ancora — non toccarle senza quello).
+        bool see_lmr_path = is_quiet && g_see_lmr_depth;
+        int see_gate_depth = see_lmr_path ? prune_depth : depth;
+        bool see_gate_ok = see_lmr_path ? (see_gate_depth <= g_see_lmr_prune_cap) : (see_gate_depth <= g_see_depth);
+        if (!pv_node && !in_check && !is_promotion && see_gate_ok && best_score > -mate_score) {
+            int quiet_margin_coef = see_lmr_path ? g_see_lmr_quiet_margin : g_see_quiet_margin;
+            int see_margin = is_capture ? (-g_see_cap_margin * depth) : (-quiet_margin_coef * see_gate_depth * see_gate_depth);
             if (g_corrval_ext) see_margin -= (corr_val < 0 ? -corr_val : corr_val) * g_corrval_see / 128;   // heavy corr -> prune less (soglia piu' negativa)
             if (!td_see_at_least(td, move, see_margin)) {
                 if (is_quiet) quiets_searched++;
