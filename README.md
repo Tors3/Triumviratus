@@ -66,14 +66,14 @@ First release with a **NNUE network trained by the author**. *(CCRL rating: to b
 #### 5.1 final version-bump verification (2026-07-05)
 
 > [!NOTE]
-> `v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only — the two versions use different eval-display scales, so score-based resign/draw thresholds would be asymmetric).
+> `v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only).
 
 Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
 
 | Time control | Threads | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
-| 20+0.2 | 1 | 384 MB | 666 | 59.1% | **+63.8 ± 13.2** | 100.00% |
-| 40+0.4 | 1 | 384 MB | 626 | 60.3% | **+72.6 ± 13.0** | 100.00% |
+| 20+0.2 | 1 | 256 MB | 666 | 59.1% | **+63.8 ± 13.2** | 100.00% |
+| 40+0.4 | 1 | 256 MB | 626 | 60.3% | **+72.6 ± 13.0** | 100.00% |
 | 15+0.15 | 4 | 1024 MB | 100* | 59.0% | **+63.2 ± 37.1** | 99.97% |
 
 <sub>*Stopped early by choice, not by SPRT bound — smaller sample, wider error bar.</sub>
@@ -110,11 +110,11 @@ holds on the AVX2 build specifically. 1 thread, 128 MB hash, no score-based adju
 
 | Opponent | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
-| Pawnocchio 1.9.1 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612+ | 51.1% | **+7.95 ± 12.35** | 85.78% |
+| Pawnocchio 1.9.1 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
 
 <sub>SPRT in progress.</sub>
 
-#### vs. external engines
+#### vs. external engines (2026-07-05)
 `v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
 
 | Date | Opponent | Time control | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
@@ -152,6 +152,7 @@ than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo nu
 
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing.
+- **[Berserk](https://github.com/jhonnold/berserk)** and **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)** — studied for search/move-ordering ideas informing some of the engine's own implementations.
 - Search and engine by **Francesco Torsello**.
 - Thanks to **Maurizio Platino** for the SPSA search-tuning and for extensive testing throughout the project,
   generously contributing his hardware.
