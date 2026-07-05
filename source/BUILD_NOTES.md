@@ -32,9 +32,12 @@ Needs VS "C++ Clang tools for Windows" (`clang-cl`, `llvm-profdata`).
 > layout. `pgo_train.py` is included alongside the script in `build/`.
 
 ## External data (NOT in the repo)
-- **NNUE net** — `nn-71d6d32cb962.nnue` (SFNNv13, Stockfish-master). Load via `EvalFile`,
-  or place next to the exe. The MSVC/PGO builds expect it at `nnue/nn-71d6d32cb962.nnue` as source.
-  *(This is the SF-master net used as the strong reference; the project's own-lineage net is trained separately.)*
+- **NNUE net** — `nn-rubicon-alea-v1.nnue` (own-lineage, SFNNv13 architecture). Load via
+  `EvalFile`, or place next to the exe. The MSVC/PGO builds expect it at
+  `nnue/nn-rubicon-alea-v1.nnue` as source. Both dev and release builds load this same net by
+  default (2026-07-05: dev builds used to default to the Stockfish SFNNv13 reference net here,
+  which silently made a dev-build bench/test run on different weights than release unless
+  `EvalFile` was set explicitly — fixed so both build kinds always agree).
 - **Opening book** (PGO training only) — `UHO_2024_8mvs_big_+080_+099.epd`.
 
 ## Notes

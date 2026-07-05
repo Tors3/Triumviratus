@@ -171,11 +171,11 @@ int main()
     // Resolve relative to the exe so the engine works from ANY working directory; a
     // missing net fails loudly. Override at runtime via the UCI "EvalFile" option.
     nn_init_tables();   // bitboards + Attacks::init (substrate for the NNUE feature extraction)
-#ifdef TRIUMV_RELEASE
-    const char* netName = "nn-rubicon-alea-v1.nnue";   // shipped own-lineage net (5.0 release)
-#else
-    const char* netName = "nn-71d6d32cb962.nnue";      // dev: SF reference net (sits next to the dev exe)
-#endif
+    // Own-lineage net, dev and release builds alike (2026-07-05: dev builds used to default to
+    // the Stockfish SFNNv13 reference net here, which silently made a dev-build bench/SPRT run
+    // on different weights than a release build unless EvalFile was set explicitly -> never
+    // again; both build kinds load our own net by default now).
+    const char* netName = "nn-rubicon-alea-v1.nnue";
     std::string netPath = resolve_net_path(netName);
     if (netPath.empty() || !nn_load_net(netPath.c_str()))
     {

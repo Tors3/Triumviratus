@@ -196,6 +196,14 @@ struct ThreadData {
     //   Key = hash_key mixed with fifty: SF's eval is dampened by the 50-move
     //   counter, which hash_key does NOT encode, so fifty MUST be in the key or
     //   we'd return a stale eval for the same position at a different fifty.
+    // N-2 (2026-07-05): tried 16->18 bits (1->4 MB/thread), TESTED AND REJECTED.
+    // Since g_evalcache_undamp's key excludes fifty, a hit round-trips through
+    // tt_eval_undamp/redamp (~+-2-3cp rounding, see the comment above tt_eval_undamp
+    // in threads.cpp) -> a bigger cache changes the hit RATE of an already-lossy
+    // cache, perturbing node counts (not a bug, same effect as FastRepScan/dither).
+    // Measured on 200 real positions/depth13, 2 seeds: node-count delta ~0,
+    // time-to-depth delta -2.41%/+0.51% -- straddles zero, no reliable signal,
+    // and it costs +3 MB/thread for it. Reverted to 16.
     static constexpr int EVAL_CACHE_BITS = 16;          // 65536 entries
     static constexpr int EVAL_CACHE_SIZE = 1 << EVAL_CACHE_BITS;
     static constexpr U64 EVAL_CACHE_MASK = EVAL_CACHE_SIZE - 1;

@@ -45,6 +45,14 @@ void nn_set_incremental(int on);
 // first mismatches). Halves NPS; single-thread recommended. Default OFF.
 void nn_set_verify(int on);
 
+// N-1 (2026-07-05): lazy mirror apply. nn_pos_do/nn_pos_do_null normally defer the
+// SF-mirror board mutation + DirtyThreats computation until an nn_pos_eval actually
+// needs them (many nodes never evaluate: TT cutoffs return before td_evaluate,
+// in-check nodes skip eval entirely) -> those plies are undone for free, never
+// mirrored at all. Default ON. Toggle OFF to fall back to the pre-N1 eager apply
+// (every legal move mirrored immediately in nn_pos_do), for bisection.
+void nn_set_lazy_mirror(int on);
+
 // Eval output scale in PERCENT (default 100 = x1.0). The SFNNv13 cp formula lands on
 // a different scale than the engine's SPSA-tuned (for SFNNv10) search margins expect;
 // this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.

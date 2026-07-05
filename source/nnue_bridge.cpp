@@ -174,8 +174,12 @@ void nn_acc_stats(void) {}
 // ("incremental off") to fall back to the M2 full-refresh A/B base.
 static bool g_incremental = true;
 static bool g_verify      = false;
+// N-1 lazy mirror apply: default ON (see nn_catch_up below). OFF = pre-N1 eager
+// apply (nn_pos_do mirrors the move immediately), kept for bisection.
+static bool g_lazy_mirror = true;
 void        nn_set_incremental(int on) { g_incremental = on != 0; }
 void        nn_set_verify(int on) { g_verify = on != 0; }
+void        nn_set_lazy_mirror(int on) { g_lazy_mirror = on != 0; }
 void        nn_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
 int         nn_get_eval_scale(void) { return g_eval_scale_pct; }   // per normalizzare 'score cp' in stampa (undo EvalScale, SF-style)
 // 5.1 EvalTTWrite (SF-style): l'unadjusted dell'ultima nn_scale su questo thread (fifty-indep).
@@ -209,11 +213,15 @@ struct SfPos {
     int    ply;
     Color  stmStack[SF_STACK];
     int    r50Stack[SF_STACK];
-    // Incremental bookkeeping: the move applied at each ply (for board undo) and
-    // whether that ply pushed an accumulator state (null moves do not — the board
-    // is unchanged, so the accumulator chain stays at the same depth).
+    // Incremental bookkeeping: the move recorded at each ply (for board undo) and
+    // whether that ply pushes an accumulator state once applied (null moves do not
+    // — the board is unchanged, so the accumulator chain stays at the same depth).
     SfMove mvStack[SF_STACK];
     bool   pushedAcc[SF_STACK];
+    // N-1 lazy mirror apply: plies [0, appliedPly) have actually been replayed onto
+    // pos/accStack; plies [appliedPly, ply) are pending (recorded but not yet
+    // mirrored). nn_catch_up() advances appliedPly on demand, right before an eval.
+    int    appliedPly = 0;
 
     SfPos() : stm(WHITE), rule50(0), ply(0) {
         accStack = std::make_unique<AccumulatorStack>();
@@ -331,6 +339,24 @@ inline void unapply_move(Position& pos, const SfMove* m) {
         pos.put_piece(Piece(m->capturedPiece), Square(m->capturedSq));  // capsq handles e.p.
 }
 
+// N-1: replay any plies nn_pos_do/nn_pos_do_null left pending (mirrored bookkeeping
+// only, no board/accumulator update) up to the current ply. Applied strictly in
+// order so each apply_move sees the exact board state it would have under eager
+// apply -> bit-identical DirtyThreats/accumulator chain, just computed lazily.
+// In eager mode (g_lazy_mirror off) appliedPly is already kept in lockstep by
+// nn_pos_do/do_null, so this loop is a no-op there.
+inline void nn_catch_up(SfPos* p) {
+    while (p->appliedPly < p->ply && p->appliedPly < SF_STACK) {
+        int i = p->appliedPly;
+        if (p->pushedAcc[i]) {
+            auto dirties = p->accStack->push();
+            apply_move(p->pos, &p->mvStack[i], dirties.first, dirties.second);
+        }
+        p->pos.set_side_to_move(flip(p->pos.side_to_move()));
+        ++p->appliedPly;
+    }
+}
+
 }  // namespace
 
 void* nn_pos_create(void) { return new SfPos(); }
@@ -339,9 +365,10 @@ void  nn_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
 void nn_pos_set(void* handle, int side_white, const int* pieces,
                 const int* squares, int count, int rule50) {
     SfPos* p  = static_cast<SfPos*>(handle);
-    p->stm    = side_white ? WHITE : BLACK;
-    p->rule50 = rule50;
-    p->ply    = 0;
+    p->stm        = side_white ? WHITE : BLACK;
+    p->rule50     = rule50;
+    p->ply        = 0;
+    p->appliedPly = 0;
     if (g_incremental) {
         Piece  pcs[64];
         Square sqs[64];
@@ -360,14 +387,16 @@ void nn_pos_do(void* handle, const struct SfMove* m) {
         p->stmStack[p->ply]  = p->stm;
         p->r50Stack[p->ply]  = p->rule50;
         p->mvStack[p->ply]   = *m;
-        p->pushedAcc[p->ply] = false;
+        p->pushedAcc[p->ply] = true;   // real move: pushes to accStack once applied
     }
-    if (g_incremental) {
+    // N-1: lazy mode leaves the mirror/accStack untouched here (nn_catch_up applies
+    // it later, only if an eval is actually reached). Eager fallback (g_lazy_mirror
+    // off) applies immediately, same as pre-N1, keeping appliedPly in lockstep.
+    if (g_incremental && !g_lazy_mirror) {
         auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&}
         apply_move(p->pos, m, dirties.first, dirties.second);
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
-        if (p->ply < SF_STACK)
-            p->pushedAcc[p->ply] = true;
+        p->appliedPly = p->ply + 1;
     }
     ++p->ply;
     p->stm    = flip(p->stm);
@@ -381,8 +410,10 @@ void nn_pos_do_null(void* handle, int rule50) {
         p->r50Stack[p->ply]  = p->rule50;
         p->pushedAcc[p->ply] = false;  // board unchanged -> no accumulator push
     }
-    if (g_incremental)
+    if (g_incremental && !g_lazy_mirror) {
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
+        p->appliedPly = p->ply + 1;
+    }
     ++p->ply;
     p->stm    = flip(p->stm);
     p->rule50 = rule50;
@@ -391,12 +422,16 @@ void nn_pos_do_null(void* handle, int rule50) {
 void nn_pos_undo(void* handle) {
     SfPos* p = static_cast<SfPos*>(handle);
     --p->ply;
-    if (g_incremental) {
+    // N-1: only unwind the mirror/accStack if this ply was actually applied (either
+    // by nn_catch_up because an eval needed it, or immediately in eager mode, where
+    // appliedPly is always > ply here). Never-applied plies cost nothing to undo.
+    if (g_incremental && p->appliedPly > p->ply) {
         if (p->ply >= 0 && p->ply < SF_STACK && p->pushedAcc[p->ply]) {
             p->accStack->pop();
             unapply_move(p->pos, &p->mvStack[p->ply]);
         }
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));  // undo the make/null side flip
+        p->appliedPly = p->ply;
     }
     if (p->ply >= 0 && p->ply < SF_STACK) {
         p->stm    = p->stmStack[p->ply];
@@ -410,6 +445,7 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
     if (!g_incremental)
         return eval_full_from_bb(bb, p->stm, p->rule50, p->pos, p->si, *p->accStack, *p->caches);
 
+    nn_catch_up(p);  // N-1: replay any moves nn_pos_do left pending before evaluating
     // Incremental: the maintained pos + accumulator chain are walked by Network::evaluate.
     auto [psqt, positional] = g_net->evaluate(p->pos, *p->accStack, *p->caches);
     int  inc                = nn_scale(p->pos, psqt, positional, p->rule50);

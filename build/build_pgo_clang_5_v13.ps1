@@ -1,8 +1,8 @@
 # =============================================================================
 #  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 5.1 SFNNv13.
 #  Adattato da build_pgo_clang_5.ps1 (che era BULLET) al motore v13: la rete e'
-#  ora nn-71d6d32cb962.nnue (SFNNv13, caricata a runtime ACCANTO all'exe). Niente
-#  bullet -> niente PGO_BULLET_NET.
+#  la nostra own-lineage nn-rubicon-alea-v1.nnue (SFNNv13, caricata a runtime
+#  ACCANTO all'exe). Niente bullet -> niente PGO_BULLET_NET.
 #
 #  4 fasi:  1) STRUMENTA (clang-cl + ThinLTO + -fprofile-generate)
 #           2) ALLENA   (pgo_train.py su posizioni reali -> *.profraw)
@@ -28,8 +28,8 @@ if (-not (Test-Path $proj)) { throw "vcxproj 5.0 non trovato: $proj" }
 $projDir = Split-Path $proj
 $outDir  = "$projDir\x64\Release"
 $exe     = "$outDir\Triumviratus_5.0.exe"
-$net5    = "nn-71d6d32cb962.nnue"                              # rete SFNNv13 (runtime, accanto all'exe)
-$net5src = "$projDir\nnue\nn-71d6d32cb962.nnue"          # sorgente
+$net5    = "nn-rubicon-alea-v1.nnue"                     # rete own-lineage (runtime, accanto all'exe)
+$net5src = "$projDir\nnue\nn-rubicon-alea-v1.nnue"       # sorgente
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsRoot  = if (Test-Path $vswhere) { (& $vswhere -latest -property installationPath) } else { "" }
@@ -68,13 +68,20 @@ function Build-Variant([string]$tag) {
     $merged = "$profDir\clang5v13_$tag.profdata"
     Write-Host "`n########  VARIANTE 5.0 v13 $tag  ->  $Name$suffix.exe  ########" -ForegroundColor Magenta
 
-    $extra = ""
+    # N-3 (2026-07-05): -mtune was missing -> clang scheduled for generic x86-64.
+    # PGO is already machine-specific (profiled on THIS box), so tune=native is
+    # the correct match. Measured (same-source isolated A/B, node-identical,
+    # 200 positions x2 seeds): +0.48%/-0.31% -- straddles zero, no measurable
+    # gain on this Zen4 box. Kept anyway: zero cost (pure scheduling hint, no
+    # memory/correctness effect) and the right default for a machine-local PGO
+    # build regardless of whether it shows up in the noise here.
+    $extra = " /clang:-mtune=native"
     if ($tag -eq "avx512") {
         # +VBMI/VBMI2/BITALG for the USE_AVX512ICL fast paths (compress_epi16/epi8,
         # permutexvar_epi8) — Zen4/Ice Lake+. clang gates intrinsics by -m flags (MSVC doesn't).
-        $extra = " /clang:-mavx512f /clang:-mavx512bw /clang:-mavx512dq /clang:-mavx512vl /clang:-mavx512vnni /clang:-mavx512vbmi /clang:-mavx512vbmi2 /clang:-mavx512bitalg /clang:-mbmi2"
+        $extra += " /clang:-mavx512f /clang:-mavx512bw /clang:-mavx512dq /clang:-mavx512vl /clang:-mavx512vnni /clang:-mavx512vbmi /clang:-mavx512vbmi2 /clang:-mavx512bitalg /clang:-mbmi2"
     } elseif ($tag -eq "avx2") {
-        $extra = " /clang:-mno-avx512f /clang:-mno-avx512bw /clang:-mno-avx512dq /clang:-mno-avx512vl /clang:-mno-avx512cd /clang:-mno-avx512vnni"
+        $extra += " /clang:-mno-avx512f /clang:-mno-avx512bw /clang:-mno-avx512dq /clang:-mno-avx512vl /clang:-mno-avx512cd /clang:-mno-avx512vnni"
     }
 
     $orig = Get-Content $proj -Raw

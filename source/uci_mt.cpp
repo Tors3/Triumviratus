@@ -370,11 +370,7 @@ void uci_loop()
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
 #endif
-#ifdef TRIUMV_RELEASE
-            printf("option name EvalFile type string default nn-rubicon-alea-v1.nnue\n");  // shipped own-lineage net
-#else
-            printf("option name EvalFile type string default nn-71d6d32cb962.nnue\n");  // dev: SFNNv13 reference net
-#endif
+            printf("option name EvalFile type string default nn-rubicon-alea-v1.nnue\n");  // own-lineage net (dev and release alike)
             // Gruppo Syzygy STANDARD (come Stockfish & co.): SyzygyPath + le 3 compagne.
             // Le GUI ChessBase/Fritz riconoscono un motore come "tablebase-capable" dal SET
             // completo: con la sola SyzygyPath il campo poteva non comparire. Stampate QUI (in
@@ -535,25 +531,25 @@ void uci_loop()
             printf("option name SEECaptureMargin type spin default 60 min 20 max 300\n");
             printf("option name SEEQuietMargin type spin default 185 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
             // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
-            printf("option name CaptureFutility type spin default 0 min 0 max 1\n");
+            printf("option name CaptureFutility type spin default 1 min 0 max 1\n");
             printf("option name CapFutBase type spin default 124 min 0 max 500\n");
             printf("option name CapFutMult type spin default 199 min 0 max 400\n");
             printf("option name CapFutChist type spin default 123 min 0 max 400\n");   // [F-002 audit 2026-07-02] 125->123
             printf("option name CapFutDepth type spin default 7 min 1 max 12\n");
             // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
-            printf("option name OppWorsening type spin default 0 min 0 max 1\n");
+            printf("option name OppWorsening type spin default 1 min 0 max 1\n");
             printf("option name OppWorseMargin type spin default 10 min 0 max 100\n");
-            printf("option name TripleExt type spin default 0 min 0 max 1\n");
+            printf("option name TripleExt type spin default 1 min 0 max 1\n");
             printf("option name SingularTripleMargin type spin default 337 min 0 max 400\n");
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
             printf("option name NegExtCut type spin default 2 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
-            printf("option name CorrValMargin type spin default 0 min 0 max 1\n");
+            printf("option name CorrValMargin type spin default 1 min 0 max 1\n");
             printf("option name CorrValRFP type spin default 42 min 0 max 256\n");
-            printf("option name CorrValExt type spin default 0 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
+            printf("option name CorrValExt type spin default 1 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
             printf("option name CorrValFut type spin default 43 min 0 max 400\n");   // peso fold futility
             printf("option name CorrValSee type spin default 27 min 0 max 400\n");   // peso fold SEE
             printf("option name CorrValLmr type spin default 77 min 0 max 400\n");   // peso fold LMR
-            printf("option name MalusScaled type spin default 0 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
+            printf("option name MalusScaled type spin default 1 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
             printf("option name MalusScaleCoef type spin default 58 min 0 max 200\n");
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
             printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
@@ -563,9 +559,9 @@ void uci_loop()
             printf("option name HindsightRedMargin type spin default 2 min 1 max 12\n");
             printf("option name HindsightRedThresh type spin default 113 min 0 max 600\n");
             printf("option name DoShallowerMargin type spin default 9 min 0 max 200\n");
-            printf("option name BadNoisy type spin default 0 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
+            printf("option name BadNoisy type spin default 1 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
             printf("option name BadNoisyCount type spin default 7 min 1 max 32\n");
-            printf("option name LMREnrich type spin default 0 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
+            printf("option name LMREnrich type spin default 1 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
             printf("option name LMREnrichAmount type spin default 2 min 0 max 4\n");
             printf("option name RazorQuadCoef type spin default 92 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
             printf("option name RFPDepth type spin default 6 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
@@ -574,7 +570,7 @@ void uci_loop()
             printf("option name IIDDepth type spin default 4 min 2 max 12\n");       // profondita' minima per attivare l'IID
             printf("option name IIDReduction type spin default 2 min 1 max 6\n");    // ply tolti alla mini-ricerca
             // ⭐ 5.1 riduzione LMR FINE ×1024 stile-SF (default OFF = byte-identico). Coeff in 1/1024 ply.
-            printf("option name LMRFine type spin default 0 min 0 max 1\n");
+            printf("option name LMRFine type spin default 1 min 0 max 1\n");
             printf("option name LMRFCut type spin default 3094 min 0 max 8000\n");      // cut-node forte
             printf("option name LMRFCutNoTT type spin default 2491 min 0 max 4000\n");
             printf("option name LMRFTTCap type spin default 187 min 0 max 4000\n");
@@ -587,7 +583,7 @@ void uci_loop()
             printf("option name LMRFEvalCut type spin default 847 min 0 max 3000\n");
             printf("option name LMRFCutoff type spin default 1402 min 0 max 4000\n");
             // ⭐ 5.1 EVAL optimism (SF), default OFF = byte-identico
-            printf("option name EvalOptimism type spin default 0 min 0 max 1\n");
+            printf("option name EvalOptimism type spin default 1 min 0 max 1\n");
             printf("option name EvalOptStrength type spin default 153 min 0 max 600\n");
             printf("option name EvalOptDiv type spin default 269 min 1 max 600\n");
             printf("option name FutilityDepth type spin default 4 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
@@ -634,6 +630,15 @@ void uci_loop()
             int on = strncmp(input + 11, "on", 2) == 0;
             nn_set_verify(on);
             printf("nnueverify %s\n", on ? "on" : "off");
+            fflush(stdout);
+        }
+        // N-1: lazy mirror apply toggle (default ON). OFF = pre-N1 eager apply, for
+        // bisection. Search threads must be idle; safe to send before a search/bench.
+        else if (strncmp(input, "lazymirror ", 11) == 0)
+        {
+            int on = strncmp(input + 11, "on", 2) == 0;
+            nn_set_lazy_mirror(on);
+            printf("lazymirror %s\n", on ? "on" : "off");
             fflush(stdout);
         }
 
@@ -808,7 +813,7 @@ void uci_loop()
         }
 
         // UCI command: "setoption name EvalFile value <path>" -> reload the SFNNv13
-        // network at runtime. Default at startup is nn-71d6d32cb962.nnue.
+        // network at runtime. Default at startup is nn-rubicon-alea-v1.nnue (own-lineage).
         else if (strncmp(input, "setoption name EvalFile value ", 30) == 0)
         {
             // Swapping the net under a running search would read half-loaded
