@@ -490,8 +490,8 @@ void uci_loop()
             printf("option name PostLMRHistScale type spin default 100 min 0 max 400\n");
             printf("option name TTCutRefine type check default true\n");                      // [BAKE 2026-07-03] cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty gate
             printf("option name TTCutFifty type spin default 87 min 50 max 100\n");
-            printf("option name TTCutMalus type check default true\n");                      // #3d malus quiet avversaria su TT-cut (duale TTCutBonus)
-            printf("option name TTCutMalusSeen type spin default 7 min 0 max 16\n");
+            printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
+            printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
             printf("option name GoodCapHistDiv type spin default 0 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root

@@ -37,11 +37,9 @@ quiet history, refined TT-cutoff, aspiration/alpha-raise/fail-high tweaks, an SP
 vector, and an **NPS-optimization patch** (2026-07-05, **+26 to +42 Elo** depending on time control,
 SPRT-confirmed — see [Results](#results)): a lazy NNUE-mirror apply (the board mirror + threat computation
 for a move is deferred until an evaluation actually needs it, instead of paying for it on every legal
-move) plus a `-mtune=native` PGO build flag — a real, measurable strength gain, not just raw NPS. A
-**TT-cutoff history malus** (2026-07-06, **+15.6 Elo**, SPRT-confirmed — see [Results](#results)): the
-opponent's quiet move that walked into a TT-cutoff is now malused, tuned to only cool moves the parent
-node had barely explored. 28 more search toggles (verified against the compiled defaults, not just the
-advertised UCI text) were screened and left off — no net gain yet, kept for future tuning.
+move) plus a `-mtune=native` PGO build flag — a real, measurable strength gain, not just raw NPS.
+29 more search toggles (verified against the compiled defaults, not just the advertised UCI text)
+were screened and left off — no net gain yet, kept for future tuning.
 
 | | |
 |---|---|
@@ -64,16 +62,6 @@ the own-lineage network **`nn-rubicon-alea-v1`**. See [`NETWORKS.md`](NETWORKS.m
 First release with a **NNUE network trained by the author**. *(CCRL rating: to be added.)*
 
 ## Results
-
-#### TT-cutoff history malus (2026-07-06)
-
-`v5.1+TTCutMalus` vs `v5.1`, 20+0.2, 1 thread, 128 MB hash, no score-based adjudication.
-
-| Opponent | Time control | Opening | Games | Score | Elo | LOS |
-|---|---|---|---|---|---|---|
-| v5.1 (self) | 20+0.2 | UHO_2024_8mvs_big_+095_+114.epd | 1006 | 52.2% | **+15.55 ± 11.09** | 99.71% |
-
-<sub>Baked in as default ON.</sub>
 
 #### 5.1 final version-bump verification (2026-07-05)
 

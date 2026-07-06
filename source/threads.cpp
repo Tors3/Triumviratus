@@ -716,8 +716,8 @@ static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-sea
 int  g_postlmr_scale         = 100;    //    /100 del td_stat_bonus applicato
 static bool g_ttcut_refine   = true;   // #3a-c cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty<soglia [BAKE 2026-07-03]
 int  g_ttcut_fifty           = 87;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
-static bool g_ttcut_malus    = true;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus)
-int  g_ttcut_malus_seen      = 7;      //    solo se il padre aveva visto <= N mosse
+static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus). BAKE 2026-07-06 (true/7) REVERTITO: SPRT +15.55 Elo era falsato da oversubscription/TC senza incremento; retest pulito (10+0.1, 258g) = -17.52 Elo, LOS 4.89%, LLR non conclusivo. Riaperto, serve retest pulito prima di ridecidere.
+int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
 int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
 static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score (smorza il rumore)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
