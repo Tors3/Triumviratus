@@ -716,8 +716,8 @@ static bool g_postlmr_hist   = false;  // #1 bonus/malus conthist dopo la re-sea
 int  g_postlmr_scale         = 100;    //    /100 del td_stat_bonus applicato
 static bool g_ttcut_refine   = true;   // #3a-c cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty<soglia [BAKE 2026-07-03]
 int  g_ttcut_fifty           = 87;     //    soglia fifty oltre cui il cutoff TT non e' affidabile (patta-50 vicina) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
-static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus)
-int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
+static bool g_ttcut_malus    = true;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus)
+int  g_ttcut_malus_seen      = 7;      //    solo se il padre aveva visto <= N mosse
 int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
 static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score (smorza il rumore)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
@@ -3683,6 +3683,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (!pv_node && !in_check && prune_depth <= g_fut_depth && is_quiet && best_score > -mate_score) {
             int futility_margin = g_fut_base + g_fut_mult * prune_depth + ((g_improving && improving) ? g_fut_improving : 0);
             if (g_corrval_ext) futility_margin += (corr_val < 0 ? -corr_val : corr_val) * g_corrval_fut / 128;   // heavy corr -> prune less
+            
             if (eval + futility_margin <= alpha) {
                 // Phase-2: once futility fires, ALL remaining quiets at this node
                 // fail the same static-eval test -> skip the entire stage.
