@@ -493,7 +493,7 @@ void uci_loop()
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
             printf("option name GoodCapHistDiv type spin default 0 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
-            printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore
+            printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore. Bake revertito 2026-07-07 (rumore)
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
             printf("option name SingularDECap type spin default 1 min 0 max 16\n");           // #6b cap catena double-ext (0=off, Berserk 6)
@@ -505,14 +505,14 @@ void uci_loop()
             printf("option name NMPStaticBias type spin default 421 min 0 max 1200\n");
             printf("option name NMPTTNoisy type check default false\n");                      // #8b R+1 se TT move cattura
             printf("option name AlphaDepthDec type check default true\n");                    // [BAKE 2026-07-03] depth-- per le mosse restanti quando alpha sale
-            printf("option name FHBoostMargin type spin default 0 min 0 max 500\n");          // #10a bonus a depth+1 se best > beta+margine (0=off)
+            printf("option name FHBoostMargin type spin default 0 min 0 max 500\n");          // #10a bonus a depth+1 se best > beta+margine. Bake revertito 2026-07-07 (rumore)
             printf("option name HistTrivGuard type check default false\n");                   // #10b niente bonus su cutoff 'gratis'
             printf("option name MalusPct type spin default 100 min 10 max 300\n");            // #10c malus = bonus*pct/100
             printf("option name EasyCapGate type check default false\n");                     // #11 niente NMP con pezzo in presa facile
             printf("option name RFPHistThresh type spin default 0 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
             printf("option name KillerReset type check default false\n");                     // #13 azzera killer del ply figlio a ogni nodo
             printf("option name QSMoveCap type spin default 0 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
-            printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch (ripristinato a toggle: SPRT necessario, effetto NPS grosso e variabile)
+            printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
             printf("option name EPKeyFix type check default false\n");                        // F-017 niente phantom-ep nella hash key (bug-fix a toggle)
             printf("option name HistReductionDiv type spin default 3357 min 500 max 8000\n"); // bakato: 3500->1041
             printf("option name AspInitDelta type spin default 19 min 8 max 60\n");       // bakato: 25->31
@@ -597,6 +597,10 @@ void uci_loop()
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614
             printf("option name TMInstab type spin default 59 min 0 max 100\n");            // % headroom su cambio best-move; BAKE 2026-07-03 TM post-F-003 64->59
             printf("option name TMDropDiv type spin default 508 min 200 max 3000\n");       // estensione su eval che cala; BAKE 2026-07-03 TM post-F-003 570->508
+            printf("option name TMStability type check default false\n");                    // T-01: riduci il soft-time se la best move e' stabile da piu' iterazioni (SF)
+            printf("option name TMStabThresh type spin default 4 min 0 max 20\n");           // T-01: iterazioni stabili prima che la riduzione inizi
+            printf("option name TMStabStep type spin default 40 min 0 max 200\n");           // T-01: riduzione per-mille per ogni iterazione stabile oltre thresh
+            printf("option name TMStabFloor type spin default 55 min 10 max 100\n");         // T-01: % minima della durata (mai ridurre sotto)
 #endif
             // (SyzygyPath spostata in cima alla lista, subito dopo EvalFile — vedi sopra:
             //  evita il troncamento delle liste lunghe nelle GUI ChessBase/Fritz.)

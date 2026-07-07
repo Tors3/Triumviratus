@@ -498,6 +498,18 @@ int g_tm_max_mult  = 614;   // maximum = optimum * questo/100 (burst su posizion
 int g_tm_instab    = 59;    // % dell'headroom aggiunta al soft su cambio best-move [BAKE 2026-07-03 TM post-F-003: 64->59]
 int g_tm_drop_div  = 508;   // divisore dell'estensione su score-drop (minore = piu' tempo) [BAKE 2026-07-03 TM post-F-003: 570->508]
 
+// T-01 TMStability (default OFF): riduzione del soft-time quando la best move a root
+// resta INVARIATA per piu' iterazioni consecutive (SF: bestMove stabile = confidenza =
+// si spende meno). Complementare al NodeTM (che guarda i nodi di QUESTA iterazione): la
+// stabilita' guarda la persistenza TRA iterazioni. Segnale diverso, SF usa entrambi.
+// Curva: dopo `thresh` iterazioni stabili, scala la DURATA optimum di -step/1000 per ogni
+// iterazione stabile in piu', con pavimento `floor`% (mai sotto). Solo main thread, timeset.
+// Toggle via set_search_param (UCI check "TMStability"), come AspAvg/QSDrawCheck.
+static bool g_tm_stability = false;
+int g_tm_stab_thresh = 4;    // iterazioni stabili prima che la riduzione inizi (SPSA)
+int g_tm_stab_step   = 40;   // riduzione per-mille per ogni iterazione stabile oltre thresh (SPSA)
+int g_tm_stab_floor  = 55;   // % minima della durata (mai ridurre sotto questo) (SPSA)
+
 // Aggressive LMR on/off (UCI "AggrLMR"). Default OFF. When ON, the history- and
 // continuation-history-based LMR reductions use a SMALLER divisor and a WIDER
 // clamp (g_aggr_lmr_div / g_aggr_lmr_clamp), so a very bad-history quiet can be
@@ -719,7 +731,7 @@ int  g_ttcut_fifty           = 87;     //    soglia fifty oltre cui il cutoff TT
 static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus). BAKE 2026-07-06 (true/7) REVERTITO: SPRT +15.55 Elo era falsato da oversubscription/TC senza incremento; retest pulito (10+0.1, 258g) = -17.52 Elo, LOS 4.89%, LLR non conclusivo. Riaperto, serve retest pulito prima di ridecidere.
 int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
 int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
-static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score (smorza il rumore)
+static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score. Bake 2026-07-07 REVERTITO: -9.04 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = +0.62 NULLO. OFF, re-ispezione a TC lungo (TC-dipendente?)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
 int  g_singular_mindepth     = 6;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
 int  g_singular_de_cap       = 1;      // #6b cap catena double-extension sul path (0=off; Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
@@ -731,7 +743,7 @@ int  g_nmp_sm_mult           = 21;
 int  g_nmp_sm_bias           = 421;
 static bool g_nmp_ttnoisy    = false;  // #8b R+1 se la TT move e' una cattura (Obsidian)
 static bool g_alpha_depth_dec = true;  // #9 depth-- per le mosse restanti quando una mossa alza alpha (2<=depth<=11) [BAKE 2026-07-03]
-int  g_fhboost_margin        = 0;      // #10a bonus history a depth+1 se best > beta+margine (0=off; Obsidian 95, Berserk 75)
+int  g_fhboost_margin        = 0;      // #10a bonus history a depth+1 se best > beta+margine (Obsidian 95, Berserk 75). Bake 2026-07-07 (margin=50) REVERTITO: i "conferma" 2x avevano AspAvg ON; retest ISOLATO vs baseline pura = +1.74 NULLO. OFF (0), re-ispezione a TC lungo
 static bool g_hist_triv_guard = false; // #10b niente bonus al cutoff "gratis" (depth<=3, nessun quiet prima)
 int  g_malus_pct             = 100;    // #10c malus = bonus * pct/100 (costanti malus separate dal bonus)
 static bool g_easycap_gate   = false;  // #11 niente NMP se abbiamo un pezzo in presa "facile" (Berserk)
@@ -739,7 +751,7 @@ int  g_rfp_hist_thresh       = 0;      // #12 RFP solo se hash-move non-quiet o 
 static bool g_killer_reset   = false;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
 int  g_qs_move_cap           = 0;      // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
 // ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
-static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) in qsearch (ripristinato a toggle 2026-07-04)
+static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) in qsearch. Bake 2026-07-07 REVERTITO: -10.73 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = NULLO. OFF, re-ispezione a TC lungo
 bool g_ep_key_fix            = false;  // F-017: ep nella hash key SOLO se la cattura ep e' pseudo-legale (anche movegen.cpp)
                                         // ⚠️ nps_ab_test.py 80pos/depth13: nodi +16%, NPS -7.5% (INATTESO, non e' un
                                         // regalo NPS) — NON hardenare, resta OFF, da capire prima di ritentare.
@@ -931,6 +943,10 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMMaxMult"))           { g_tm_max_mult = value < 100 ? 100 : value; return true; }
     if (!strcmp(name, "TMInstab"))            { g_tm_instab          = value; return true; }
     if (!strcmp(name, "TMDropDiv"))           { g_tm_drop_div = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TMStability"))         { g_tm_stability = value != 0; return true; }
+    if (!strcmp(name, "TMStabThresh"))        { g_tm_stab_thresh = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "TMStabStep"))          { g_tm_stab_step = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "TMStabFloor"))         { g_tm_stab_floor = value < 10 ? 10 : (value > 100 ? 100 : value); return true; }
     if (!strcmp(name, "TTCutBonusScale"))     { g_ttcut_bonus_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "NMPVerifDepth"))       { g_nmp_verif_depth = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "LMPBase"))             { g_lmp_base = value < 0 ? 0 : value; return true; }
@@ -4321,6 +4337,7 @@ static void thread_search(int thread_id, int max_depth) {
     int prev_best_move = 0;
     int prev_completed_score = 0;   // last completed iteration's score (TimeMgmt drop)
     int avg_score = infinity;       // F-018.5a AspAvg: media mobile degli score (infinity = non ancora inizializzata)
+    int stable_iters = 0;           // T-01 TMStability: iterazioni consecutive con best move invariata
 
     // Stagger starting depths for thread diversity
     int start_depth = 1 + (thread_id % 2);
@@ -4437,6 +4454,12 @@ static void thread_search(int thread_id, int max_depth) {
         // time, up to the hard cap (stoptime).
         if (thread_id == 0 && timeset) {
             int soft = soft_time_limit;                    // absolute timestamp (starttime + optimum)
+
+            // T-01 TMStability: iterazioni consecutive con best move invariata (prev_best_move
+            // tiene ancora il valore dell'iterazione precedente, aggiornato piu' sotto).
+            if (current_depth > start_depth && td.best_move == prev_best_move) stable_iters++;
+            else stable_iters = 0;
+
             if (current_depth > start_depth && td.best_move != prev_best_move)
                 soft += (stoptime - soft_time_limit) * g_tm_instab / 100;
 
@@ -4466,6 +4489,21 @@ static void thread_search(int thread_id, int max_depth) {
                 int dur = soft - starttime;                // current optimum duration (ms)
                 if (dur < 0) dur = 0;
                 soft = starttime + (int)(dur * scale);
+            }
+
+            // T-01 TMStability (default OFF): best move stabile da piu' iterazioni ->
+            // confidenza -> riduci la durata optimum verso il pavimento. REDUCE-ONLY
+            // (scale <= 1.0), si compone col NodeTM. Segnale diverso dal NodeTM
+            // (persistenza tra iterazioni vs quota-nodi di questa iterazione). Solo
+            // riduce, mai spinge soft oltre stoptime.
+            if (g_tm_stability && stable_iters > g_tm_stab_thresh) {
+                int over = stable_iters - g_tm_stab_thresh;
+                double sscale = 1.0 - over * (g_tm_stab_step / 1000.0);
+                double sfloor = g_tm_stab_floor / 100.0;
+                if (sscale < sfloor) sscale = sfloor;
+                int dur = soft - starttime;
+                if (dur < 0) dur = 0;
+                soft = starttime + (int)(dur * sscale);
             }
 
             if (soft > stoptime) soft = stoptime;          // never exceed the hard cap
