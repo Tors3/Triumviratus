@@ -63,56 +63,34 @@ First release with a **NNUE network trained by the author**. *(CCRL rating: to b
 
 ## Results
 
-#### 5.1 final version-bump verification (2026-07-05)
+#### 5.1 vs 5.0 — official release gate (2026-07-07)
 
 > [!NOTE]
-> `v5.0` vs `v5.1`, no score-based adjudication (games decided by mate / 50-move / repetition only).
+> `v5.0` vs `v5.1`, **AVX2 build** (the CCRL binary), same network (`nn-rubicon-alea-v1`),
+> no score-based adjudication (games decided by mate / 50-move / repetition only).
+> The definitive 2000-game version-bump gate.
 
 Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
 
 | Time control | Threads | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
-| 20+0.2 | 1 | 256 MB | 666 | 59.1% | **+63.8 ± 13.2** | 100.00% |
-| 40+0.4 | 1 | 256 MB | 626 | 60.3% | **+72.6 ± 13.0** | 100.00% |
-| 15+0.15 | 4 | 1024 MB | 100* | 59.0% | **+63.2 ± 37.1** | 99.97% |
+| 20+0.2 | 1 | 64 MB | 2000 | 59.2% | **+64.7 ± 7.6** | 100.00% |
 
-<sub>*Stopped early by choice, not by SPRT bound — smaller sample, wider error bar.</sub>
+<sub>v5.1: W 621 · L 253 · D 1126. Pentanomial (v5.1) [0–2]: [1, 87, 483, 401, 28].</sub>
 
-#### NPS-optimization patch (2026-07-05)
+#### Pawnocchio 1.9.1
 
-`v5.1NPS` = `v5.1` + lazy NNUE-mirror apply + `-mtune=native` PGO build (same network, same
-search — see [Triumviratus 5.1](#triumviratus-51)). No score-based adjudication, 1 thread, 128 MB hash.
+`v5.1` vs Pawnocchio 1.9.1 (znver5 build), AVX512, 1 thread, 64 MB hash, no score-based adjudication,
+UHO 2024 book.
 
-| Opponent | Time control | Opening | Games | Score (v5.1NPS) | Elo (v5.1NPS) | LOS |
+| Date | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
-| v5.1 (self) | 20+0.2 | UHO_2024_8mvs_big_+095_+114.epd | 200 | 56.0% | **+41.9 ± 26.0** | 99.93% |
-| v5.1 (self) | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 396 | 53.8% | **+26.4 ± 18.6** | 99.74% |
+| 2026-07-08 | 60+0.6 | UHO_2024_8mvs_big_+080_+099.epd | 1718* | 50.4% | **+2.63 ± 7.98** | 74.09% |
+| 2026-07-08 | 20+0.2 | UHO_2024_8mvs_big_+080_+099.epd | 800 | 51.4% | **+9.56 ± 12.89** | 92.71% |
+| 2026-07-06 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
 
-<sub>SPRT in progress (LLR hadn't reached the [0, 5] elo bound at time of writing) — LOS is already
-conclusive.</sub>
-
-#### Post-fix re-verification (2026-07-05, AVX2 build)
-
-After the NPS patch above **and** an `EvalFile`-default consistency fix (dev builds used to
-silently default to the Stockfish SFNNv13 reference net instead of `nn-rubicon-alea-v1.nnue`;
-both build kinds now always load the same own-lineage net), re-confirms the `v5.0`→`v5.1` gap
-holds on the AVX2 build specifically. 1 thread, 128 MB hash, no score-based adjudication.
-
-| Opponent | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
-|---|---|---|---|---|---|---|
-| v5.0 (avx2) | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 318 | 58.2% | **+57.3 ± 20.6** | 100.00% |
-
-<sub>SPRT in progress (LLR at 43.5% of the [0, 5] elo bound at time of writing) — LOS already conclusive.</sub>
-
-#### Pawnocchio 1.9.1 (2026-07-06)
-
-`v5.1` vs Pawnocchio 1.9.1, 10+0.15, 1 thread, 128 MB hash, no score-based adjudication.
-
-| Opponent | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
-|---|---|---|---|---|---|---|
-| Pawnocchio 1.9.1 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
-
-<sub>SPRT in progress.</sub>
+<sub>*Stopped early by choice at long TC — essentially a parity check ("are we still roughly matching
+Pawnocchio at slower time controls?"), not a full 2000-game run. Answer: yes, near-even.</sub>
 
 #### vs. external engines (2026-07-05)
 `v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
