@@ -156,8 +156,8 @@ int main()
     g_startup_quiet = !STDIN_IS_TTY;
 
     // Banner di presentazione (solo in terminale interattivo, mai verso una GUI)
-    if (!g_startup_quiet)
-        ascii_art();
+    // if (!g_startup_quiet)
+    //     ascii_art();
 
     // Initialize all bitboards and attack tables (silent)
     init_bitboards();
