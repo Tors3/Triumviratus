@@ -52,6 +52,16 @@ was implemented and is ready, but flat at short time controls — it needs re-te
 - Shipping binaries: clang-cl + ThinLTO + PGO, both AVX2 (CCRL-compatible) and AVX-512 targets.
   See [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md).
 
+## Downloads — two variants per architecture
+
+- **Standard** (`Triumviratus_5.1_avx2.zip` / `..._avx512.zip`): the release build
+  (`-DTRIUMV_RELEASE`) — only the standard UCI options are exposed (`Hash`, `Threads`,
+  `Move Overhead`, `EvalFile`, `SyzygyPath`). Use this for play/tournaments.
+- **`..._DEVELOPMENT_VERSION.zip`**: same search and network, built *without* `-DTRIUMV_RELEASE`,
+  so every internal tuning parameter (SPSA spins, A/B toggles) is exposed as a UCI option. Use
+  this only if you want to experiment with the search constants yourself — the extra options do
+  not change default behavior (all default to the same values as the standard build).
+
 ## Tooling (not shipped, internal)
 
 A standalone self-play datagen suite for a possible future rubicon-alea refinement pass
