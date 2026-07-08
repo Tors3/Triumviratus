@@ -85,12 +85,12 @@ UHO 2024 book.
 
 | Date | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
-| 2026-07-08 | 60+0.6 | UHO_2024_8mvs_big_+080_+099.epd | 1718* | 50.4% | **+2.63 ± 7.98** | 74.09% |
+| 2026-07-08 | 60+0.6 | UHO_2024_8mvs_big_+080_+099.epd | 2000 | 50.4% | **+2.61 ± 7.48** | 75.26% |
 | 2026-07-08 | 20+0.2 | UHO_2024_8mvs_big_+080_+099.epd | 800 | 51.4% | **+9.56 ± 12.89** | 92.71% |
 | 2026-07-06 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
 
-<sub>*Stopped early by choice at long TC — essentially a parity check ("are we still roughly matching
-Pawnocchio at slower time controls?"), not a full 2000-game run. Answer: yes, near-even.</sub>
+<sub>At long TC (60+0.6, 2000 games) Triumviratus 5.1 and Pawnocchio 1.9.1 are essentially even —
+the small edge (LOS 75%) is within noise, not a confirmed gap.</sub>
 
 #### vs. external engines (2026-07-05)
 `v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
