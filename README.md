@@ -129,9 +129,9 @@ than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo nu
 ## Credits
 
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation.
+- **[BBC](https://github.com/maksimKorzh/chess_programming)** by Maksim Korzh ("Code Monkey King") — original bitboard/magic-number move generator; the project's earliest (2024) foundation for `attacks.cpp`/`magic.cpp`/`movegen.cpp` and the original search, both since substantially rewritten and extended.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing.
 - **[Berserk](https://github.com/jhonnold/berserk)** and **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)** — studied for search/move-ordering ideas informing some of the engine's own implementations.
-- Search and engine by **Francesco Torsello**.
 - Thanks to **Maurizio Platino** for the SPSA search-tuning and for extensive testing throughout the project,
   generously contributing his hardware.
 
