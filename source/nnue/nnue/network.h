@@ -73,6 +73,19 @@ class Network {
                                  AccumulatorStack&  accumulatorStack,
                                  AccumulatorCaches& cache) const;
 
+    // Mens visualizer instrumentation: like evaluate() but also returns the
+    // intermediate L2/L3 layer activations and the active output bucket.
+    struct MensLayerTrace {
+        int bucket;
+        int l2[L2];
+        int l3[L3];
+        int psqt;
+        int positional;
+    };
+    MensLayerTrace mens_trace(const Position&    pos,
+                              AccumulatorStack&  accumulatorStack,
+                              AccumulatorCaches& cache) const;
+
    private:
     void load_user_net(const std::string&, const std::string&);
     void load_internal();

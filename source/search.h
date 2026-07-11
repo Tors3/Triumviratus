@@ -12,22 +12,12 @@
 // when stored/read from the TT. Stockfish uses the same idea (VALUE_MATE well
 // under 32767). The gap mate_value - mate_score (1000) exceeds max_ply, so
 // real (non-mate) evaluations never reach the mate band.
-// GCC/libstdc++: <cmath> include <bits/specfun.h> che usa
-// numeric_limits<T>::infinity(); preincludiamo QUI (prima del #define infinity)
-// cosi' le loro include-guard impediscono che la macro li "avveleni" piu' avanti.
-#include <cmath>
-#include <limits>
 #define infinity 32000
 #define mate_value 31000
 #define mate_score 30000
 
-// max ply that we can reach within a search.
-// P1.5 (2026-06-11): 64 -> 128. Con check-extension incondizionata + singular +2 le
-// linee lunghe dei finali a LTC sbattevano sul tetto 64 e tornavano static-eval a
-// meta' variante (SF usa 246). Sbloccato dalla rimozione della policy (l'array TLS
-// policy_scores_by_ply[max_ply][4096] = 1MB/thread che lo rendeva costoso e' stato
-// rimosso). Il gap mate_value - mate_score (1000) resta >> max_ply: nessun overlap.
-#define max_ply 128
+// max ply that we can reach within a search
+#define max_ply 64
 
 // MVV LVA [attacker][victim]
 extern int mvv_lva[12][12];

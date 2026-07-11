@@ -57,6 +57,7 @@ namespace Stockfish::Eval::NNUE {
 
 using BiasType         = i16;
 using ThreatWeightType = i8;
+using PawnWeightType   = i8;   // TRANN1: blocco PawnPair, int8 come i threats
 using WeightType       = i16;
 using PSQTWeightType   = i32;
 using IndexType        = u32;

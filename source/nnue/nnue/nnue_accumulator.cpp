@@ -61,13 +61,14 @@ void AccumulatorStack::reset() noexcept {
     size = 1;
 }
 
-std::pair<DirtyPiece&, DirtyThreats&> AccumulatorStack::push() noexcept {
+std::tuple<DirtyPiece&, DirtyThreats&, DirtyPawns&> AccumulatorStack::push() noexcept {
     assert(size < MaxSize);
     auto& st = accumulators[size];
     st.computed.fill(false);
     new (&st.dirtyThreats) DirtyThreats;
+    st.dirtyPawns.any = false;  // TRANN1: apply_move la riempie se la mossa tocca pedoni
     size++;
-    return {st.dirtyPiece, st.dirtyThreats};
+    return {st.dirtyPiece, st.dirtyThreats, st.dirtyPawns};
 }
 
 void AccumulatorStack::pop() noexcept {
@@ -351,6 +352,7 @@ void update_accumulator_incremental(Color                     perspective,
 
     const auto& dirtyPiece   = Forward ? target_state.dirtyPiece : computed.dirtyPiece;
     const auto& dirtyThreats = Forward ? target_state.dirtyThreats : computed.dirtyThreats;
+    const auto& dirtyPawns   = Forward ? target_state.dirtyPawns : computed.dirtyPawns;
 
     const auto* pfBase   = &featureTransformer.threatWeights[0];
     IndexType   pfStride = FeatureTransformer::OutputDimensions;
@@ -359,12 +361,16 @@ void update_accumulator_incremental(Color                     perspective,
     {
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrRemoved,
                                                  thrAdded, pfBase, pfStride);
+        // TRANN1: gli indici PawnPair (folded, gia' offsettati) entrano nelle
+        // STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
+        PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
     }
     else
     {
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrAdded,
                                                  thrRemoved, pfBase, pfStride);
+        PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
     }
 
@@ -498,6 +504,7 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
+    PawnFeatureSet::append_active_indices(perspective, pos, active);  // TRANN1 folded
 
     accumulator.computed[perspective] = true;
 

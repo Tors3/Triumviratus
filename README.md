@@ -21,25 +21,47 @@
 
 <div align="center">
 
-[Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
+[6.0 (dev)](#triumviratus-60-in-development) · [Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
 
 </div>
 
 ---
 
+## Triumviratus 6.0 (in development)
+
+> [!NOTE]
+> Work in progress — not yet released or gated. 5.1 remains the current stable version.
+
+Two changes over 5.1:
+
+- **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
+  feature set with a third input block of **pawn-pair features**, giving the network explicit awareness
+  of pawn structure (phalanxes, chains, doubled/isolated pawns) that the threat features alone don't
+  capture. The block is grafted onto `nn-rubicon-alea-v1` with zero-initialised columns — bit-identical
+  to v1 at graft time — then fine-tuned into **`nn-rubicon-alea-v2`** (training in progress). Engine-side
+  the block folds into the existing threat accumulator, so no new SIMD path is added.
+- **SPSA mega co-tune** of ~50 search parameters, baked into the compiled defaults.
+
+#### Incremental gains (vs 5.1 baseline)
+
+Each row is measured against the state *before* that change, at 10+0.1, 1 thread, 64 MB, UHO 2024
+book (`UHO_2024_8mvs_big_+080_+099.epd`), no score-based adjudication.
+
+| # | Change | Games | Elo | LOS |
+|---|---|---|---|---|
+| 1 | SPSA mega co-tune (50 params) | 1058 | **+15.8 ± 10.9** | 99.8% |
+
+<sub>Cumulative running total will be gated against 5.1 at 20+0.2 once the v2 network lands.</sub>
+
 ## Triumviratus 5.1
 
 Current release. Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from
 scratch). Adds a recalibrated eval scale, two-level TT, hindsight extensions, faster SEE/AVX-512
-accumulators, re-tuned time management, a display-only eval normalization ("+1.00" ≈ 50% win probability),
-a **second-audit patch** (**+26 Elo cumulative**, SPRT-confirmed — see [Results](#results)): threat-indexed
-quiet history, refined TT-cutoff, aspiration/alpha-raise/fail-high tweaks, an SPSA-tuned singular/extension
-vector, and an **NPS-optimization patch** (2026-07-05, **+26 to +42 Elo** depending on time control,
-SPRT-confirmed — see [Results](#results)): a lazy NNUE-mirror apply (the board mirror + threat computation
-for a move is deferred until an evaluation actually needs it, instead of paying for it on every legal
-move) plus a `-mtune=native` PGO build flag — a real, measurable strength gain, not just raw NPS.
-29 more search toggles (verified against the compiled defaults, not just the advertised UCI text)
-were screened and left off — no net gain yet, kept for future tuning.
+accumulators, and re-tuned time management. Two SPRT-confirmed gains (see [Results](#results)): a
+**second-audit patch** (**+26 Elo**: threat-indexed quiet history, refined TT-cutoff, aspiration/fail-high
+tweaks, an SPSA-tuned singular/extension vector) and an **NPS-optimization patch** (**+26 to +42 Elo** by
+time control): a lazy NNUE-mirror apply — the board mirror + threat computation is deferred until an eval
+actually needs it, not paid on every legal move — plus a `-mtune=native` PGO build.
 
 | | |
 |---|---|

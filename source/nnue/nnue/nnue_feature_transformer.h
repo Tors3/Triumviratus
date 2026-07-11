@@ -87,7 +87,15 @@ class FeatureTransformer {
 
     // Number of input/output dimensions
     static constexpr IndexType ThreatInputDimensions = ThreatFeatureSet::Dimensions;
-    static constexpr IndexType InputDimensions  = PSQFeatureSet::Dimensions + ThreatInputDimensions;
+    static constexpr IndexType PawnInputDimensions   = PawnFeatureSet::Dimensions;
+    // TRANN1 "folded" design: i pesi PawnPair (int8 come i threats) vivono IN CODA
+    // allo stesso array threatWeights e gli indici pawn arrivano gia' offsettati di
+    // ThreatInputDimensions -> tutto il SIMD a valle (apply, refresh, prefetch)
+    // resta INVARIATO: le coppie di pedoni sono semplicemente "threat" extra.
+    static constexpr IndexType ThreatPlusPawnDimensions =
+      ThreatInputDimensions + PawnInputDimensions;
+    static constexpr IndexType InputDimensions =
+      PSQFeatureSet::Dimensions + ThreatPlusPawnDimensions;
     static constexpr IndexType OutputDimensions = HalfDimensions;
 
     // Size of forward propagation buffer
@@ -126,9 +134,12 @@ class FeatureTransformer {
         return hash;
     }
 
-    // Hash value embedded in the evaluation file
+    // Hash value embedded in the evaluation file (TRANN1: threats + halfka +
+    // pawnpair — must match the trainer's composed._compute_hash, which folds
+    // the blocks in feature-string order)
     static constexpr u32 get_hash_value() {
-        return combine_hash({ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue})
+        return combine_hash(
+                 {ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue, PawnFeatureSet::HashValue})
              ^ (OutputDimensions * 2);
     }
 
@@ -136,7 +147,7 @@ class FeatureTransformer {
         permute<16>(biases, PackusEpi16Order);
         permute<16>(weights, PackusEpi16Order);
 
-        permute<8>(threatWeights, PackusEpi16Order);
+        permute<8>(threatWeights, PackusEpi16Order);  // copre anche il segmento pawn (folded)
     }
 
     void unpermute_weights() {
@@ -145,16 +156,37 @@ class FeatureTransformer {
         permute<8>(threatWeights, InversePackusEpi16Order);
     }
 
-    // Read network parameters
+    // Read network parameters. Block order in the .nnue byte stream MUST match
+    // the trainer's feature-string order [threats, halfka, pawnpair]; int8
+    // blocks are raw little-endian, int16 blocks and all psqt are leb128
+    // (serialize.py write_feature_transformer). I segmenti pawn atterrano in
+    // CODA agli array threat (folded); i psqt leb128 passano da un temp heap
+    // (read_leb_128 vuole std::array interi) — solo a load-time.
     bool read_parameters(std::istream& stream) {
         read_leb_128(stream, biases);
 
         read_little_endian<ThreatWeightType>(stream, threatWeights.data(),
                                              ThreatInputDimensions * HalfDimensions);
-        read_leb_128(stream, threatPsqtWeights);
+        {
+            auto tmp = std::make_unique<
+              std::array<PSQTWeightType, ThreatInputDimensions * PSQTBuckets>>();
+            read_leb_128(stream, *tmp);
+            std::memcpy(threatPsqtWeights.data(), tmp->data(), sizeof(*tmp));
+        }
 
         read_leb_128(stream, weights);
         read_leb_128(stream, psqtWeights);
+
+        read_little_endian<ThreatWeightType>(
+          stream, threatWeights.data() + usize(ThreatInputDimensions) * HalfDimensions,
+          PawnInputDimensions * HalfDimensions);
+        {
+            auto tmp =
+              std::make_unique<std::array<PSQTWeightType, PawnInputDimensions * PSQTBuckets>>();
+            read_leb_128(stream, *tmp);
+            std::memcpy(threatPsqtWeights.data() + usize(ThreatInputDimensions) * PSQTBuckets,
+                        tmp->data(), sizeof(*tmp));
+        }
 
         permute_weights();
 
@@ -172,10 +204,27 @@ class FeatureTransformer {
 
         write_little_endian<ThreatWeightType>(stream, copy->threatWeights.data(),
                                               ThreatInputDimensions * HalfDimensions);
-        write_leb_128<PSQTWeightType>(stream, copy->threatPsqtWeights);
+        {
+            auto tmp = std::make_unique<
+              std::array<PSQTWeightType, ThreatInputDimensions * PSQTBuckets>>();
+            std::memcpy(tmp->data(), copy->threatPsqtWeights.data(), sizeof(*tmp));
+            write_leb_128<PSQTWeightType>(stream, *tmp);
+        }
 
         write_leb_128<WeightType>(stream, copy->weights);
         write_leb_128<PSQTWeightType>(stream, copy->psqtWeights);
+
+        write_little_endian<ThreatWeightType>(
+          stream, copy->threatWeights.data() + usize(ThreatInputDimensions) * HalfDimensions,
+          PawnInputDimensions * HalfDimensions);
+        {
+            auto tmp =
+              std::make_unique<std::array<PSQTWeightType, PawnInputDimensions * PSQTBuckets>>();
+            std::memcpy(tmp->data(),
+                        copy->threatPsqtWeights.data() + usize(ThreatInputDimensions) * PSQTBuckets,
+                        sizeof(*tmp));
+            write_leb_128<PSQTWeightType>(stream, *tmp);
+        }
 
         return !stream.fail();
     }
@@ -365,12 +414,13 @@ class FeatureTransformer {
     alignas(CacheLineSize) std::array<BiasType, HalfDimensions> biases;
     alignas(
       CacheLineSize) std::array<WeightType, HalfDimensions * PSQFeatureSet::Dimensions> weights;
+    // TRANN1 folded: [0, ThreatDims) = threats, [ThreatDims, ThreatDims+PawnDims) = pawn-pair
     alignas(CacheLineSize)
-      std::array<ThreatWeightType, HalfDimensions * ThreatFeatureSet::Dimensions> threatWeights;
+      std::array<ThreatWeightType, HalfDimensions * ThreatPlusPawnDimensions> threatWeights;
     alignas(CacheLineSize)
       std::array<PSQTWeightType, PSQFeatureSet::Dimensions * PSQTBuckets> psqtWeights;
     alignas(CacheLineSize)
-      std::array<PSQTWeightType, ThreatFeatureSet::Dimensions * PSQTBuckets> threatPsqtWeights;
+      std::array<PSQTWeightType, ThreatPlusPawnDimensions * PSQTBuckets> threatPsqtWeights;
 };
 
 }  // namespace Stockfish::Eval::NNUE

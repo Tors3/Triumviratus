@@ -93,6 +93,7 @@ struct AccumulatorCaches {
 struct AccumulatorState: public Accumulator {
     DirtyPiece   dirtyPiece;
     DirtyThreats dirtyThreats;
+    DirtyPawns   dirtyPawns;  // TRANN1: delta pedoni per il blocco PawnPair
 };
 
 class AccumulatorStack {
@@ -101,9 +102,9 @@ class AccumulatorStack {
 
     [[nodiscard]] const AccumulatorState& latest() const noexcept;
 
-    void                                  reset() noexcept;
-    std::pair<DirtyPiece&, DirtyThreats&> push() noexcept;
-    void                                  pop() noexcept;
+    void reset() noexcept;
+    std::tuple<DirtyPiece&, DirtyThreats&, DirtyPawns&> push() noexcept;
+    void pop() noexcept;
 
     void evaluate(const Position&           pos,
                   const FeatureTransformer& featureTransformer,

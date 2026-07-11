@@ -158,6 +158,24 @@ NetworkOutput Network::evaluate(const Position&    pos,
 }
 
 
+Network::MensLayerTrace Network::mens_trace(const Position&    pos,
+                                            AccumulatorStack&  accumulatorStack,
+                                            AccumulatorCaches& cache) const {
+    constexpr u64 alignment = CacheLineSize;
+    alignas(alignment) TransformedFeatureType transformedFeatures[FeatureTransformer::BufferSize];
+    NNZInfo<L1> nnzInfo;
+    const int  bucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    const auto psqt   = featureTransformer.transform(pos, accumulatorStack, cache,
+                                                     transformedFeatures, bucket, nnzInfo);
+    MensLayerTrace t;
+    t.bucket = bucket;
+    const auto positional = network[bucket].propagate_trace(transformedFeatures, nnzInfo, t.l2, t.l3);
+    t.psqt       = static_cast<int>(psqt / OutputScale);
+    t.positional = static_cast<int>(positional / OutputScale);
+    return t;
+}
+
+
 void Network::verify(std::string                                  evalfilePath,
                      const std::function<void(std::string_view)>& f) const {
     if (evalfilePath.empty())

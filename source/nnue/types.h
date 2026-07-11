@@ -341,6 +341,21 @@ struct DirtyThreats {
     DirtyThreatList list;
 };
 
+// Keep track of what PAWNS a move adds/removes (used by the PawnPair NNUE
+// block). A single move removes at most 2 pawns (pawn-takes-pawn, or en
+// passant: mover leaves from-square + victim dies) and adds at most 1
+// (promotions add none). pawnsBefore = pawn bitboards BEFORE the move, so the
+// pair-diff can be expanded exactly against a consistent snapshot.
+struct DirtyPawns {
+    Square   removedSq[2];
+    Color    removedC[2];
+    Square   addedSq;   // SQ_NONE if none
+    Color    addedC;
+    int      nRemoved;
+    Bitboard pawnsBefore[COLOR_NB];
+    bool     any;  // false = the move touched no pawn -> zero work downstream
+};
+
     #define ENABLE_INCR_OPERATORS_ON(T) \
         constexpr T& operator++(T& d) { return d = T(int(d) + 1); } \
         constexpr T& operator--(T& d) { return d = T(int(d) - 1); }

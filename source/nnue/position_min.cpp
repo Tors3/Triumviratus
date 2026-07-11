@@ -47,6 +47,12 @@ inline void add_dirty_threat(DirtyThreats* const dts,
     dts->list.push_back({pc, threatened, s, threatenedSq, putPiece});
 }
 
+// SF 83514e49: a slider threatening a queen is a valid feature only if the
+// slider is itself a queen (B/R->Q pairs are excluded from the feature map).
+constexpr bool can_slider_threat(Piece pc, Piece slider) {
+    return type_of(pc) != QUEEN || type_of(slider) == QUEEN;
+}
+
 #ifdef USE_AVX512ICL
 // F-009 (audit 2026-07-02): port VERBATIM del path VETTORIZZATO del master
 // (position.cpp:1160, gia' vendored in nnue/position.cpp ma mai compilato qui:
@@ -103,11 +109,14 @@ void Position::update_piece_threats(Piece               pc,
     const Bitboard bishopQueens = pieces(BISHOP, QUEEN);
     const Bitboard rAttacks     = attacks_bb<ROOK>(s, occupied);
     const Bitboard bAttacks     = attacks_bb<BISHOP>(s, occupied);
-    const Bitboard kings        = pieces(KING);
-    Bitboard       occupiedNoK  = occupied ^ kings;
+    const Bitboard occupiedNoK  = occupied ^ pieces(KING);
 
-    Bitboard sliders         = (rookQueens & rAttacks) | (bishopQueens & bAttacks);
-    auto     process_sliders = [&](bool addDirectAttacks) {
+    // SF 83514e49: filter invalid threat pairs early (pure speedup, the excluded
+    // pairs map to index == Dimensions anyway and were dropped downstream).
+    Bitboard sliders       = (rookQueens & rAttacks) | (bishopQueens & bAttacks);
+    Bitboard directSliders = type_of(pc) == QUEEN ? sliders & pieces(QUEEN) : sliders;
+
+    auto process_sliders = [&](bool addDirectAttacks) {
         while (sliders)
         {
             Square sliderSq = pop_lsb(sliders);
@@ -120,10 +129,11 @@ void Position::update_piece_threats(Piece               pc,
             {
                 const Square threatenedSq = lsb(discovered);
                 const Piece  threatenedPc = piece_on(threatenedSq);
-                add_dirty_threat(dts, !putPiece, slider, threatenedPc, sliderSq, threatenedSq);
+                if (can_slider_threat(threatenedPc, slider))
+                    add_dirty_threat(dts, !putPiece, slider, threatenedPc, sliderSq, threatenedSq);
             }
 
-            if (addDirectAttacks)
+            if (addDirectAttacks && can_slider_threat(pc, slider))
                 add_dirty_threat(dts, putPiece, slider, pc, sliderSq, s);
         }
     };
@@ -139,12 +149,12 @@ void Position::update_piece_threats(Piece               pc,
     const Bitboard whitePawns = pieces(WHITE, PAWN);
     const Bitboard blackPawns = pieces(BLACK, PAWN);
 
-    Bitboard threatened = attacks_bb(pc, s, occupied) & occupiedNoK;
-    Bitboard incoming_threats =
-      (PseudoAttacks[KNIGHT][s] & knights) | (PseudoAttacks[KING][s] & kings);
+    Bitboard threatened       = attacks_bb(pc, s, occupied) & occupiedNoK;
+    Bitboard incoming_threats = PseudoAttacks[KNIGHT][s] & knights;
 
     // Compute both incoming and outgoing pawn threats. Incoming pawn pushers are only
     // added if 'pc' is a pawn.
+    Bitboard pawnThreats = 0;
     if (type_of(pc) == PAWN)
     {
         Bitboard whiteAttacks = PawnPushOrAttacks[WHITE][s];
@@ -152,13 +162,30 @@ void Position::update_piece_threats(Piece               pc,
 
         threatened |= (color_of(pc) == WHITE ? whiteAttacks : blackAttacks) & pieces(PAWN);
 
-        incoming_threats |= whiteAttacks & blackPawns;
-        incoming_threats |= blackAttacks & whitePawns;
+        pawnThreats = whiteAttacks & blackPawns;
+        pawnThreats |= blackAttacks & whitePawns;
     }
     else
     {
-        incoming_threats |=
+        pawnThreats =
           (attacks_bb<PAWN>(s, WHITE) & blackPawns) | (attacks_bb<PAWN>(s, BLACK) & whitePawns);
+    }
+
+    if (type_of(pc) == PAWN || type_of(pc) == KNIGHT || type_of(pc) == ROOK)
+        incoming_threats |= pawnThreats;
+
+    switch (type_of(pc))
+    {
+    case PAWN :
+        threatened &= pieces(PAWN, KNIGHT, ROOK);
+        break;
+    case BISHOP :
+    case ROOK :
+        threatened &= pieces(PAWN, KNIGHT, BISHOP, ROOK);
+        break;
+    default :
+        threatened &= occupiedNoK;
+        break;
     }
 
 #ifdef USE_AVX512ICL
@@ -169,7 +196,7 @@ void Position::update_piece_threats(Piece               pc,
     write_multiple_dirties<DirtyThreat::ThreatenedSqOffset, DirtyThreat::ThreatenedPcOffset>(
       *this, threatened, dt_template, dts);
 
-    Bitboard all_attackers = sliders | incoming_threats;
+    Bitboard all_attackers = directSliders | incoming_threats;
 
     dt_template = {NO_PIECE, pc, Square(0), s, putPiece};
     write_multiple_dirties<DirtyThreat::PcSqOffset, DirtyThreat::PcOffset>(*this, all_attackers,
@@ -193,7 +220,7 @@ void Position::update_piece_threats(Piece               pc,
     }
     else
     {
-        incoming_threats |= sliders;
+        incoming_threats |= directSliders;
     }
 
 #ifndef USE_AVX512ICL

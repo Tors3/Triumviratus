@@ -29,11 +29,11 @@ struct ThreadData {
     int plies_from_null; // P2.2: mosse reali dall'ultima null nel cammino corrente
     bool in_nmp_verif;   // P1.6: dentro una verification search (null disattivata)
     int seldepth;        // max ply raggiunto (info UCI)
-    
+
     // Repetition detection
     U64 repetition_table[2048];   // 2026-06-12: era 1000, OOB su partite 440+ mosse (vedi defs.h)
     int repetition_index;
-    
+
     // Search state
     int ply;
     U64 nodes;
@@ -80,6 +80,25 @@ struct ThreadData {
     int16_t cont_hist_6[12][64][12][64];
     // Capture history: [moving piece][to square][captured piece].
     int capture_history[12][64][12];
+
+    // Q-11 NodeCache (port da Caissa NodeCache.hpp): per i nodi VICINI ALLA RADICE
+    // (ply < NC_MAX_PLY) memorizza quanti nodi e' costata OGNI mossa. Tabella
+    // keyed-by-position (256 slot, index = hash & 255, verifica chiave piena):
+    // le entry sopravvivono cross-iterazione E cross-move (l'entry di ply-2 della
+    // ricerca precedente e' la radice di questa) -> l'ordering quiet vicino alla
+    // radice impara dai nodi realmente spesi. ~100KB/thread.
+    static constexpr int NC_SIZE    = 256;   // slot (potenza di 2: index = key & (NC_SIZE-1))
+    static constexpr int NC_MOVES   = 32;    // mosse tracciate per entry (Caissa: MaxMoves=32)
+    static constexpr int NC_MAX_PLY = 3;     // solo ply 0,1,2 (Caissa: node->ply < 3)
+    struct NCEntry {
+        U64      key;                  // chiave piena della posizione (0 = slot vuoto)
+        U64      nodes_sum;            // somma dei nodi di tutte le mosse tracciate
+        unsigned gen;                  // generazione della search che ha allocato/toccato
+        int      mv[NC_MOVES];         // mosse (0 = slot libero)
+        U64      mv_nodes[NC_MOVES];   // nodi spesi sotto ciascuna
+    };
+    NCEntry  node_cache[NC_SIZE];
+    unsigned nc_gen;                   // incrementata a ogni nuova ricerca (rimpiazzo age-based)
 
     // PV table. +8 slack on the ply dimension for the same reason as
     // killer_moves above (pv_length[ply+1] / pv_table[ply+1] lookahead at the
@@ -234,6 +253,8 @@ extern void search_position_mt(int depth);
 extern std::thread search_master;
 extern void launch_search(int depth);
 extern void wait_for_search_done();
+// Q-26 HistPrior: riempie le history col prior positivo dopo un azzeramento (no-op se 0).
+extern void apply_history_priors(ThreadData& td);
 
 // Soft time limit (absolute ms, like stoptime). The main thread stops starting
 // new iterative-deepening iterations once it passes this; stoptime stays the
@@ -290,6 +311,14 @@ extern void set_finny(bool enabled);
 extern int g_tm_movestogo;
 extern int g_tm_inc_frac;
 extern int g_tm_max_mult;
+
+// TM v2 (quarto audit Q-05/Q-06): allocazione pool+moves-left e fattore
+// predicted-move, letti da parse_go in uci_mt.cpp. Definiti in threads.cpp.
+extern bool g_tmv2_alloc;
+extern int  g_tmv2_mtg_base, g_tmv2_mtg_slope, g_tmv2_mtg_min, g_tmv2_opt_pct;
+extern bool g_tmv2_pred;
+extern int  g_tmv2_pred_hit, g_tmv2_pred_miss;
+extern U64  g_tm_pred_hash;   // hash della posizione prevista (0 = nessuna predizione)
 
 // "Improving" heuristic on/off (UCI option "Improving") — A/B the eval-trend
 // based pruning/reduction. Default on.

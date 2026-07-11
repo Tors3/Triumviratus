@@ -27,6 +27,7 @@
 
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
+#include "features/pawn_pair.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
 #include "layers/clipped_relu.h"
@@ -36,9 +37,14 @@
 
 namespace Stockfish::Eval::NNUE {
 
-// Input features used in evaluation function
+// Input features used in evaluation function.
+// TRANN1 (Triumviratus Rubicon Alea NNUE 1): architettura derivata da
+// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + terzo blocco
+// di input PawnPair (4560 feature) assente in SF. Il nome proprio riflette
+// la divergenza reale, non nasconde la derivazione.
 using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
+using PawnFeatureSet   = Features::PawnPair;
 
 // Number of input feature dimensions after conversion
 constexpr IndexType L1 = 1024;
@@ -136,6 +142,39 @@ struct NetworkArchitecture {
 
         i32 outputValue = static_cast<i32>((static_cast<i64>(fwdOut) * multiplier) / denominator);
         return outputValue;
+    }
+
+    // Mens visualizer instrumentation: identical to propagate() but also exports the
+    // L2 (ac_0) and L3 (ac_1) post-activation neuron values. Additive; the normal
+    // propagate()/evaluate() path is untouched.
+    i32 propagate_trace(const TransformedFeatureType* transformedFeatures,
+                        const NNZInfo<L1>& nnzInfo, i32* l2out, i32* l3out) const {
+        struct alignas(CacheLineSize) Buffer {
+            alignas(CacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
+            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType
+              ac_sqr_0_out[ceil_to_multiple<IndexType>(FC_0_OUTPUTS * 2, 32)];
+            alignas(CacheLineSize) typename decltype(ac_0)::OutputBuffer ac_0_out;
+            alignas(CacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
+            alignas(CacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
+            alignas(CacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
+            Buffer() { std::memset(ac_sqr_0_out, 0, sizeof(ac_sqr_0_out)); }
+        };
+        Buffer buffer;
+        fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo);
+        ac_sqr_0.propagate(buffer.fc_0_out, buffer.ac_sqr_0_out);
+        ac_0.propagate(buffer.fc_0_out, buffer.ac_0_out);
+        std::memcpy(buffer.ac_sqr_0_out + FC_0_OUTPUTS, buffer.ac_0_out,
+                    FC_0_OUTPUTS * sizeof(typename decltype(ac_0)::OutputType));
+        fc_1.propagate(buffer.ac_sqr_0_out, buffer.fc_1_out);
+        ac_1.propagate(buffer.fc_1_out, buffer.ac_1_out);
+        fc_2.propagate(buffer.ac_1_out, buffer.fc_2_out);
+        for (int i = 0; i < FC_0_OUTPUTS; ++i) l2out[i] = i32(buffer.ac_0_out[i]);
+        for (int i = 0; i < FC_1_OUTPUTS; ++i) l3out[i] = i32(buffer.ac_1_out[i]);
+        i32 fwdOut = buffer.fc_2_out[0] + buffer.fc_0_out[FC_0_OUTPUTS];
+        constexpr i64 multiplier = 600 * OutputScale;
+        constexpr i64 denominator =
+          static_cast<i64>(HiddenOneVal) * static_cast<i64>(1U << WeightScaleBits) * 2;
+        return static_cast<i32>((static_cast<i64>(fwdOut) * multiplier) / denominator);
     }
 
     usize get_content_hash() const {

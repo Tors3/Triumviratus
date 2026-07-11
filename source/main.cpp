@@ -175,7 +175,7 @@ int main()
     // the Stockfish SFNNv13 reference net here, which silently made a dev-build bench/SPRT run
     // on different weights than a release build unless EvalFile was set explicitly -> never
     // again; both build kinds load our own net by default now).
-    const char* netName = "nn-rubicon-alea-v1.nnue";
+    const char* netName = "nn-rubicon-alea-v2.nnue";  // TRANN1 (3 blocchi: threats+halfka+pawnpair)
     std::string netPath = resolve_net_path(netName);
     if (netPath.empty() || !nn_load_net(netPath.c_str()))
     {

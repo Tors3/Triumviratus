@@ -32,7 +32,8 @@ CPP_SRCS := $(filter-out nnt.cpp,$(wildcard *.cpp)) \
             $(V13)/position_min.cpp $(V13)/bitboard.cpp $(V13)/attacks.cpp \
             $(V13)/misc.cpp $(V13)/memory.cpp \
             $(V13)/nnue/network.cpp $(V13)/nnue/nnue_accumulator.cpp \
-            $(V13)/nnue/features/full_threats.cpp $(V13)/nnue/features/half_ka_v2_hm.cpp
+            $(V13)/nnue/features/full_threats.cpp $(V13)/nnue/features/half_ka_v2_hm.cpp \
+            $(V13)/nnue/features/pawn_pair.cpp
 C_SRCS   := fathom/tbprobe.c
 
 OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)

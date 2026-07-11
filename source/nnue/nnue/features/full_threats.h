@@ -64,7 +64,9 @@ class FullThreats {
     // clang-format on
 
     // Maximum number of simultaneously active features.
-    static constexpr IndexType MaxActiveDimensions = 128;
+    // TRANN1: la lista ospita anche gli indici PawnPair folded (refresh: fino a
+    // 128 threat + 120 coppie; incrementale: ~96 + ~46) -> 256.
+    static constexpr IndexType MaxActiveDimensions = 256;
     using IndexList                                = ValueList<IndexType, MaxActiveDimensions>;
     using DiffType                                 = DirtyThreats;
 

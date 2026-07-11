@@ -260,13 +260,53 @@ inline int eval_full_from_bb(const unsigned long long* bb, Color stm, int rule50
     return nn_scale(pos, psqt, positional, rule50);
 }
 
-// Apply SfMove m to pos (incremental), filling dp (DirtyPiece) + dts (DirtyThreats).
-// Mirrors Position::do_move's board mutation + DirtyPiece construction, driven by
-// the already-decomposed SfMove (engine king-destination castling encoding).
-inline void apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts) {
+// TRANN1: delta dei PEDONI di una mossa (per il blocco PawnPair). Va chiamata
+// PRIMA di mutare pos: il pair-diff si espande contro lo snapshot BEFORE.
+// Arrocco non tocca mai pedoni -> any=false via i due check.
+inline void fill_dirty_pawns(const Position& pos, const SfMove* m, DirtyPawns& dpw) {
+    const Piece pc           = Piece(m->movedPiece);
+    const bool  moverIsPawn  = type_of(pc) == PAWN;
+    const bool  victimIsPawn = m->capturedPiece && type_of(Piece(m->capturedPiece)) == PAWN;
+
+    dpw.nRemoved = 0;
+    dpw.addedSq  = SQ_NONE;
+    dpw.any      = moverIsPawn || victimIsPawn;
+    if (!dpw.any)
+        return;
+
+    dpw.pawnsBefore[WHITE] = pos.pieces(WHITE, PAWN);
+    dpw.pawnsBefore[BLACK] = pos.pieces(BLACK, PAWN);
+
+    if (moverIsPawn)
+    {
+        dpw.removedSq[dpw.nRemoved] = Square(m->from);
+        dpw.removedC[dpw.nRemoved]  = color_of(pc);
+        dpw.nRemoved++;
+        if (!m->promoPiece)  // la promozione non ri-aggiunge un pedone
+        {
+            dpw.addedSq = Square(m->to);
+            dpw.addedC  = color_of(pc);
+        }
+    }
+    if (victimIsPawn)
+    {
+        dpw.removedSq[dpw.nRemoved] = Square(m->capturedSq);  // ep: casa del pedone, non to
+        dpw.removedC[dpw.nRemoved]  = color_of(Piece(m->capturedPiece));
+        dpw.nRemoved++;
+    }
+}
+
+// Apply SfMove m to pos (incremental), filling dp (DirtyPiece) + dts (DirtyThreats)
+// + dpw (DirtyPawns, TRANN1). Mirrors Position::do_move's board mutation +
+// DirtyPiece construction, driven by the already-decomposed SfMove (engine
+// king-destination castling encoding).
+inline void
+apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts, DirtyPawns& dpw) {
     const Piece  pc   = Piece(m->movedPiece);
     const Square from = Square(m->from);
     const Square to   = Square(m->to);
+
+    fill_dirty_pawns(pos, m, dpw);  // PRIMA della mutazione (snapshot BEFORE)
 
     dp.pc        = pc;
     dp.from      = from;
@@ -350,7 +390,8 @@ inline void nn_catch_up(SfPos* p) {
         int i = p->appliedPly;
         if (p->pushedAcc[i]) {
             auto dirties = p->accStack->push();
-            apply_move(p->pos, &p->mvStack[i], dirties.first, dirties.second);
+            apply_move(p->pos, &p->mvStack[i], std::get<0>(dirties), std::get<1>(dirties),
+                       std::get<2>(dirties));
         }
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
         ++p->appliedPly;
@@ -393,8 +434,8 @@ void nn_pos_do(void* handle, const struct SfMove* m) {
     // it later, only if an eval is actually reached). Eager fallback (g_lazy_mirror
     // off) applies immediately, same as pre-N1, keeping appliedPly in lockstep.
     if (g_incremental && !g_lazy_mirror) {
-        auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&}
-        apply_move(p->pos, m, dirties.first, dirties.second);
+        auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&, DirtyPawns&}
+        apply_move(p->pos, m, std::get<0>(dirties), std::get<1>(dirties), std::get<2>(dirties));
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
         p->appliedPly = p->ply + 1;
     }
