@@ -1,7 +1,7 @@
-# =============================================================================
-#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 5.1 SFNNv13.
+﻿# =============================================================================
+#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 6.0 TRANN1 (SFNNv13 + PawnPair).
 #  Adattato da build_pgo_clang_5.ps1 (che era BULLET) al motore v13: la rete e'
-#  la nostra own-lineage nn-rubicon-alea-v1.nnue (SFNNv13, caricata a runtime
+#  la nostra own-lineage nn-rubicon-alea-v2.nnue (SFNNv13, caricata a runtime
 #  ACCANTO all'exe). Niente bullet -> niente PGO_BULLET_NET.
 #
 #  4 fasi:  1) STRUMENTA (clang-cl + ThinLTO + -fprofile-generate)
@@ -15,7 +15,7 @@
 #  Allena/misura a laptop SCARICO. Toolset: VS LLVM clang + llvm-profdata.
 # =============================================================================
 param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
-      [string]$Name = "Triumviratus_5.1",
+      [string]$Name = "Triumviratus_6.0",
       [ValidateSet("both","avx512","avx2")][string]$Arch = "avx512",
       [switch]$Release)
 $ErrorActionPreference = "Stop"
@@ -23,13 +23,13 @@ $ErrorActionPreference = "Stop"
 $reldef = if ($Release) { " -DTRIUMV_RELEASE" } else { "" }
 
 $root    = $PSScriptRoot
-$proj    = "$root\Triumviratus_5\Triumviratus_5.0.vcxproj"
-if (-not (Test-Path $proj)) { throw "vcxproj 5.0 non trovato: $proj" }
+$proj    = "$root\Triumviratus_6\Triumviratus_5.0.vcxproj"
+if (-not (Test-Path $proj)) { throw "vcxproj 6.0 non trovato: $proj" }
 $projDir = Split-Path $proj
 $outDir  = "$projDir\x64\Release"
-$exe     = "$outDir\Triumviratus_5.0.exe"
-$net5    = "nn-rubicon-alea-v1.nnue"                     # rete own-lineage (runtime, accanto all'exe)
-$net5src = "$projDir\nnue\nn-rubicon-alea-v1.nnue"       # sorgente
+$exe     = "$outDir\Triumviratus_6.0.exe"
+$net5    = "nn-rubicon-alea-v2.nnue"                     # rete own-lineage (runtime, accanto all'exe)
+$net5src = "$outDir\nn-rubicon-alea-v2.nnue"             # gia accanto all exe (zerograft finche la v2 non e allenata)
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsRoot  = if (Test-Path $vswhere) { (& $vswhere -latest -property installationPath) } else { "" }
@@ -65,8 +65,8 @@ $common = @("-p:Configuration=Release","-p:Platform=x64","-p:PlatformToolset=Cla
 
 function Build-Variant([string]$tag) {
     $suffix = "_$tag"
-    $merged = "$profDir\clang5v13_$tag.profdata"
-    Write-Host "`n########  VARIANTE 5.0 v13 $tag  ->  $Name$suffix.exe  ########" -ForegroundColor Magenta
+    $merged = "$profDir\clang6trann1_$tag.profdata"
+    Write-Host "`n########  VARIANTE 6.0 TRANN1 $tag  ->  $Name$suffix.exe  ########" -ForegroundColor Magenta
 
     # N-3 (2026-07-05): -mtune was missing -> clang scheduled for generic x86-64.
     # PGO is already machine-specific (profiled on THIS box), so tune=native is
@@ -136,5 +136,5 @@ function Build-Variant([string]$tag) {
 $variants = switch ($Arch) { "both" { @("avx512","avx2") } default { @($Arch) } }
 foreach ($v in $variants) { Build-Variant $v }
 
-Write-Host "`n==== 5.0 v13 PGO PRONTA ====" -ForegroundColor Cyan
+Write-Host "`n==== 6.0 TRANN1 PGO PRONTA ====" -ForegroundColor Cyan
 foreach ($v in $variants) { Write-Host "  $outDir\$Name`_$v.exe  (+ $net5 accanto)" }

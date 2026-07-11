@@ -193,7 +193,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <TargetName>Triumviratus_5.0</TargetName>
+    <TargetName>Triumviratus_6.0</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleasePGI|x64'">
     <TargetName>Triumviratus_pgo</TargetName>
