@@ -105,6 +105,10 @@ struct ThreadData {
     // deepest searched node).
     int pv_length[max_ply + 8];
     int pv_table[max_ply + 8][max_ply + 8];
+    // Q-15 FollowPV: PV della root dell'iterazione PRECEDENTE (mosse per ply). Un nodo
+    // "segue la PV" se il cammino root->nodo coincide con prev_pv[0..ply-1].
+    int prev_pv[max_ply + 8];
+    int prev_pv_len;
 
     // Static eval at each ply, for the "improving" heuristic: compare this
     // node's static eval to our own eval two plies ago (our previous turn).

@@ -109,6 +109,7 @@ extern bool g_tt_twolevel;
 // di nuovo). Definita in threads.cpp.
 extern bool g_ttmove24;
 extern bool g_tt_move_keep;   // TTMoveKeep: conserva la TT move sui fail-low senza mossa (SF)
+extern bool g_tt_secondary_age;   // TTSecondaryAge (R-01): decisive non-EXACT depth>=5 invecchiano piu' in fretta nel replacement
 
 // P1.10a (UCI "TTAgeRefresh", default ON) — un probe-hit rinfresca l'age
 // dell'entry: le posizioni CALDE ma scritte in search vecchie non vengono piu'
@@ -211,7 +212,16 @@ inline tt_entry* tt_victim(U64 key) {
         tt_entry* e = &hash_table[base + i];
         if (e->key == 0 && e->data == 0) return e;            // empty: take it
         int rel_age = (current_age - unpack_age(e->data)) & 0x1F;
-        int val = unpack_depth(e->data) - 2 * rel_age;
+        int depth = unpack_depth(e->data);
+        // R-01 (SF 94beadff): score DECISIVO (matto), flag non-EXACT, depth>=5 ->
+        // penalizza il ranking di rimpiazzo (invecchia piu' in fretta), cosi' la TT
+        // non resta satura di score di matto stantii. 30000 = mate_score (search.h,
+        // non incluso qui per evitare dipendenze circolari).
+        if (g_tt_secondary_age && depth >= 5 && unpack_flag(e->data) != hash_flag_exact) {
+            int sc = unpack_score(e->data);
+            if (sc > 30000 || sc < -30000) depth -= 8;
+        }
+        int val = depth - 2 * rel_age;
         if (val < best_val) { best_val = val; best = e; }
     }
     return best;

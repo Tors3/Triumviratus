@@ -5,6 +5,19 @@
 #include "defs.h"
 #include "movegen.h"
 
+// FIX Linux/GCC (2026-07-12): <cmath> DEVE essere incluso PRIMA della macro
+// `infinity` sotto. Su libstdc++ (Debian/Ubuntu g++), <cmath> include a
+// cascata i template TR1 (bessel/ellittiche/zeta) che usano testualmente
+// `std::numeric_limits<_Tp>::infinity()` — il preprocessore sostituisce
+// alla cieca QUALSIASI occorrenza del token "infinity", anche dentro gli
+// header di sistema, corrompendo quelle chiamate se <cmath> viene
+// (ri-)incluso DOPO la nostra macro. Pre-includerlo qui sfrutta gli
+// include-guard di <cmath>: le inclusioni successive (es. threads.cpp)
+// diventano no-op e non rivedono mai piu' il token grezzo. MSVC non ha
+// questo problema (niente header TR1 libstdc++), quindi la build Windows
+// non lo mostra — ma il fix e' innocuo e a costo zero anche li'.
+#include <cmath>
+
 // Score bounds for mating scores.
 // NOTE: these MUST stay within the signed 16-bit range, because the
 // transposition table packs the score into 16 bits (see tt.h). With the old

@@ -533,6 +533,8 @@ void uci_loop()
             printf("option name PostLMRHist type check default false\n");                     // conthist update post re-search LMR (SF mainline); test pulito neutro -> OFF, candidato tuning
             printf("option name PostLMRHistScale type spin default 100 min 0 max 400\n");
             printf("option name TTCutRefine type check default true\n");                      // [BAKE 2026-07-03] cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty gate
+            printf("option name TTResearch type check default false\n");                      // Q-14 (Ethereal): fail-low anticipato a depth-1 su entry UPPER
+            printf("option name TTResearchMargin type spin default 79 min 0 max 400\n");      // Q-14: margine (scala-56) sotto alpha per il fail-low a depth-1
             printf("option name TTCutFifty type spin default 87 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
@@ -561,7 +563,15 @@ void uci_loop()
             printf("option name HistReductionDiv type spin default 3357 min 500 max 8000\n"); // bakato: 3500->1041
             printf("option name AspInitDelta type spin default 19 min 8 max 60\n");       // bakato: 25->31
             printf("option name AspGrow type spin default 34 min 30 max 200\n");          // bakato: 100->31
+            printf("option name AspScoreMult type spin default 0 min 0 max 2000\n");       // Q-28 (Stormphrax): finestra asp += |avgSq(score)|*mult>>20. 0=OFF
+            printf("option name CMHCScale type spin default 0 min 0 max 200\n");           // Q-12 (SF #6653): bonus conthist *= (100 + scale*consistenza)/100. 0=OFF
+            printf("option name FollowPV type check default false\n");                     // Q-15 (SF #6656): niente IIR/futility/LMP sui nodi che riseguono la PV precedente
+            printf("option name RFPBadNode type spin default 0 min 0 max 200\n");          // Q-20a (Alexandria): rfp_margin -= questo se !tt_move. 0=OFF
+            printf("option name FutSpareQuiet type check default false\n");                // Q-20c (Caissa): la futility non pota mai la prima quiet del nodo
+            printf("option name QSDeltaBestCase type check default false\n");              // Q-20d (Ethereal): delta-pruning qsearch col best-case reale (vittima max + promo)
+            printf("option name QSBCMargin type spin default 200 min 0 max 800\n");        // Q-20d: cuscino sopra il best-case
             printf("option name ProbCutMargin type spin default 301 min 60 max 400\n");
+            printf("option name ProbCutImprove type spin default 0 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
             printf("option name CorrCap type spin default 48 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 293 min 64 max 2048\n");
             printf("option name ContHistDiv type spin default 3635 min 1000 max 12000\n");
@@ -648,6 +658,7 @@ void uci_loop()
             printf("option name RootMateRestore type check default true\n");                  // Q-29 (Reckless): non regredire a root su un matto gia' provato  [BAKATA 2026-07-10]
             printf("option name LMRDecisiveBeta type check default true\n");                  // Q-30 (Reckless): r+1 quando beta e' gia' decisivo (matefinding)  [BAKATA]
             printf("option name TTDecisiveClamp type check default true\n");                  // Q-32 (Stormphrax): declassa score decisivi fuori orizzonte-50mr alla probe TT  [BAKATA]
+            printf("option name TTSecondaryAge type check default false\n");                  // R-01 (SF 94beadff): decisive non-EXACT depth>=5 invecchiano piu' in fretta nel ranking di rimpiazzo
             printf("option name SEEStalemateGuard type check default true\n");                // S-11 (SF): non SEE-potare il sacrificio dell'ultimo pezzo con alpha<0  [BAKATA]
             printf("option name TBScoreTT type check default true\n");                        // S-10 (SF): scrivi il risultato TB in TT a depth+6 (niente ri-probe)  [BAKATA]
             printf("option name ProbCutImproving type check default true\n");                // Q-10 (Reckless+SF convergenti): verifica ProbCut a depth-1 quando improving
@@ -663,6 +674,7 @@ void uci_loop()
             printf("option name LMRFPly type spin default 575 min 0 max 2048\n");                // Q-19a (Caissa 1024): LMRFine, riduci meno vicino alla radice (0=off)
             printf("option name LMRFKiller type spin default 741 min 0 max 4000\n");             // Q-19b (Caissa): LMRFine, killer/counter ridotte molto meno (0=off)
             printf("option name RecaptureExt type check default false\n");                    // Q-16 (Caissa): +1 ply alla ttMove ricattura ai nodi PV
+            printf("option name RecaptureTension type spin default 75 min 0 max 800\n");      // filtro tensione: estende solo se |SEE(ricattura)| <= questo (cp)
             // ---- TM v2 (quarto audit Q-01..Q-08), tutto default-OFF ----
             printf("option name TMv2 type check default true\n");                            // Q-01 master: composizione moltiplicativa stateless (sostituisce instab+drop+NodeTM quando ON)
             printf("option name TMv2Stab0 type spin default 232 min 100 max 400\n");          // Q-02 (Alexandria 2.38): fattore con best APPENA cambiata
