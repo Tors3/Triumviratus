@@ -517,57 +517,67 @@ int g_tm_stab_floor  = 55;   // % minima della durata (mai ridurre sotto questo)
 // niente accumulo -> niente drift, e ogni fattore e' bidirezionale (su posizioni
 // calme si spende <1.0x, il risparmio si ricicla sulle mosse difficili). Il vecchio
 // path resta intatto per A/B (TMv2=false).
-static bool g_tmv2 = false;
+static bool g_tmv2 = true;
 // Q-02 stabilita' bestmove extend-AND-reduce in una tabella 5 punti (Alexandria
 // {2.38,1.29,1.07,0.91,0.71}): indice = iterazioni consecutive con best invariata
 // (cap 4). Sostituisce l'estensione binaria +59% (che era extend-only).
-int g_tmv2_stab[5] = { 238, 129, 107, 91, 71 };   // %
+int g_tmv2_stab[5] = { 232, 172, 82, 112, 56 };   // %
 // Q-03 trend-eval bidirezionale (bucket Alexandria): counter di iterazioni con
 // score entro +-window dalla media mobile avg_score (F-018.5a), cap 4 ->
 // {1.25,1.15,1.03,0.92,0.87}: eval ferma = confidenza = risparmia; eval che salta
 // (in ENTRAMBE le direzioni, non solo drop) = piu' tempo.
-int g_tmv2_eval[5] = { 125, 115, 103, 92, 87 };   // %
+int g_tmv2_eval[5] = { 139, 119, 101, 93, 88 };   // %
 int g_tmv2_eval_window = 10;
 // Q-04 NodeTM bidirezionale: (base/100 - frac) * mult/100, clamp [min,max]/100
 // (Alexandria 1.52/1.74 -> best che assorbe pochi nodi = alternative vive = fino a
 // ~2.5x; best che domina = riduzione come il NodeTM classico).
-int g_tmv2_node_base = 152;
-int g_tmv2_node_mult = 174;
-int g_tmv2_node_min  = 50;    // clamp inferiore %
-int g_tmv2_node_max  = 250;   // clamp superiore % (il ramo di ESTENSIONE che ci manca)
+int g_tmv2_node_base = 155;
+int g_tmv2_node_mult = 130;
+int g_tmv2_node_min  = 36;    // clamp inferiore %
+int g_tmv2_node_max  = 263;   // clamp superiore % (il ramo di ESTENSIONE che ci manca)
 // Q-05 allocazione (parse_go, uci_mt.cpp): curva moves-left Caissa (mtg stimato
 // cala col progredire della partita: anti overspend-apertura) + pool-increments
 // Alexandria (l'inc entra nel montante diviso per mtg, NON come addendo fisso ->
 // elimina alla radice la classe di bug F-012).
-bool g_tmv2_alloc = false;
+bool g_tmv2_alloc = true;
 int g_tmv2_mtg_base  = 35;    // moves-left stimate a inizio partita
-int g_tmv2_mtg_slope = 43;    // mtg -= slope*fullmove/100 (~35 a mossa 1 -> ~18 a mossa 40)
-int g_tmv2_mtg_min   = 18;
-int g_tmv2_opt_pct   = 100;   // optimum = pool/mtg * questo/100
+int g_tmv2_mtg_slope = 67;    // mtg -= slope*fullmove/100 (~35 a mossa 1 -> ~18 a mossa 40)
+int g_tmv2_mtg_min   = 14;
+int g_tmv2_opt_pct   = 124;   // optimum = pool/mtg * questo/100
 // Q-06 predicted-move cross-move (Caissa): a fine search salva l'hash della
 // posizione ATTESA dopo pv[0]+pv[1]; al go successivo, avversario ha giocato la
 // risposta predetta -> TT calda -> 0.915x, sorpresa -> 1.132x. Azzerato su ucinewgame.
-bool g_tmv2_pred = false;
-int g_tmv2_pred_hit  = 915;    // per-mille
-int g_tmv2_pred_miss = 1132;   // per-mille
+bool g_tmv2_pred = true;
+int g_tmv2_pred_hit  = 945;    // per-mille
+int g_tmv2_pred_miss = 1157;   // per-mille
 U64 g_tm_pred_hash = 0;
 // Q-07 root-singularity stop (Caissa, search-based — NON il PolicyEasyMove bocciato):
 // dopo timefrac% dell'optimum, a fine iterazione (depth>=9, |score|<scorecap),
 // verifica dalla radice a depth/2 con la best ESCLUSA su finestra nulla a
 // score - max(marginMin, marginBase - marginSlope*(depth-9)): se nessuna
 // alternativa raggiunge la soglia la mossa e' "singolare" -> stop immediato.
-static bool g_tmv2_rsing = false;
-int g_tmv2_rs_margin_base  = 407;
-int g_tmv2_rs_margin_min   = 204;
-int g_tmv2_rs_margin_slope = 24;
-int g_tmv2_rs_timefrac     = 20;
-int g_tmv2_rs_scorecap     = 1000;
+static bool g_tmv2_rsing = true;
+int g_tmv2_rs_margin_base  = 405;
+int g_tmv2_rs_margin_min   = 225;
+int g_tmv2_rs_margin_slope = 27;
+int g_tmv2_rs_timefrac     = 10;
+int g_tmv2_rs_scorecap     = 2627;
 // Q-08: single-reply (unica mossa legale a root -> basta la prima iterazione
 // completata, Caissa) + mate-stop (score di matto per N iterazioni consecutive ->
 // stop, robusto ai matti instabili; SF ha PERSO partite CCC in attesa di questo fix).
-static bool g_tmv2_single_reply = false;
-static bool g_tmv2_mate_stop = false;
+static bool g_tmv2_single_reply = true;
+static bool g_tmv2_mate_stop = true;
 int g_tmv2_mate_iters = 7;
+
+// ---- Gate per-TC del blocco TMv2 (2026-07-12) -----------------------------------
+// Misure decisive: TMv2 = -22.94 Elo @10+0.1 ma +23.81 @20+0.2 (segno opposto).
+// Sotto soglia (o senza incremento) l'intero blocco TMv2 RIPIEGA sul TM originale
+// (instab/drop/NodeTM). La base-time della PARTITA e' catturata al primo 'go' con
+// orologio (reset su ucinewgame): gate per-partita, NON sul tempo residuo (che
+// flipperebbe a meta' partita e divergerebbe dal regime di tuning 15+0.15).
+bool g_tmv2_tc_ok        = true;   // ricalcolato ogni parse_go (in uci_mt.cpp)
+int  g_tmv2_min_base_ms  = 15000;  // soglia base-time (UCI TMv2MinBaseMs)
+int  g_tmv2_game_base_ms = -1;     // base-time catturata (-1 = non ancora vista)
 
 // ---- Quarto audit, correttezza §D — BAKATI default-ON 2026-07-10 ----------------
 // Giustificati su CORRETTEZZA (lettura + matetrack spot-check + non-regressione), NON su
@@ -1101,6 +1111,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMStabFloor"))         { g_tm_stab_floor = value < 10 ? 10 : (value > 100 ? 100 : value); return true; }
     // ---- TM v2 (quarto audit Q-01..Q-08) ----
     if (!strcmp(name, "TMv2"))                { g_tmv2 = value != 0; return true; }
+    if (!strcmp(name, "TMv2MinBaseMs"))       { g_tmv2_min_base_ms = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "TMv2Stab0"))           { g_tmv2_stab[0] = value < 10 ? 10 : value; return true; }
     if (!strcmp(name, "TMv2Stab1"))           { g_tmv2_stab[1] = value < 10 ? 10 : value; return true; }
     if (!strcmp(name, "TMv2Stab2"))           { g_tmv2_stab[2] = value < 10 ? 10 : value; return true; }
@@ -4743,7 +4754,7 @@ static void thread_search(int thread_id, int max_depth) {
     // TM v2 Q-08a (Caissa): conta le mosse legali a root (si ferma a 2). Con una
     // sola risposta legale pensare e' inutile: basta la prima iterazione completata.
     // Stesso protocollo make/unmake del rescue anti-forfeit (ply + repetition stack).
-    if (g_tmv2_single_reply && thread_id == 0 && timeset) {
+    if (g_tmv2_single_reply && g_tmv2_tc_ok && thread_id == 0 && timeset) {
         moves ml[1];
         td_generate_moves(td, ml, false);
         int legal = 0;
@@ -4899,14 +4910,14 @@ static void thread_search(int thread_id, int max_depth) {
 
             // TM v2 Q-03: counter di stabilita' dell'EVAL (bidirezionale: misura se lo
             // score resta fermo attorno alla media mobile, non solo se cala).
-            if (g_tmv2 && current_depth > start_depth && avg_score != infinity) {
+            if (g_tmv2 && g_tmv2_tc_ok && current_depth > start_depth && avg_score != infinity) {
                 int ediff = score - avg_score;
                 if (ediff < 0) ediff = -ediff;
                 if (ediff <= g_tmv2_eval_window) { if (eval_stab_iters < 4) eval_stab_iters++; }
                 else eval_stab_iters = 0;
             }
 
-            if (g_tmv2) {
+            if (g_tmv2 && g_tmv2_tc_ok) {
                 // ---- TM v2 (Q-01): composizione MOLTIPLICATIVA stateless ----
                 // Tutti i fattori ricalcolati freschi dalla durata BASE ogni iterazione
                 // (niente accumulo -> niente drift), ognuno bidirezionale.
@@ -4986,13 +4997,13 @@ static void thread_search(int thread_id, int max_depth) {
             // (b) mate-stop: score di matto per N iterazioni consecutive -> il matto
             //     e' confermato, il tempo extra non serve piu' (robusto ai matti
             //     instabili proprio perche' chiede N conferme, alla Caissa).
-            if (g_tmv2_mate_stop) {
+            if (g_tmv2_mate_stop && g_tmv2_tc_ok) {
                 int mabs = score < 0 ? -score : score;
                 if (mabs >= mate_score) mate_score_iters++;
                 else mate_score_iters = 0;
             }
             if ((root_single_reply && td.best_move)
-                || (g_tmv2_mate_stop && mate_score_iters >= g_tmv2_mate_iters)) {
+                || (g_tmv2_mate_stop && g_tmv2_tc_ok && mate_score_iters >= g_tmv2_mate_iters)) {
                 stop_threads.store(true, std::memory_order_relaxed);
                 break;
             }
@@ -5003,7 +5014,7 @@ static void thread_search(int thread_id, int max_depth) {
             // -> riusa il meccanismo excluded_move della singular extension; nessuno
             // store TT durante l'esclusione, quindi niente inquinamento). Un fail-high
             // della verifica sovrascriverebbe la PV root: salvata e ripristinata.
-            if (g_tmv2_rsing && td.best_move && current_depth >= 9) {
+            if (g_tmv2_rsing && g_tmv2_tc_ok && td.best_move && current_depth >= 9) {
                 int sabs = score < 0 ? -score : score;
                 int elapsed = get_time_ms() - starttime;
                 int opt_dur = soft_time_limit - starttime;
@@ -5216,7 +5227,7 @@ void search_position_mt(int depth) {
     // thread 0 solo se coincide con la mossa scelta (col voting puo' non esserlo).
     // Le mosse PV sono state fatte/disfatte in QUESTE posizioni durante la search,
     // quindi td_make_move puo' fidarsi dei bit codificati. Stato pulito su ucinewgame.
-    if (g_tmv2_pred) {
+    if (g_tmv2_pred && g_tmv2_tc_ok) {
         g_tm_pred_hash = 0;
         ThreadData& tdp = thread_data[0];
         if (best_move && tdp.pv_length[0] >= 2 && tdp.pv_table[0][0] == best_move) {

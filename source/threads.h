@@ -319,6 +319,9 @@ extern int  g_tmv2_mtg_base, g_tmv2_mtg_slope, g_tmv2_mtg_min, g_tmv2_opt_pct;
 extern bool g_tmv2_pred;
 extern int  g_tmv2_pred_hit, g_tmv2_pred_miss;
 extern U64  g_tm_pred_hash;   // hash della posizione prevista (0 = nessuna predizione)
+// Gate per-TC del blocco TMv2 (definiti in threads.cpp, settati in parse_go).
+extern bool g_tmv2_tc_ok;
+extern int  g_tmv2_min_base_ms, g_tmv2_game_base_ms;
 
 // "Improving" heuristic on/off (UCI option "Improving") — A/B the eval-trend
 // based pruning/reduction. Default on.

@@ -198,6 +198,14 @@ void parse_go(char* command)
 
     starttime = get_time_ms();
 
+    // Gate per-TC del blocco TMv2: cattura la base-time della PARTITA al primo 'go'
+    // con orologio (reset su ucinewgame) e decide se usare TMv2 o il TM originale.
+    // Per-partita (non sul residuo): il regime di tuning era 15+0.15, gatare sul
+    // residuo lo farebbe divergere a meta' partita. Sotto soglia o senza inc -> TM v1.
+    if (time_uci > 0 && movetime == -1 && g_tmv2_game_base_ms < 0)
+        g_tmv2_game_base_ms = time_uci;
+    g_tmv2_tc_ok = (inc > 0) && (g_tmv2_game_base_ms >= g_tmv2_min_base_ms);
+
     if (time_uci != -1)
     {
         timeset = 1;
@@ -216,7 +224,7 @@ void parse_go(char* command)
             int mtg;
             if (movestogo > 0) {
                 mtg = movestogo;
-            } else if (g_tmv2_alloc) {
+            } else if (g_tmv2_alloc && g_tmv2_tc_ok) {
                 // TM v2 Q-05a (Caissa): moves-left stimate CALANO col progredire della
                 // partita (~35 a mossa 1 -> min a mossa ~40): meno overspend in apertura,
                 // piu' tempo nel mediogioco avanzato. repetition_index conta le semimosse
@@ -228,7 +236,7 @@ void parse_go(char* command)
                 mtg = g_tm_movestogo;                       // assunzione moves-to-go (tunable)
             }
 
-            if (g_tmv2_alloc) {
+            if (g_tmv2_alloc && g_tmv2_tc_ok) {
                 // TM v2 Q-05b (Alexandria, pooled increments): l'incremento entra nel
                 // MONTANTE diviso per mtg invece che come addendo fisso per-mossa ->
                 // elimina alla radice la classe di bug F-012 (il termine 0.94*inc fisso
@@ -247,7 +255,7 @@ void parse_go(char* command)
             // TM v2 Q-06 (Caissa): l'avversario ha giocato la risposta PREDETTA dalla
             // nostra PV -> TT calda -> serve meno tempo (hit); mossa a sorpresa ->
             // TT fredda -> un po' di piu' (miss). Applicato PRIMA del cap anti-forfeit.
-            if (g_tmv2_pred && g_tm_pred_hash) {
+            if (g_tmv2_pred && g_tmv2_tc_ok && g_tm_pred_hash) {
                 int pf = (hash_key == g_tm_pred_hash) ? g_tmv2_pred_hit : g_tmv2_pred_miss;
                 optimum = (int)((long long)optimum * pf / 1000);
             }
@@ -656,39 +664,40 @@ void uci_loop()
             printf("option name LMRFKiller type spin default 741 min 0 max 4000\n");             // Q-19b (Caissa): LMRFine, killer/counter ridotte molto meno (0=off)
             printf("option name RecaptureExt type check default false\n");                    // Q-16 (Caissa): +1 ply alla ttMove ricattura ai nodi PV
             // ---- TM v2 (quarto audit Q-01..Q-08), tutto default-OFF ----
-            printf("option name TMv2 type check default false\n");                            // Q-01 master: composizione moltiplicativa stateless (sostituisce instab+drop+NodeTM quando ON)
-            printf("option name TMv2Stab0 type spin default 238 min 100 max 400\n");          // Q-02 (Alexandria 2.38): fattore con best APPENA cambiata
-            printf("option name TMv2Stab1 type spin default 129 min 50 max 300\n");           // Q-02: 1 iterazione stabile
-            printf("option name TMv2Stab2 type spin default 107 min 50 max 200\n");           // Q-02: 2 iterazioni stabili
-            printf("option name TMv2Stab3 type spin default 91 min 30 max 200\n");            // Q-02: 3 iterazioni stabili
-            printf("option name TMv2Stab4 type spin default 71 min 20 max 150\n");            // Q-02 (0.71): 4+ stabili -> si RISPARMIA (il ramo che ci mancava)
-            printf("option name TMv2Eval0 type spin default 125 min 80 max 250\n");           // Q-03 (Alexandria 1.25): eval instabile -> piu' tempo
-            printf("option name TMv2Eval1 type spin default 115 min 60 max 200\n");           // Q-03
-            printf("option name TMv2Eval2 type spin default 103 min 50 max 200\n");           // Q-03
-            printf("option name TMv2Eval3 type spin default 92 min 40 max 150\n");            // Q-03
-            printf("option name TMv2Eval4 type spin default 87 min 30 max 150\n");            // Q-03 (0.87): eval ferma da 4+ iterazioni -> risparmia
+            printf("option name TMv2 type check default true\n");                            // Q-01 master: composizione moltiplicativa stateless (sostituisce instab+drop+NodeTM quando ON)
+            printf("option name TMv2Stab0 type spin default 232 min 100 max 400\n");          // Q-02 (Alexandria 2.38): fattore con best APPENA cambiata
+            printf("option name TMv2Stab1 type spin default 172 min 50 max 300\n");           // Q-02: 1 iterazione stabile
+            printf("option name TMv2Stab2 type spin default 82 min 50 max 200\n");           // Q-02: 2 iterazioni stabili
+            printf("option name TMv2Stab3 type spin default 112 min 30 max 200\n");            // Q-02: 3 iterazioni stabili
+            printf("option name TMv2Stab4 type spin default 56 min 20 max 150\n");            // Q-02 (0.71): 4+ stabili -> si RISPARMIA (il ramo che ci mancava)
+            printf("option name TMv2Eval0 type spin default 139 min 80 max 250\n");           // Q-03 (Alexandria 1.25): eval instabile -> piu' tempo
+            printf("option name TMv2Eval1 type spin default 119 min 60 max 200\n");           // Q-03
+            printf("option name TMv2Eval2 type spin default 101 min 50 max 200\n");           // Q-03
+            printf("option name TMv2Eval3 type spin default 93 min 40 max 150\n");            // Q-03
+            printf("option name TMv2Eval4 type spin default 88 min 30 max 150\n");            // Q-03 (0.87): eval ferma da 4+ iterazioni -> risparmia
             printf("option name TMv2EvalWindow type spin default 10 min 1 max 100\n");        // Q-03: |score-avg| entro questo = "ferma"
-            printf("option name TMv2NodeBase type spin default 152 min 100 max 250\n");       // Q-04 (Alexandria 1.52): nodeFactor = (base/100 - frac)*mult/100
-            printf("option name TMv2NodeMult type spin default 174 min 50 max 400\n");        // Q-04 (Alexandria 1.74)
-            printf("option name TMv2NodeMin type spin default 50 min 10 max 100\n");          // Q-04: clamp inferiore %
-            printf("option name TMv2NodeMax type spin default 250 min 100 max 400\n");        // Q-04: clamp superiore % (ramo di ESTENSIONE)
-            printf("option name TMv2Alloc type check default false\n");                       // Q-05: allocazione pool-increments (Alexandria) + curva moves-left (Caissa)
+            printf("option name TMv2NodeBase type spin default 155 min 100 max 250\n");       // Q-04 (Alexandria 1.52): nodeFactor = (base/100 - frac)*mult/100
+            printf("option name TMv2NodeMult type spin default 130 min 50 max 400\n");        // Q-04 (Alexandria 1.74)
+            printf("option name TMv2NodeMin type spin default 36 min 10 max 100\n");          // Q-04: clamp inferiore %
+            printf("option name TMv2NodeMax type spin default 263 min 100 max 400\n");        // Q-04: clamp superiore % (ramo di ESTENSIONE)
+            printf("option name TMv2Alloc type check default true\n");                       // Q-05: allocazione pool-increments (Alexandria) + curva moves-left (Caissa)
             printf("option name TMv2MtgBase type spin default 35 min 10 max 80\n");           // Q-05a: moves-left stimate a inizio partita
-            printf("option name TMv2MtgSlope type spin default 43 min 0 max 200\n");          // Q-05a: mtg -= slope*fullmove/100
-            printf("option name TMv2MtgMin type spin default 18 min 2 max 40\n");             // Q-05a: pavimento moves-left
-            printf("option name TMv2OptPct type spin default 100 min 30 max 300\n");          // Q-05b: optimum = pool/mtg * questo/100
-            printf("option name TMv2Predicted type check default false\n");                   // Q-06 (Caissa): fattore cross-move sulla risposta predetta (pv[1])
-            printf("option name TMv2PredHit type spin default 915 min 500 max 1000\n");       // Q-06: per-mille su hit (TT calda)
-            printf("option name TMv2PredMiss type spin default 1132 min 1000 max 1500\n");    // Q-06: per-mille su miss (sorpresa)
-            printf("option name TMv2RootSingular type check default false\n");                // Q-07 (Caissa): stop se la best a root e' "singolare" (verifica excluded a depth/2)
-            printf("option name TMv2RSMarginBase type spin default 407 min 100 max 800\n");   // Q-07: margine base (cala con la depth)
-            printf("option name TMv2RSMarginMin type spin default 204 min 50 max 500\n");     // Q-07: margine minimo
-            printf("option name TMv2RSMarginSlope type spin default 24 min 0 max 100\n");     // Q-07: riduzione margine per ply oltre depth 9
-            printf("option name TMv2RSTimeFrac type spin default 20 min 0 max 100\n");        // Q-07: % dell'optimum prima che la verifica si attivi
-            printf("option name TMv2RSScoreCap type spin default 1000 min 100 max 20000\n");  // Q-07: |score| sotto cui la verifica ha senso
-            printf("option name TMv2SingleReply type check default false\n");                 // Q-08a (Caissa): unica legale a root -> stop alla prima iterazione completata
-            printf("option name TMv2MateStop type check default false\n");                    // Q-08b (Caissa): N iterazioni consecutive di score-matto -> stop
+            printf("option name TMv2MtgSlope type spin default 67 min 0 max 200\n");          // Q-05a: mtg -= slope*fullmove/100
+            printf("option name TMv2MtgMin type spin default 14 min 2 max 40\n");             // Q-05a: pavimento moves-left
+            printf("option name TMv2OptPct type spin default 124 min 30 max 300\n");          // Q-05b: optimum = pool/mtg * questo/100
+            printf("option name TMv2Predicted type check default true\n");                   // Q-06 (Caissa): fattore cross-move sulla risposta predetta (pv[1])
+            printf("option name TMv2PredHit type spin default 945 min 500 max 1000\n");       // Q-06: per-mille su hit (TT calda)
+            printf("option name TMv2PredMiss type spin default 1157 min 1000 max 1500\n");    // Q-06: per-mille su miss (sorpresa)
+            printf("option name TMv2RootSingular type check default true\n");                // Q-07 (Caissa): stop se la best a root e' "singolare" (verifica excluded a depth/2)
+            printf("option name TMv2RSMarginBase type spin default 405 min 100 max 800\n");   // Q-07: margine base (cala con la depth)
+            printf("option name TMv2RSMarginMin type spin default 225 min 50 max 500\n");     // Q-07: margine minimo
+            printf("option name TMv2RSMarginSlope type spin default 27 min 0 max 100\n");     // Q-07: riduzione margine per ply oltre depth 9
+            printf("option name TMv2RSTimeFrac type spin default 10 min 0 max 100\n");        // Q-07: % dell'optimum prima che la verifica si attivi
+            printf("option name TMv2RSScoreCap type spin default 2627 min 100 max 20000\n");  // Q-07: |score| sotto cui la verifica ha senso
+            printf("option name TMv2SingleReply type check default true\n");                 // Q-08a (Caissa): unica legale a root -> stop alla prima iterazione completata
+            printf("option name TMv2MateStop type check default true\n");                    // Q-08b (Caissa): N iterazioni consecutive di score-matto -> stop
             printf("option name TMv2MateIters type spin default 7 min 1 max 30\n");           // Q-08b: quante conferme del matto servono
+            printf("option name TMv2MinBaseMs type spin default 15000 min 0 max 600000\n");   // gate per-TC: base-time partita < questo (o inc==0) -> TM originale (TMv2 vale solo a TC medio-lungo)
 #endif
             // (SyzygyPath spostata in cima alla lista, subito dopo EvalFile — vedi sopra:
             //  evita il troncamento delle liste lunghe nelle GUI ChessBase/Fritz.)
@@ -836,6 +845,7 @@ void uci_loop()
             wait_for_search_done();
             parse_fen(start_position);
             clear_hash_table();
+            g_tmv2_game_base_ms = -1;   // nuova partita -> ricattura la base-time per il gate TMv2
             
             // FIX DEFINITIVO: Cancella il passato tra partite diverse
             for (int i = 0; i < num_threads; i++) {

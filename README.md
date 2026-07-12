@@ -32,7 +32,7 @@
 > [!NOTE]
 > Work in progress — not yet released or gated. 5.1 remains the current stable version.
 
-Two changes over 5.1:
+Three changes over 5.1:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
   feature set with a third input block of **pawn-pair features**, giving the network explicit awareness
@@ -41,17 +41,24 @@ Two changes over 5.1:
   to v1 at graft time — then fine-tuned into **`nn-rubicon-alea-v2`** (training in progress). Engine-side
   the block folds into the existing threat accumulator, so no new SIMD path is added.
 - **SPSA mega co-tune** of ~50 search parameters, baked into the compiled defaults.
+- **TMv2 time management** — a multiplicative-stateless time manager (stability, eval-trend, node and
+  predicted-move factors), SPSA-tuned. It is **time-control gated**: measured **+23.8 Elo at 20+0.2** but
+  **−22.9 at 10+0.1**, so it activates only when the game's base time ≥ 15 s and there's an increment
+  (`TMv2MinBaseMs`); below that it falls back to the original time manager. Captures the long-TC gain
+  without the short-TC regression.
 
 #### Incremental gains (vs 5.1 baseline)
 
-Each row is measured against the state *before* that change, at 10+0.1, 1 thread, 64 MB, UHO 2024
-book (`UHO_2024_8mvs_big_+080_+099.epd`), no score-based adjudication.
+Each row is measured against the state *before* that change (1 thread, 64 MB, UHO 2024 book
+`UHO_2024_8mvs_big_+080_+099.epd`, no score-based adjudication).
 
-| # | Change | Games | Elo | LOS |
-|---|---|---|---|---|
-| 1 | SPSA mega co-tune (50 params) | 1058 | **+15.8 ± 10.9** | 99.8% |
+| # | Change | TC | Games | Elo | LOS |
+|---|---|---|---|---|---|
+| 1 | SPSA mega co-tune (50 params) | 10+0.1 | 1058 | **+15.8 ± 10.9** | 99.8% |
+| 2 | TMv2 time management (gated ≥ 15 s) | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
 
-<sub>Cumulative running total will be gated against 5.1 at 20+0.2 once the v2 network lands.</sub>
+<sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
+manager below 15 s. Cumulative total will be gated against 5.1 at 20+0.2 once the v2 network lands.</sub>
 
 ## Triumviratus 5.1
 
