@@ -178,18 +178,6 @@ inline void new_search() {
     current_age = (current_age + 1) & 0x1F;   // age a 5 bit (vedi pack_tt_data)
 }
 
-// TT prefetch (toggle "TTPrefetch", default OFF). Ritestato 2026-07-13 (Reckless
-// #1085): il tentativo 2026-06-07 era NPS-neutral, ma da allora e' stato bakato
-// TTTwoLevel (bucket 2 slot) -> pattern di accesso diverso, vale ri-misurare.
-// Prefetch della PRIMA cacheline del bucket subito dopo il calcolo della chiave
-// figlia in td_make_move (post-legalita': la variante pre-legalita' era -2.5%).
-#if defined(_MSC_VER)
-    #include <intrin.h>
-    #define TT_PREFETCH(addr) _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0)
-#else
-    #define TT_PREFETCH(addr) __builtin_prefetch(addr)
-#endif
-
 // ---- Bucket addressing (1-way vs 4-way) ------------------------------------
 // Number of slots per bucket.
 inline int tt_ways() { return g_tt_twolevel ? 2 : (g_tt_4way ? 4 : 1); }
