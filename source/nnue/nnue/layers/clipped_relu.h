@@ -27,7 +27,7 @@
 
 #include "../nnue_common.h"
 
-namespace Stockfish::Eval::NNUE::Layers {
+namespace Triumviratus::Eval::NNUE::Layers {
 
 // Clipped ReLU
 template<IndexType InDims, int WeightScaleBitsLocal = WeightScaleBits>
@@ -159,6 +159,6 @@ class ClippedReLU {
     }
 };
 
-}  // namespace Stockfish::Eval::NNUE::Layers
+}  // namespace Triumviratus::Eval::NNUE::Layers
 
 #endif  // NNUE_LAYERS_CLIPPED_RELU_H_INCLUDED

@@ -24,7 +24,7 @@
 
 #include "types.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 class Position;
 

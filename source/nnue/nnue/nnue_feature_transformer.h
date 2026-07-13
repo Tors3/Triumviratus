@@ -34,7 +34,7 @@
 #include "nnue_common.h"
 #include "simd.h"
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 // Returns the inverse of a permutation
 template<usize Len>
@@ -423,12 +423,12 @@ class FeatureTransformer {
       std::array<PSQTWeightType, ThreatPlusPawnDimensions * PSQTBuckets> threatPsqtWeights;
 };
 
-}  // namespace Stockfish::Eval::NNUE
+}  // namespace Triumviratus::Eval::NNUE
 
 template<>
-struct std::hash<Stockfish::Eval::NNUE::FeatureTransformer> {
-    Stockfish::usize
-    operator()(const Stockfish::Eval::NNUE::FeatureTransformer& ft) const noexcept {
+struct std::hash<Triumviratus::Eval::NNUE::FeatureTransformer> {
+    Triumviratus::usize
+    operator()(const Triumviratus::Eval::NNUE::FeatureTransformer& ft) const noexcept {
         return ft.get_content_hash();
     }
 };

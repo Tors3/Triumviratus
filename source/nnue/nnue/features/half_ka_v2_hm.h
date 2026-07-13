@@ -25,7 +25,7 @@
 #include "../../types.h"
 #include "../nnue_common.h"
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 // Feature HalfKAv2_hm: Combination of the position of own king and the
 // position of pieces. Position mirrored such that king is always on e..h files.
@@ -122,6 +122,6 @@ class HalfKAv2_hm {
     static bool requires_refresh(const DiffType& diff, Color perspective);
 };
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features
 
 #endif  // #ifndef NNUE_FEATURES_HALF_KA_V2_HM_H_INCLUDED

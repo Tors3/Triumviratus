@@ -162,6 +162,17 @@ inline void clear_hash_table() {
     current_age = 0;
 }
 
+// hashfull (UCI info): permille di slot occupati, stimato campionando i primi
+// 1000 (convenzione SF). data!=0 = entry scritta (uno store setta sempre data).
+inline int hashfull() {
+    U64 n = hash_entries < 1000 ? hash_entries : 1000;
+    if (n == 0) return 0;
+    int used = 0;
+    for (U64 i = 0; i < n; i++)
+        if (hash_table[i].data != 0) used++;
+    return (int)((U64)used * 1000 / n);
+}
+
 // Increment age (call at start of each search)
 inline void new_search() {
     current_age = (current_age + 1) & 0x1F;   // age a 5 bit (vedi pack_tt_data)

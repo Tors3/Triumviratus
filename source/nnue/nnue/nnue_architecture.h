@@ -35,7 +35,7 @@
 #include "nnue_common.h"
 #include "nnz_helper.h"
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 // Input features used in evaluation function.
 // TRANN1 (Triumviratus Rubicon Alea NNUE 1): architettura derivata da
@@ -190,12 +190,12 @@ struct NetworkArchitecture {
     }
 };
 
-}  // namespace Stockfish::Eval::NNUE
+}  // namespace Triumviratus::Eval::NNUE
 
 template<>
-struct std::hash<Stockfish::Eval::NNUE::NetworkArchitecture> {
-    Stockfish::usize
-    operator()(const Stockfish::Eval::NNUE::NetworkArchitecture& arch) const noexcept {
+struct std::hash<Triumviratus::Eval::NNUE::NetworkArchitecture> {
+    Triumviratus::usize
+    operator()(const Triumviratus::Eval::NNUE::NetworkArchitecture& arch) const noexcept {
         return arch.get_content_hash();
     }
 };

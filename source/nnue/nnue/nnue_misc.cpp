@@ -34,7 +34,7 @@
 #include "network.h"
 #include "nnue_accumulator.h"
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 
 namespace {
@@ -96,4 +96,4 @@ trace(Position& pos, const Eval::NNUE::Network& network, Eval::NNUE::Accumulator
 }
 
 
-}  // namespace Stockfish::Eval::NNUE
+}  // namespace Triumviratus::Eval::NNUE

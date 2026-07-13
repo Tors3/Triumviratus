@@ -30,7 +30,7 @@
 #include "nnue_feature_transformer.h"  // IWYU pragma: keep
 #include "simd.h"
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 using namespace SIMD;
 

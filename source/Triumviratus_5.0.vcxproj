@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -249,7 +249,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV_EMBED_RESOURCE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
@@ -272,7 +272,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV_EMBED_RESOURCE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
@@ -296,7 +296,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;TRIUMV_EMBED_RESOURCE;TRIUMV5_THREATS_INCR;USE_PEXT;USE_VNNI;USE_AVX512;USE_AVX512ICL;USE_AVX2;USE_SSE41;USE_SSSE3;USE_SSE2;USE_SSE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
@@ -331,6 +331,8 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
 
 
 

@@ -143,6 +143,7 @@ void reset_time_control()
     timeset = 0;
     stopped = 0;
     g_node_limit = 0;
+    g_mate_in = 0;
 }
 
 // parse UCI command "go"
@@ -180,6 +181,34 @@ void parse_go(char* command)
     // (per-node check in (q)search); independent of depth/time.
     if ((argument = strstr(command, "nodes")))
         g_node_limit = (U64) strtoull(argument + 6, nullptr, 10);
+
+    // "go mate N": cerca un matto forzato in <= N mosse e fermati quando e' confermato.
+    // " mate " con gli spazi: nessuna collisione con altri token del comando go.
+    if ((argument = strstr(command, " mate ")))
+        g_mate_in = atoi(argument + 6);
+
+    // "go searchmoves m1 m2 ...": restringe la root alle sole mosse elencate (analisi).
+    // I token-mossa seguono fino al primo token che NON e' una mossa legale (= la
+    // prossima keyword UCI, es. "depth"/"infinite"). parse_move ritorna 0 su token
+    // non-mossa -> stop pulito. Azzerato a ogni 'go' (nessuna keyword = cerca tutte).
+    g_searchmoves_count = 0;
+    if ((argument = strstr(command, "searchmoves")))
+    {
+        char* p = argument + 11;   // oltre "searchmoves"
+        while (*p == ' ') p++;
+        while (*p && g_searchmoves_count < 256)
+        {
+            char tok[8];
+            int n = 0;
+            while (p[n] && p[n] != ' ' && n < 7) { tok[n] = p[n]; n++; }
+            tok[n] = '\0';
+            int mv = parse_move(tok);
+            if (!mv) break;         // token non-mossa -> fine lista searchmoves
+            g_searchmoves[g_searchmoves_count++] = mv;
+            p += n;
+            while (*p == ' ') p++;
+        }
+    }
 
     // UCI option "Depth" > 0 forces a fixed-depth search (clock ignored), unless
     // the GUI sent an explicit "go depth N" (which takes precedence).
@@ -382,6 +411,14 @@ void uci_loop()
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
+            // MultiPV (analisi stile Stockfish): opzione UFFICIALE, sempre advertised
+            // (anche in TRIUMV_RELEASE). Il setoption arriva via il generic handler
+            // -> set_search_param("MultiPV") in threads.cpp.
+            printf("option name MultiPV type spin default 1 min 1 max 64\n");
+            // Opzioni ufficiali di analisi/utilizzo (sempre visibili, anche in release):
+            printf("option name UCI_ShowWDL type check default false\n");  // W/D/L nelle info-line (via generic handler)
+            printf("option name Clear Hash type button\n");                // svuota la TT su richiesta
+            printf("option name UCI_EngineAbout type string default %s %s by %s\n", NAME, VERSION, AUTHOR);
             // --- Tuning / experimental / diagnostic options: hidden in the release build
             //     (define TRIUMV_RELEASE). Dev/tuning builds expose them for SPSA. ---
 #ifndef TRIUMV_RELEASE
@@ -646,6 +683,8 @@ void uci_loop()
             printf("option name SEELmrDepth type check default false\n");            // S-05: gate/margine SEE su prune_depth (LMR-ridotta) invece che su depth piena
             printf("option name SEELmrQuietMargin type spin default 185 min 0 max 600\n"); // margine quadratico dedicato al percorso SEELmrDepth (disaccoppiato da SEEQuietMargin), SPSA-tunabile
             printf("option name SEELmrPruneCap type spin default 32 min 2 max 40\n");      // cap su prune_depth per il percorso SEELmrDepth (32=praticamente illimitato); abbassare = meno reach ma meno chiamate SEE
+            printf("option name SEELmrLinear type check default false\n");                  // S-05 forma lineare: margine -coef*prune_depth invece di -coef*prune_depth^2 (attiva il path da solo)
+            printf("option name SEELmrLinearCoef type spin default 350 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
             printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
             printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614
@@ -926,6 +965,16 @@ void uci_loop()
             break;
         }
 
+        // UCI button: "setoption name Clear Hash" (nessun value) -> svuota la TT.
+        // Ferma i thread prima (come Hash/EvalFile): azzerare sotto una ricerca la
+        // corromperebbe. Prefisso distinto da "...name Hash value" -> nessuna collisione.
+        else if (strncmp(input, "setoption name Clear Hash", 25) == 0)
+        {
+            stop_search_threads();
+            wait_for_search_done();
+            clear_hash_table();
+        }
+
         // UCI command: "setoption name Hash value X"
         else if (strncmp(input, "setoption name Hash value ", 26) == 0)
         {
@@ -939,7 +988,7 @@ void uci_loop()
         }
 
         // UCI command: "setoption name EvalFile value <path>" -> reload the SFNNv13
-        // network at runtime. Default at startup is nn-rubicon-alea-v1.nnue (own-lineage).
+        // network at runtime. Default at startup is nn-rubicon-alea-v2.nnue (own-lineage).
         else if (strncmp(input, "setoption name EvalFile value ", 30) == 0)
         {
             // Swapping the net under a running search would read half-loaded

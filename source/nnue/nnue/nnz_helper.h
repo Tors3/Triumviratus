@@ -24,7 +24,7 @@
 #include "nnue_common.h"
 #include "simd.h"
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 template<usize Dimensions>
 struct NNZInfo {
@@ -162,6 +162,6 @@ struct NNZInfo {
     NNZCursor make_cursor(bool perspective) { return {*this, perspective}; }
 #endif
 };
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif

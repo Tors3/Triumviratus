@@ -23,11 +23,11 @@
 #include "../../types.h"
 #include "../nnue_common.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 class Position;
 }
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 static constexpr int numValidTargets[PIECE_NB] = {0, 6, 10, 8, 8, 10, 0, 0,
                                                   0, 6, 10, 8, 8, 10, 0, 0};
@@ -86,6 +86,6 @@ class FullThreats {
                                        IndexType               prefetchStride = 0);
 };
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features
 
 #endif  // #ifndef NNUE_FEATURES_FULL_THREATS_INCLUDED

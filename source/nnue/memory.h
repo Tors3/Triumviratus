@@ -60,7 +60,7 @@ using AdjustTokenPrivileges_t =
 #endif
 
 
-namespace Stockfish {
+namespace Triumviratus {
 
 constexpr usize HugePageSize = usize(1) << 30;
 
@@ -332,6 +332,6 @@ T load_as(const ByteT* buffer) {
     return value;
 }
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef MEMORY_H_INCLUDED

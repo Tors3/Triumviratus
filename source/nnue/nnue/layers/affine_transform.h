@@ -38,7 +38,7 @@
     - accumulation happens directly to int32s
 */
 
-namespace Stockfish::Eval::NNUE::Layers {
+namespace Triumviratus::Eval::NNUE::Layers {
 
 #if defined(USE_SSSE3) || defined(USE_NEON_DOTPROD) || defined(USE_LSX) || defined(USE_LASX)
     #define ENABLE_SEQ_OPT
@@ -355,6 +355,6 @@ class AffineTransform {
     alignas(CacheLineSize) WeightType weights[OutputDimensions * PaddedInputDimensions];
 };
 
-}  // namespace Stockfish::Eval::NNUE::Layers
+}  // namespace Triumviratus::Eval::NNUE::Layers
 
 #endif  // #ifndef NNUE_LAYERS_AFFINE_TRANSFORM_H_INCLUDED

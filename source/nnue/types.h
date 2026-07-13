@@ -90,7 +90,7 @@
         #define pdep(b, m) _pdep_u64(b, m)
     #endif
 
-namespace Stockfish {
+namespace Triumviratus {
 
     #ifdef USE_POPCNT
 constexpr bool HasPopCnt = true;
@@ -508,7 +508,7 @@ struct is_all_same {
 template<typename... Ts>
 constexpr auto is_all_same_v = is_all_same<Ts...>::value;
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef TYPES_H_INCLUDED
 

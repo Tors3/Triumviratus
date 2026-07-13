@@ -1,7 +1,7 @@
 // Triumviratus 5.0 NNUE bridge — routes the engine's eval through the VENDORED
 // Stockfish-master SFNNv13 network code (nnue/): ThreatFeatureSet=FullThreats
 // + PSQFeatureSet=HalfKAv2_hm, L1=1024, 8 LayerStacks. This is Stockfish's own
-// ultramodern NNUE machinery adapted into our isolated Stockfish:: namespace.
+// ultramodern NNUE machinery adapted into our isolated Triumviratus:: namespace.
 //
 // M2 drive model (full refresh): each search thread owns an opaque handle holding
 // an SF Position + a per-thread AccumulatorStack + AccumulatorCaches. The handle
@@ -35,14 +35,38 @@
 #include "nnue/bitboard.h"
 #include "nnue/position.h"
 #include "nnue/types.h"
+#include "nnue/evaluate.h"         // EvalFileDefaultName (nome del net embeddato)
 #include "nnue/nnue/network.h"
 #include "nnue/nnue/nnue_accumulator.h"
 #include "nnue/nnue/nnue_misc.h"   // Eval::NNUE::EvalFile
 
-using namespace Stockfish;
-using Stockfish::Eval::NNUE::Network;
-using Stockfish::Eval::NNUE::AccumulatorStack;
-using Stockfish::Eval::NNUE::AccumulatorCaches;
+#ifdef TRIUMV_EMBED_RESOURCE
+// Windows: la rete di default sta in una risorsa RCDATA dell'exe (incbin non
+// funziona con _MSC_VER, clang-cl incluso). Qui si definiscono i puntatori che
+// nnue/nnue/network.cpp dichiara extern e si risolvono al primo load.
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+const unsigned char* gEmbeddedNNUEData = nullptr;
+unsigned int         gEmbeddedNNUESize = 0;
+static void embed_init_from_resource() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    // MAKEINTRESOURCEA(10) = RT_RCDATA in versione ANSI (RT_RCDATA segue UNICODE)
+    HRSRC r = FindResourceA(nullptr, "NNUE_DEFAULT", MAKEINTRESOURCEA(10));
+    if (!r) return;
+    HGLOBAL h = LoadResource(nullptr, r);
+    if (!h) return;
+    gEmbeddedNNUEData = static_cast<const unsigned char*>(LockResource(h));
+    gEmbeddedNNUESize = static_cast<unsigned int>(SizeofResource(nullptr, r));
+}
+#endif
+
+using namespace Triumviratus;
+using Triumviratus::Eval::NNUE::Network;
+using Triumviratus::Eval::NNUE::AccumulatorStack;
+using Triumviratus::Eval::NNUE::AccumulatorCaches;
 
 // ---------------------------------------------------------------------------
 // The single immutable network, loaded once at startup (nn_load_net) and
@@ -130,14 +154,31 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
 static int load_net_impl(const char* path) {
     if (!path || !*path)
         return 0;
+#ifdef TRIUMV_EMBED_RESOURCE
+    embed_init_from_resource();
+#endif
+    // File presente sul disco? Se si', vince SEMPRE il file (path passato as-is:
+    // un path completo non e' mai uguale al nome-default -> Network::load va sul
+    // disco). Se NO: fallback sul net EMBEDDATO, ma solo se il nome richiesto e'
+    // quello di default (EvalFile con un path esplicito sbagliato resta un errore).
+    bool file_ok;
     {
         std::ifstream f(path, std::ios::binary);
-        if (!f.good())
+        file_ok = f.good();
+    }
+    const char* load_name = path;
+    if (!file_ok) {
+        std::string p(path);
+        size_t      sl   = p.find_last_of("/\\");
+        std::string base = sl == std::string::npos ? p : p.substr(sl + 1);
+        if (base != EvalFileDefaultName || !Eval::NNUE::embedded_net_available())
             return 0;
+        load_name = EvalFileDefaultName;   // nome "nudo" -> Network::load instrada su <internal>
     }
     Eval::NNUE::EvalFile ef{};
+    ef.defaultName = EvalFileDefaultName;  // serve al match nome-default -> embedded
     auto net = std::make_unique<Network>(ef);
-    net->load(".", path);  // dirs {"<internal>","",rootDir}: "" opens the path as given
+    net->load(".", load_name);  // dirs {"<internal>","",rootDir}: "" opens the path as given
     // verify() invokes the callback with a one-line SUCCESS info string when the net
     // loaded, or with a multi-line "ERROR: ..." block followed by exit(EXIT_FAILURE)
     // when it did not. So if verify() returns at all, the load succeeded; we just echo

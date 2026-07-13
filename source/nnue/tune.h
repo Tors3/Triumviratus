@@ -27,7 +27,7 @@
 
 #include "misc.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 class OptionsMap;
 
@@ -188,6 +188,6 @@ constexpr void tune_check_args(Args&&...) {
 
 #define UPDATE_ON_LAST() bool UNIQUE(p, __LINE__) = Tune::update_on_last = true
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef TUNE_H_INCLUDED

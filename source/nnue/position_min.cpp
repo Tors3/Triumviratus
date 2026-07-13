@@ -13,7 +13,7 @@
 #include "position.h"
 #include "types.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 using namespace Attacks;  // ray_pass_bb / PseudoAttacks / PawnPushOrAttacks / attacks_bb
 
@@ -236,4 +236,4 @@ void Position::update_piece_threats(Piece               pc,
 template void Position::update_piece_threats<true>(Piece, bool, Square, DirtyThreats* const, Bitboard) const;
 template void Position::update_piece_threats<false>(Piece, bool, Square, DirtyThreats* const, Bitboard) const;
 
-}  // namespace Stockfish
+}  // namespace Triumviratus

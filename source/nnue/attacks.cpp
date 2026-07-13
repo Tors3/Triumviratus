@@ -22,7 +22,7 @@
 
 #include "misc.h"
 
-namespace Stockfish::Attacks {
+namespace Triumviratus::Attacks {
 
 namespace {
 
@@ -270,4 +270,4 @@ Bitboard ray_pass_bb(Square s1, Square s2) {
     return RayPassBB[s1][s2];
 }
 
-}  // namespace Stockfish::Attacks
+}  // namespace Triumviratus::Attacks

@@ -27,7 +27,7 @@
 #include "misc.h"
 #include "search.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 class Position;
 class Move;
@@ -79,6 +79,6 @@ class UCIEngine {
                                                   const std::string& message);
 };
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef UCI_H_INCLUDED

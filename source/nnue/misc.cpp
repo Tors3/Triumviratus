@@ -35,7 +35,7 @@
 
 #include "types.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 namespace {
 
@@ -552,4 +552,4 @@ std::string CommandLine::get_working_directory() {
 }
 
 
-}  // namespace Stockfish
+}  // namespace Triumviratus

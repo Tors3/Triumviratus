@@ -45,7 +45,7 @@
 #include "../types.h"
 #include "nnue_common.h"
 
-namespace Stockfish::Eval::NNUE::SIMD {
+namespace Triumviratus::Eval::NNUE::SIMD {
 
 // If vector instructions are enabled, we update and refresh the
 // accumulator tile by tile such that each tile fits in the CPU's

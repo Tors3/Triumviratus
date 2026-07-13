@@ -46,6 +46,12 @@
 // Note that this does not work in Microsoft Visual Studio.
 #if !defined(UNIVERSAL_BINARY) && !defined(_MSC_VER) && !defined(NNUE_EMBEDDING_OFF)
 INCBIN(EmbeddedNNUE, EvalFileDefaultName);
+#elif defined(TRIUMV_EMBED_RESOURCE)
+// Triumviratus/Windows: incbin non funziona con _MSC_VER (anche clang-cl) ->
+// la rete sta in una risorsa RCDATA dell'exe; i puntatori sono risolti a
+// runtime dal bridge (nnue_bridge.cpp, FindResource/LockResource).
+extern const unsigned char* gEmbeddedNNUEData;
+extern unsigned int         gEmbeddedNNUESize;
 #elif defined(UNIVERSAL_BINARY_MACOS_X86_SLICE)
 // Determined at runtime, see universal/nnue_embed.cpp
 extern const unsigned char* const gEmbeddedNNUEData;
@@ -58,8 +64,18 @@ const unsigned char gEmbeddedNNUEData[1] = {0x0};
 const unsigned int  gEmbeddedNNUESize    = 1;
 #endif
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
+// Triumviratus: true se un net embeddato e' effettivamente disponibile a runtime
+// (incbin: size > 1; resource/universal: puntatore risolto). Il bridge lo usa per
+// decidere se il nome-default puo' essere instradato su <internal>.
+bool embedded_net_available() {
+#if defined(TRIUMV_EMBED_RESOURCE) || defined(UNIVERSAL_BINARY_MACOS_X86_SLICE)
+    return gEmbeddedNNUEData != nullptr && gEmbeddedNNUESize > 1;
+#else
+    return gEmbeddedNNUESize > 1;
+#endif
+}
 
 namespace Detail {
 
@@ -265,8 +281,8 @@ void Network::load_internal() {
         }
     };
 
-#ifdef UNIVERSAL_BINARY_MACOS_X86_SLICE
-    if (gEmbeddedNNUEData == nullptr)  // failed embedded load
+#if defined(UNIVERSAL_BINARY_MACOS_X86_SLICE) || defined(TRIUMV_EMBED_RESOURCE)
+    if (gEmbeddedNNUEData == nullptr)  // failed embedded load / risorsa assente
         return;
 #endif
 
@@ -372,4 +388,4 @@ bool Network::write_parameters(std::ostream& stream, const std::string& netDescr
     return bool(stream);
 }
 
-}  // namespace Stockfish::Eval::NNUE
+}  // namespace Triumviratus::Eval::NNUE

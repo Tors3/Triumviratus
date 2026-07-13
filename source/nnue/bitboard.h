@@ -29,14 +29,14 @@
 #include "types.h"
 #include "misc.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 namespace Bitboards {
 
 void        init();
 std::string pretty(Bitboard b);
 
-}  // namespace Stockfish::Bitboards
+}  // namespace Triumviratus::Bitboards
 
 #ifdef USE_AVX512
 // clang-format off
@@ -280,6 +280,6 @@ inline Square pop_lsb(Bitboard& b) {
     return s;
 }
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef BITBOARD_H_INCLUDED

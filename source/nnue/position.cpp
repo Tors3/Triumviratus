@@ -41,7 +41,7 @@
 
 using std::string;
 
-namespace Stockfish {
+namespace Triumviratus {
 
 using namespace Attacks;
 
@@ -1687,4 +1687,4 @@ bool Position::pos_is_ok() const {
     return true;
 }
 
-}  // namespace Stockfish
+}  // namespace Triumviratus

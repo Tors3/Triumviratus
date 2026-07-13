@@ -31,11 +31,11 @@
 #include "nnue_architecture.h"
 #include "nnue_common.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 class Position;
 }
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 struct alignas(CacheLineSize) Accumulator;
 
@@ -136,6 +136,6 @@ class AccumulatorStack {
     usize                                 size = 1;
 };
 
-}  // namespace Stockfish::Eval::NNUE
+}  // namespace Triumviratus::Eval::NNUE
 
 #endif  // NNUE_ACCUMULATOR_H_INCLUDED

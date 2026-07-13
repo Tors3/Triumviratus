@@ -23,17 +23,18 @@
 
 #include "types.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 
 class Position;
 
 namespace Eval {
 
-// The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
-// for the build process (profile-build and fishtest) to work. Do not change the
-// name of the macro or the location where this macro is defined, as it is used
-// in the Makefile/Fishtest.
-#define EvalFileDefaultName "nn-71d6d32cb962.nnue"
+// Triumviratus: nome della rete di DEFAULT (own-lineage). E' il nome che
+// instrada sul net EMBEDDED (incbin su Linux/Android, risorsa RCDATA su
+// Windows) quando nessun file con questo nome e' trovato accanto all'exe;
+// l'opzione UCI "EvalFile" con un path esplicito carica sempre dal disco.
+// (Vincolo SF sul formato nn-[sha].nnue non applicabile: niente fishtest.)
+#define EvalFileDefaultName "nn-rubicon-alea-v2.nnue"
 
 namespace NNUE {
 class Network;
@@ -50,6 +51,6 @@ Value evaluate(const NNUE::Network&           network,
                int                            optimism);
 }  // namespace Eval
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 #endif  // #ifndef EVALUATE_H_INCLUDED

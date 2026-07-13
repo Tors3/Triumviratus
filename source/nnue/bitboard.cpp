@@ -20,7 +20,7 @@
 
 #include <bitset>
 
-namespace Stockfish {
+namespace Triumviratus {
 
 u8 PopCnt16[1 << 16];
 u8 SquareDistance[SQUARE_NB][SQUARE_NB];
@@ -58,4 +58,4 @@ void Bitboards::init() {
             SquareDistance[s1][s2] = std::max(distance<File>(s1, s2), distance<Rank>(s1, s2));
 }
 
-}  // namespace Stockfish
+}  // namespace Triumviratus

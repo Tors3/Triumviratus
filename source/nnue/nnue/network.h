@@ -33,16 +33,19 @@
 #include "nnue_feature_transformer.h"
 #include "nnue_misc.h"
 
-namespace Stockfish {
+namespace Triumviratus {
 class Position;
 }
 
-namespace Stockfish::Eval::NNUE {
+namespace Triumviratus::Eval::NNUE {
 
 class AccumulatorStack;
 struct AccumulatorCaches;
 
 using NetworkOutput = std::tuple<Value, Value>;
+
+// Triumviratus: net embeddato (incbin/risorsa RCDATA) disponibile a runtime?
+bool embedded_net_available();
 
 // The network must be a trivial type, i.e. the memory must be in-line.
 // This is required to allow sharing the network via shared memory, as
@@ -119,11 +122,11 @@ class Network {
 };
 
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
 template<>
-struct std::hash<Stockfish::Eval::NNUE::Network> {
-    Stockfish::usize operator()(const Stockfish::Eval::NNUE::Network& network) const noexcept {
+struct std::hash<Triumviratus::Eval::NNUE::Network> {
+    Triumviratus::usize operator()(const Triumviratus::Eval::NNUE::Network& network) const noexcept {
         return network.get_content_hash();
     }
 };

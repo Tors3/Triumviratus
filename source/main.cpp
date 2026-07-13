@@ -177,15 +177,21 @@ int main()
     // again; both build kinds load our own net by default now).
     const char* netName = "nn-rubicon-alea-v2.nnue";  // TRANN1 (3 blocchi: threats+halfka+pawnpair)
     std::string netPath = resolve_net_path(netName);
-    if (netPath.empty() || !nn_load_net(netPath.c_str()))
+    // Un file accanto all'exe/progetto (se c'e') VINCE sempre — override comodo in
+    // sviluppo. Senza file, il nome nudo instrada sul net EMBEDDATO nell'exe
+    // (risorsa RCDATA su Windows, incbin su Linux/Android). "EvalFile" a runtime
+    // continua a caricare qualsiasi path esplicito dal disco.
+    const char* loadArg = netPath.empty() ? netName : netPath.c_str();
+    if (!nn_load_net(loadArg))
     {
-        std::cerr << "FATAL: NNUE net not found/invalid. Place " << netName
-                  << " next to the executable (or in the project root) and restart."
-                  << std::endl;
+        std::cerr << "FATAL: NNUE net not found/invalid (no " << netName
+                  << " next to the executable/project root, and no embedded net in "
+                  << "this build). Place the file and restart." << std::endl;
         return 1;
     }
     if (!g_startup_quiet) {
-        printf("info string Net: %s (Stockfish SFNNv13)\n", netName);
+        printf("info string Net: %s (%s; SFNNv13-derived + PawnPair)\n",
+               netName, netPath.empty() ? "embedded" : netPath.c_str());
         fflush(stdout);
     }
 

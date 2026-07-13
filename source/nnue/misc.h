@@ -46,7 +46,7 @@
 #define stringify2(x) #x
 #define stringify(x) stringify2(x)
 
-namespace Stockfish {
+namespace Triumviratus {
 
 using u64 = std::uint64_t;
 using u32 = std::uint32_t;
@@ -666,12 +666,12 @@ void move_to_front(std::vector<T>& vec, Predicate pred) {
     #define RESTRICT
 #endif
 
-}  // namespace Stockfish
+}  // namespace Triumviratus
 
-template<Stockfish::usize N>
-struct std::hash<Stockfish::FixedString<N>> {
-    Stockfish::usize operator()(const Stockfish::FixedString<N>& fstr) const noexcept {
-        return Stockfish::hash_bytes(fstr.data(), fstr.size());
+template<Triumviratus::usize N>
+struct std::hash<Triumviratus::FixedString<N>> {
+    Triumviratus::usize operator()(const Triumviratus::FixedString<N>& fstr) const noexcept {
+        return Triumviratus::hash_bytes(fstr.data(), fstr.size());
     }
 };
 

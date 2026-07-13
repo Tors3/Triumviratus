@@ -10,7 +10,7 @@
 #include "../../bitboard.h"
 #include "../../position.h"
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 // File band per square: same or adjacent files (Stormphrax kPpMasks). File
 // distance is invariant under the orientation flips, so masks are on RAW squares.
@@ -103,4 +103,4 @@ void PawnPair::append_changed_indices(Color           perspective,
     }
 }
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features

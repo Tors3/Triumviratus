@@ -37,7 +37,7 @@
   This file contains the definition for a fully connected layer (aka affine transform) with block sparse input.
 */
 
-namespace Stockfish::Eval::NNUE::Layers {
+namespace Triumviratus::Eval::NNUE::Layers {
 
 // Sparse input implementation
 template<IndexType InDims, IndexType OutDims>
@@ -290,6 +290,6 @@ class AffineTransformSparseInput {
     alignas(CacheLineSize) WeightType weights[OutputDimensions * PaddedInputDimensions];
 };
 
-}  // namespace Stockfish::Eval::NNUE::Layers
+}  // namespace Triumviratus::Eval::NNUE::Layers
 
 #endif  // #ifndef NNUE_LAYERS_AFFINE_TRANSFORM_SPARSE_INPUT_H_INCLUDED

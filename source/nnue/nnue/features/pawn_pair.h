@@ -21,11 +21,11 @@
 #include "../nnue_common.h"
 #include "full_threats.h"  // OrientTBL (stessa orientazione per tutti i blocchi)
 
-namespace Stockfish {
+namespace Triumviratus {
 class Position;
 }
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 class PawnPair {
    public:
@@ -75,6 +75,6 @@ class PawnPair {
                                        IndexList&      added);
 };
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features
 
 #endif  // #ifndef NNUE_FEATURES_PAWN_PAIR_INCLUDED

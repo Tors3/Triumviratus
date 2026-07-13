@@ -27,7 +27,7 @@
     #include "../../bitboard.h"
 #endif
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 #if defined(USE_AVX512ICL)
 void HalfKAv2_hm::write_indices(const std::array<Piece, SQUARE_NB>& oldPieces,
@@ -112,4 +112,4 @@ bool HalfKAv2_hm::requires_refresh(const DiffType& diff, Color perspective) {
     return diff.pc == make_piece(perspective, KING);
 }
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features

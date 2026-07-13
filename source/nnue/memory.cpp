@@ -62,7 +62,7 @@
 #endif
 
 
-namespace Stockfish {
+namespace Triumviratus {
 
 // Wrappers for systems where the c++17 implementation does not guarantee the
 // availability of aligned_alloc(). Memory allocated with std_aligned_alloc()
@@ -251,4 +251,4 @@ void aligned_large_pages_free(void* mem) {
 }
 
 #endif
-}  // namespace Stockfish
+}  // namespace Triumviratus

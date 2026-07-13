@@ -33,7 +33,7 @@
 #include "../../types.h"
 #include "../nnue_common.h"
 
-namespace Stockfish::Eval::NNUE::Features {
+namespace Triumviratus::Eval::NNUE::Features {
 
 struct HelperOffsets {
     int cumulativePieceOffset, cumulativeOffset;
@@ -304,4 +304,4 @@ void FullThreats::append_changed_indices(Color                   perspective,
     }
 }
 
-}  // namespace Stockfish::Eval::NNUE::Features
+}  // namespace Triumviratus::Eval::NNUE::Features

@@ -1028,6 +1028,32 @@ int g_see_lmr_quiet_margin = 185;
 // is practically unbounded (prune_depth rarely reaches it), matching the tested no-cap
 // behavior; SPSA can search LOWER values to trade reach for NPS.
 int g_see_lmr_prune_cap = 32;
+// S-05 forma LINEARE (2026-07-12, default OFF): il margine quiet del path SEELmr e' oggi
+// quadratico (-coef*prune_depth^2), come il path di default. Il vecchio SPSA S-05 si e'
+// hard-stoppato a 178/300 con gradiente PIATTO: l'ipotesi e' che il quadrato saturi il
+// margine cosi' in fretta da rendere il coefficiente quasi indistinguibile per SPSA (a
+// prune_depth 3 gia' -185*9=-1665, praticamente mai raggiungibile -> il gradiente non
+// vede il coef). La forma lineare -coef*prune_depth cresce piano -> il coef resta
+// nell'intervallo utile a piu' profondita' -> gradiente piu' pulito, e potatura meno
+// aggressiva alle prune_depth alte. Quando g_see_lmr_linear e' ON il path SEELmr usa
+// -g_see_lmr_linear_coef*prune_depth al posto del quadrato. Attiva il path da solo (non
+// serve anche SEELmrDepth). coef alto = soglia piu' negativa = pota MENO (albero piu' grande).
+static bool g_see_lmr_linear = false;
+int g_see_lmr_linear_coef = 350;   // center; gate 2-3 valori lato laptop
+// MultiPV (analisi, stile Stockfish, 2026-07-13): quante varianti di root riportare.
+// 1 = gioco normale, flusso INVARIATO (gate: bench identico). >1: dopo la linea
+// principale di ogni iterazione il main thread ri-cerca la root a finestra piena
+// escludendo le best move gia' assegnate e stampa "info ... multipv k ...".
+// Solo analisi: TM/voting/FollowPV/optimism restano ancorati alla linea 1; gli
+// helper lazy-SMP restano single-PV (riempiono la TT come sempre).
+static int g_multipv = 1;
+// UCI_ShowWDL (analisi): quando ON, le info-line riportano " wdl W D L" (permille,
+// stm-relative, somma 1000) accanto allo score. Modello logistico a un parametro
+// ancorato all'UNICO punto di calibrazione noto (NORM_CP=392 intrinseco = +100cp
+// normalizzato = P(win)~50%, misurato su 191k posizioni). Larghezza b=100 -> patta
+// ~46% a posizione pari (coerente col draw-ratio osservato ~49%). Default OFF =
+// output storico invariato. Stima onesta, non un fit materiale-dipendente alla SF.
+static bool g_show_wdl = false;
 // (The SFNNv10 eval-wrapper tunables — g_small_net_threshold / g_eval_optimism /
 // g_eval_pawn_scale / g_eval_complexity_div / g_eval_blend_delta — were removed in
 // M2: the SFNNv13 bridge applies Stockfish's fixed cp scaling, so they no longer
@@ -1047,6 +1073,10 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SEELmrDepth"))         { g_see_lmr_depth    = value != 0; return true; }
     if (!strcmp(name, "SEELmrQuietMargin"))   { g_see_lmr_quiet_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "SEELmrPruneCap"))      { g_see_lmr_prune_cap = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "SEELmrLinear"))        { g_see_lmr_linear   = value != 0; return true; }
+    if (!strcmp(name, "SEELmrLinearCoef"))    { g_see_lmr_linear_coef = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "MultiPV"))             { g_multipv = value < 1 ? 1 : (value > 64 ? 64 : value); return true; }
+    if (!strcmp(name, "UCI_ShowWDL"))         { g_show_wdl = value != 0; return true; }
     if (!strcmp(name, "FutilityImproving"))   { g_fut_improving    = value; return true; }
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
@@ -1311,6 +1341,14 @@ std::vector<std::thread> search_threads;
 std::vector<ThreadData> thread_data;
 std::atomic<bool> stop_threads(false);
 U64 g_node_limit = 0;   // "go nodes N" budget (0 = off); checked per-node in (q)search.
+// searchmoves (analisi, UCI "go searchmoves m1 m2 ..."): whitelist di mosse di root.
+// count>0 => alla root si cercano SOLO queste (le altre saltate nel move loop). Vale
+// anche per le linee MultiPV. Riempita da parse_go, azzerata a ogni nuovo 'go'.
+int g_searchmoves[256];
+int g_searchmoves_count = 0;
+// "go mate N": fermati appena un'iterazione completata conferma un matto NOSTRO
+// in <= N mosse (0 = off). Convenzione UCI; il display mate M usa la stessa formula.
+int g_mate_in = 0;
 std::mutex output_mutex;
 int num_threads = 1;
 int search_start_time = 0;
@@ -4118,6 +4156,22 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // Ora move   garantita essere la migliore
         // `move` is supplied by mp_next() in the while condition above.
         if (move == excluded_move) continue;   // singular search: skip the TT move
+        // searchmoves (analisi): se una whitelist e' attiva, alla root cerca SOLO
+        // quelle mosse. Vale per la linea principale e per tutte le linee MultiPV.
+        if (is_root_node && g_searchmoves_count) {
+            bool in_list = false;
+            for (int k = 0; k < g_searchmoves_count; k++)
+                if (g_searchmoves[k] == move) { in_list = true; break; }
+            if (!in_list) continue;
+        }
+        // MultiPV: alla root salta le best move gia' assegnate alle linee precedenti
+        // (NON via excluded_move: quello e' del singular e sopprime lo store TT).
+        if (is_root_node && td.mpv_count) {
+            bool mpv_skip = false;
+            for (int k = 0; k < td.mpv_count; k++)
+                if (td.mpv_excluded[k] == move) { mpv_skip = true; break; }
+            if (mpv_skip) continue;
+        }
         bool is_capture = get_move_capture(move);
         bool is_promotion = get_move_promoted(move);
         bool is_quiet = !is_capture && !is_promotion;
@@ -4222,12 +4276,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // prune_depth=15 il margine e' -185*225, mai raggiungibile). Le catture restano
         // invariate (prune_depth==depth per loro comunque; SF le compensa con un termine
         // capthist che non abbiamo ancora — non toccarle senza quello).
-        bool see_lmr_path = is_quiet && g_see_lmr_depth;
+        bool see_lmr_path = is_quiet && (g_see_lmr_depth || g_see_lmr_linear);
         int see_gate_depth = see_lmr_path ? prune_depth : depth;
         bool see_gate_ok = see_lmr_path ? (see_gate_depth <= g_see_lmr_prune_cap) : (see_gate_depth <= g_see_depth);
         if (!pv_node && !in_check && !is_promotion && see_gate_ok && best_score > -mate_score) {
             int quiet_margin_coef = see_lmr_path ? g_see_lmr_quiet_margin : g_see_quiet_margin;
-            int see_margin = is_capture ? (-g_see_cap_margin * depth) : (-quiet_margin_coef * see_gate_depth * see_gate_depth);
+            int see_margin = is_capture ? (-g_see_cap_margin * depth)
+                           : (see_lmr_path && g_see_lmr_linear) ? (-g_see_lmr_linear_coef * see_gate_depth)   // S-05 forma lineare
+                           : (-quiet_margin_coef * see_gate_depth * see_gate_depth);
             if (g_corrval_ext) see_margin -= (corr_val < 0 ? -corr_val : corr_val) * g_corrval_see / 128;   // heavy corr -> prune less (soglia piu' negativa)
             if (!td_see_at_least(td, move, see_margin)) {
                 // S-11 (SF, default OFF): se siamo sotto (alpha<0) e la cattura muove il
@@ -4385,6 +4441,18 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
         legal_moves++;
         if (is_quiet) quiets_searched++;
+
+        // "info currmove" a root (convenzione SF: solo main thread, solo analisi
+        // lunga > 3s): le GUI mostrano la mossa in esame. Gated dal tempo -> zero
+        // costo in gioco/bench (a root il loop gira una manciata di volte).
+        if (is_root_node && &td == &thread_data[0]
+            && get_time_ms() - search_start_time > 3000) {
+            std::lock_guard<std::mutex> lock(output_mutex);
+            printf("info depth %d currmove ", td.root_depth);
+            print_move(move);
+            printf(" currmovenumber %d\n", legal_moves);
+            fflush(stdout);
+        }
 
         // Does this move give check? After make_move the side to move is the
         // opponent, so their king being attacked means our move checks. Checking
@@ -4795,9 +4863,42 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 // UCI INFO
 // ============================================================================
 
-static void print_search_info(ThreadData& td, int depth, int score) {
+// multipv: 0 = gioco normale (token omesso, output storico invariato);
+// k>=1 = analisi MultiPV, emette " multipv k" dopo il seldepth (ordine UCI standard).
+// pv_override: stampa questa PV invece di td.pv_table[0] (serve al sort MultiPV,
+// dove le linee vengono raccolte e stampate DOPO, in ordine di score).
+static void print_search_info(ThreadData& td, int depth, int score, int multipv = 0,
+                              const int* pv_override = nullptr, int pv_len_override = -1) {
     int elapsed = get_time_ms() - search_start_time;
     if (elapsed == 0) elapsed = 1;
+
+    char mpvtok[24] = "";
+    if (multipv > 0) snprintf(mpvtok, sizeof(mpvtok), " multipv %d", multipv);
+
+    // hashfull: sempre (economico, campiona 1000 slot). WDL: solo se UCI_ShowWDL.
+    // Token pronti da inserire nell'info-line (ordine UCI: score .. wdl .. tbhits .. hashfull .. pv).
+    char hftok[24];
+    snprintf(hftok, sizeof(hftok), " hashfull %d", hashfull());
+
+    char wdltok[48] = "";
+    if (g_show_wdl) {
+        int W, D, L;
+        if (score > mate_score && score < mate_value)        { W = 1000; D = 0; L = 0; }    // matto nostro
+        else if (score > -mate_value && score < -mate_score) { W = 0; D = 0; L = 1000; }    // veniamo mattati
+        else {
+            int es = nn_get_eval_scale();
+            double cpn = (es == 100) ? (double)score : (double)score * 100.0 / es;
+            cpn = cpn * 100.0 / 392.0;   // stessa normalizzazione del display cp (NORM_CP)
+            const double b = 100.0;
+            double w = 1.0 / (1.0 + exp(-(cpn - 100.0) / b));
+            double l = 1.0 / (1.0 + exp(-(-cpn - 100.0) / b));
+            W = (int)(w * 1000.0 + 0.5);
+            L = (int)(l * 1000.0 + 0.5);
+            D = 1000 - W - L;
+            if (D < 0) { int s = W + L; W = W * 1000 / s; L = 1000 - W; D = 0; }
+        }
+        snprintf(wdltok, sizeof(wdltok), " wdl %d %d %d", W, D, L);
+    }
 
     U64 total = 0, tbhits = 0;
     for (int i = 0; i < num_threads; i++) {
@@ -4812,12 +4913,12 @@ static void print_search_info(ThreadData& td, int depth, int score) {
     if (score > -mate_value && score < -mate_score) {
         // F-014 (2026-07-03): tolto il "-1" (off-by-one ereditato da BBC): mattati in N
         // semimosse (score = -mate_value + N, N pari) -> UCI "mate -(N/2)", non -(N/2)-1.
-        printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d tbhits %llu pv ",
-            depth, td.seldepth, -(score + mate_value) / 2, total, nps, elapsed, tbhits);
+        printf("info depth %d seldepth %d%s score mate %d%s nodes %llu nps %llu time %d tbhits %llu%s pv ",
+            depth, td.seldepth, mpvtok, -(score + mate_value) / 2, wdltok, total, nps, elapsed, tbhits, hftok);
     }
     else if (score > mate_score && score < mate_value) {
-        printf("info depth %d seldepth %d score mate %d nodes %llu nps %llu time %d tbhits %llu pv ",
-            depth, td.seldepth, (mate_value - score) / 2 + 1, total, nps, elapsed, tbhits);
+        printf("info depth %d seldepth %d%s score mate %d%s nodes %llu nps %llu time %d tbhits %llu%s pv ",
+            depth, td.seldepth, mpvtok, (mate_value - score) / 2 + 1, wdltok, total, nps, elapsed, tbhits, hftok);
     }
     else {
         // Normalizza 'score cp' alla scala-pedone (SF-style): la search lavora sul valore
@@ -4832,12 +4933,14 @@ static void print_search_info(ThreadData& td, int depth, int score) {
         // displayed (win% 51.3 nel bucket 342-442). SOLO display: search/TM/TT intatti.
         constexpr int NORM_CP = 392;
         cp = (int)((long long)cp * 100 / NORM_CP);
-        printf("info depth %d seldepth %d score cp %d nodes %llu nps %llu time %d tbhits %llu pv ",
-            depth, td.seldepth, cp, total, nps, elapsed, tbhits);
+        printf("info depth %d seldepth %d%s score cp %d%s nodes %llu nps %llu time %d tbhits %llu%s pv ",
+            depth, td.seldepth, mpvtok, cp, wdltok, total, nps, elapsed, tbhits, hftok);
     }
 
-    for (int i = 0; i < td.pv_length[0]; i++) {
-        print_move(td.pv_table[0][i]);
+    const int* pv    = pv_override ? pv_override     : td.pv_table[0];
+    int        pvlen = pv_override ? pv_len_override : td.pv_length[0];
+    for (int i = 0; i < pvlen; i++) {
+        print_move(pv[i]);
         printf(" ");
     }
     printf("\n");
@@ -4906,6 +5009,44 @@ static void thread_search(int thread_id, int max_depth) {
         root_single_reply = (legal == 1);
     }
 
+    // MultiPV (analisi): quante linee cercare. Solo main thread; clampato alle
+    // mosse LEGALI di root (con meno mosse che linee, la linea in eccesso non ha
+    // mosse da cercare e tornerebbe uno score di matto/stallo fasullo). Stesso
+    // protocollo make/unmake del conteggio Q-08a sopra.
+    int mpv_nlines = 1;
+    td.mpv_count = 0;
+    if (g_multipv > 1 && thread_id == 0) {
+        moves ml[1];
+        td_generate_moves(td, ml, false);
+        int legal = 0;
+        for (int i = 0; i < ml->count; i++) {
+            // con searchmoves attivo, contano solo le mosse in whitelist
+            if (g_searchmoves_count) {
+                bool in_list = false;
+                for (int k = 0; k < g_searchmoves_count; k++)
+                    if (g_searchmoves[k] == ml->moves[i]) { in_list = true; break; }
+                if (!in_list) continue;
+            }
+            UndoInfo undo;
+            td.ply++;
+            td.repetition_table[++td.repetition_index] = td.hash_key;
+            if (td_make_move(td, ml->moves[i], undo)) {
+                td_unmake_move(td, ml->moves[i], undo);
+                legal++;
+            }
+            td.ply--;
+            td.repetition_index--;
+        }
+        mpv_nlines = g_multipv < legal ? g_multipv : legal;
+        if (mpv_nlines < 1) mpv_nlines = 1;
+    }
+
+    // MultiPV: buffer per raccogliere le linee secondarie dell'iterazione corrente
+    // e stamparle ORDINATE per score (mai un multipv k+1 sopra il k nelle GUI).
+    struct MpvLine { int score; int len; int pv[max_ply + 8]; };
+    std::vector<MpvLine> mpv_buf;
+    if (mpv_nlines > 1) mpv_buf.resize(mpv_nlines);
+
     // Stagger starting depths for thread diversity
     int start_depth = 1 + (thread_id % 2);
 
@@ -4948,6 +5089,7 @@ static void thread_search(int thread_id, int max_depth) {
         nn_root_sync(td);
 
         td.root_depth = current_depth;   // F-018.6c SingularPlyGuard: gate ply < 2*rootDepth
+        if (mpv_nlines > 1) mpv_buf[0].len = 0;   // MultiPV: nessuna principale deferita da iterazioni stale
 
         // Aspiration window: start narrow around the previous score and widen
         // incrementally on failures, instead of re-searching the full window.
@@ -5030,7 +5172,7 @@ static void thread_search(int thread_id, int max_depth) {
             int new_abs  = score < 0 ? -score : score;
             if (g_root_mate_restore && td.depth > 0 && prev_abs >= mate_score
                 && new_abs < prev_abs) {
-                if (thread_id == 0) print_search_info(td, current_depth, td.best_score);
+                if (thread_id == 0) print_search_info(td, current_depth, td.best_score, mpv_nlines > 1 ? 1 : 0);
             } else {
                 td.best_move = td.pv_table[0][0];
                 td.best_score = score;
@@ -5048,9 +5190,75 @@ static void thread_search(int thread_id, int max_depth) {
 
                 // Only main thread prints
                 if (thread_id == 0) {
-                    print_search_info(td, current_depth, score);
+                    if (mpv_nlines > 1) {
+                        // MultiPV: stampa DEFERITA al blocco sotto — la principale entra
+                        // nel sort insieme alle secondarie (una secondaria a finestra
+                        // piena puo' superarla: multipv 1 = sempre la linea migliore).
+                        mpv_buf[0].score = score;
+                        mpv_buf[0].len   = td.pv_length[0];
+                        for (int i = 0; i < td.pv_length[0]; i++) mpv_buf[0].pv[i] = td.pv_table[0][i];
+                    } else
+                        print_search_info(td, current_depth, score);
                 }
             }
+        }
+
+        // ---- MultiPV: linee secondarie (solo analisi, mpv_nlines>1, thread 0) ----
+        // Dopo la linea principale dell'iterazione, ri-cerca la root a finestra
+        // PIENA escludendo le best move gia' assegnate (skip nel move loop di
+        // td_negamax via td.mpv_count). Niente aspirazione sulle secondarie: costo
+        // accettabile in analisi, zero stato da trascinare tra iterazioni. Tutto lo
+        // stato di gioco (best_move/score, TM, FollowPV, optimism, EMA) e' gia'
+        // stato aggiornato SOPRA dalla sola linea principale e non viene toccato.
+        // ponytail: niente sort per score — l'esclusione rende le linee gia'
+        // non-crescenti a meno di rumore; aggiungere il sort se una GUI si confonde.
+        if (mpv_nlines > 1 && thread_id == 0 && td.pv_length[0] > 0
+            && !stop_threads.load(std::memory_order_relaxed)) {
+            // done = linee nel buffer da ordinare; base = indice multipv della prima.
+            // Path normale: buf[0] = principale (deferita sopra) -> stampa 1..N tutte
+            // ordinate. Path mate-restore (Q-29, gia' stampata come singola): base 2,
+            // si ordinano solo le secondarie.
+            int done = (mpv_buf[0].len > 0) ? 1 : 0;
+            int base = done ? 1 : 2;
+            td.mpv_excluded[0] = td.pv_table[0][0];
+            for (int pvIdx = 1; pvIdx < mpv_nlines; pvIdx++) {
+                td.mpv_count = pvIdx;
+                nn_root_sync(td);   // mirror NNUE ri-allineato alla root prima di ri-cercare
+                int s2 = td_negamax(td, -infinity, infinity, current_depth, false, 0, false);
+                if (stop_threads.load(std::memory_order_relaxed) || td.pv_length[0] < 1)
+                    break;
+                td.mpv_excluded[pvIdx] = td.pv_table[0][0];
+                MpvLine& L = mpv_buf[done++];
+                L.score = s2;
+                L.len   = td.pv_length[0];
+                for (int i = 0; i < L.len; i++) L.pv[i] = td.pv_table[0][i];
+            }
+            // sort di indici per score decrescente e stampa multipv base..: mai una
+            // linea sotto con score sopra (convenzione SF).
+            int ord[64];
+            for (int a = 0; a < done; a++) ord[a] = a;
+            std::sort(ord, ord + done,
+                      [&](int x, int y) { return mpv_buf[x].score > mpv_buf[y].score; });
+            for (int a = 0; a < done; a++) {
+                const MpvLine& L = mpv_buf[ord[a]];
+                print_search_info(td, current_depth, L.score, base + a, L.pv, L.len);
+            }
+            // bestmove coerente col multipv 1: se una linea a finestra piena ha
+            // superato la principale, riallinea best_move/score (solo analisi:
+            // mpv_nlines>1 non esiste in partita, TM/voting non toccati altrove).
+            if (base == 1 && done > 0) {
+                td.best_move  = mpv_buf[ord[0]].pv[0];
+                td.best_score = mpv_buf[ord[0]].score;
+            }
+            td.mpv_count = 0;   // le iterazioni/ricerche successive ripartono senza esclusioni
+        }
+
+        // "go mate N": un'iterazione completata conferma un matto NOSTRO in <= N
+        // mosse -> il compito e' assolto, stop (convenzione UCI; GUI/solver di studi).
+        if (g_mate_in > 0 && thread_id == 0 && score > mate_score && score < mate_value
+            && (mate_value - score) / 2 + 1 <= g_mate_in) {
+            stop_threads.store(true, std::memory_order_relaxed);
+            break;
         }
 
         // Soft time management: the main thread decides whether to start another

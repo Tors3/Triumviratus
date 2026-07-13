@@ -91,6 +91,9 @@ extern int stoptime;
 extern int timeset;
 extern int stopped;
 extern U64 g_node_limit;   // "go nodes N": hard node budget (0 = off). For datagen at fixed nodes.
+extern int g_searchmoves[256];   // "go searchmoves ...": root move whitelist (analisi).
+extern int g_searchmoves_count;  // 0 = off (cerca tutte le mosse di root).
+extern int g_mate_in;            // "go mate N": stop al matto in <= N mosse (0 = off).
 
 // Bit manipulations macros
 #define set_bit(bitboard, square) ((bitboard) |= (1ULL << (square)))

@@ -36,7 +36,7 @@
     #define USE_DUAL_HYPERBOLA_QUINT
 #endif
 
-namespace Stockfish::Attacks {
+namespace Triumviratus::Attacks {
 
 void init();
 
@@ -331,6 +331,6 @@ inline Bitboard attacks_bb(Piece pc, Square s, Bitboard occupied) {
                                : attacks_bb(type_of(pc), s, occupied);
 }
 
-}  // namespace Stockfish::Attacks
+}  // namespace Triumviratus::Attacks
 
 #endif  // #ifndef ATTACKS_H_INCLUDED

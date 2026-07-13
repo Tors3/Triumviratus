@@ -15,7 +15,7 @@
 #include "nnue/nnue_accumulator.h"
 #include "nnue/nnue_misc.h"
 
-using namespace Stockfish;
+using namespace Triumviratus;
 
 static Piece piece_from_char(char c) {
     switch (c) {
