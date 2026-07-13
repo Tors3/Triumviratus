@@ -575,7 +575,7 @@ void uci_loop()
             printf("option name TTCutFifty type spin default 87 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
-            printf("option name GoodCapHistDiv type spin default 0 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
+            printf("option name GoodCapHistDiv type spin default 32 min 0 max 256\n");        // #4 split good/bad a soglia -(mvv+caphist)/div (BAKED Obsidian 32, +6.96 Elo VM 2026-07-13; 0=off)
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore. Bake revertito 2026-07-07 (rumore)
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
@@ -685,6 +685,8 @@ void uci_loop()
             printf("option name SEELmrPruneCap type spin default 32 min 2 max 40\n");      // cap su prune_depth per il percorso SEELmrDepth (32=praticamente illimitato); abbassare = meno reach ma meno chiamate SEE
             printf("option name SEELmrLinear type check default false\n");                  // S-05 forma lineare: margine -coef*prune_depth invece di -coef*prune_depth^2 (attiva il path da solo)
             printf("option name SEELmrLinearCoef type spin default 350 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
+            printf("option name TTPrefetch type check default true\n");        // Reckless #1085: prefetch bucket TT figlio in make (node-identical, +1.88% NPS confermato su VM N=100)
+            printf("option name GoodCapTTQuiet type check default false\n");   // Reckless #1107: TT-move quiet -> catture "good" solo se SEE>=+1
             printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
             printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614

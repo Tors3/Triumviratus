@@ -920,7 +920,11 @@ static bool g_tt_research = false;
 int  g_tt_research_margin = 79;
 static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus). BAKE 2026-07-06 (true/7) REVERTITO: SPRT +15.55 Elo era falsato da oversubscription/TC senza incremento; retest pulito (10+0.1, 258g) = -17.52 Elo, LOS 4.89%, LLR non conclusivo. Riaperto, serve retest pulito prima di ridecidere.
 int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
-int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
+// #4 split good/bad capture a soglia -(mvv+caphist)/div (Obsidian: 32). BAKE
+// 2026-07-13 (VM, screening 10+0.1 conc36): +6.96 +-7.16 Elo, LOS 97.17%,
+// 2296 games — segnale sufficiente a escludere negativita' (LLR non chiuso,
+// N>10000 servirebbe per la chiusura formale, giudicato non necessario).
+int  g_goodcap_hist_div      = 32;
 static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score. Bake 2026-07-07 REVERTITO: -9.04 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = +0.62 NULLO. OFF, re-ispezione a TC lungo (TC-dipendente?)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
 int  g_singular_mindepth     = 6;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
@@ -1047,6 +1051,21 @@ int g_see_lmr_linear_coef = 350;   // center; gate 2-3 valori lato laptop
 // Solo analisi: TM/voting/FollowPV/optimism restano ancorati alla linea 1; gli
 // helper lazy-SMP restano single-PV (riempiono la TT come sempre).
 static int g_multipv = 1;
+// TTPrefetch (Reckless #1085): prefetch del bucket TT del FIGLIO in td_make_move,
+// appena la chiave e' definitiva (post-legalita'). Node-identical per costruzione:
+// solo NPS. Il tentativo 2026-06-07 era NPS-neutral; ri-misurato 2026-07-13 (dopo
+// il bake di TTTwoLevel, che ha cambiato il pattern di accesso TT) su VM GCP:
+// +1.88% NPS su N=100 bench (OFF 1061381 [1011790-1106739] vs ON 1081343
+// [1048327-1113268], range quasi disgiunti). BAKED ON di default (option resta
+// per un'eventuale ablazione A/B).
+static bool g_tt_prefetch = true;
+// GoodCapTTQuiet (Reckless 0.10.0 #1107, default OFF): se la TT-move del nodo e'
+// QUIET, la mossa migliore nota non e' una cattura -> per essere ordinata "good"
+// una cattura deve VINCERE materiale netto (SEE >= +1; le pari scendono tra le
+// bad). Reckless: +1.48 +-1.98 @30k games -> micro-gain, candidato co-tune, da
+// gatare ad alto N. (La loro condizione extra noisy_count>2 e' un artefatto del
+// loro picker a stadi; qui si usa la sola condizione tt-move-quiet.)
+static bool g_goodcap_ttquiet = false;
 // UCI_ShowWDL (analisi): quando ON, le info-line riportano " wdl W D L" (permille,
 // stm-relative, somma 1000) accanto allo score. Modello logistico a un parametro
 // ancorato all'UNICO punto di calibrazione noto (NORM_CP=392 intrinseco = +100cp
@@ -1077,6 +1096,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SEELmrLinearCoef"))    { g_see_lmr_linear_coef = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "MultiPV"))             { g_multipv = value < 1 ? 1 : (value > 64 ? 64 : value); return true; }
     if (!strcmp(name, "UCI_ShowWDL"))         { g_show_wdl = value != 0; return true; }
+    if (!strcmp(name, "TTPrefetch"))          { g_tt_prefetch = value != 0; return true; }
+    if (!strcmp(name, "GoodCapTTQuiet"))      { g_goodcap_ttquiet = value != 0; return true; }
     if (!strcmp(name, "FutilityImproving"))   { g_fut_improving    = value; return true; }
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
@@ -1810,7 +1831,12 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 
     // (TT + eval-cache prefetch tried here 2026-06-07: NODE-IDENTICAL but NPS-neutral
     //  — we are eval-bound, not TT-memory-bound, so hiding TT latency doesn't help.
-    //  Removed. The T0/pre-legality variant was -2.5% from L1 pollution.)
+    //  Removed. The T0/pre-legality variant was -2.5% from L1 pollution.
+    //  RIPROVATO 2026-07-13 dietro toggle "TTPrefetch" (default OFF = byte-identico,
+    //  Reckless #1085): da giugno e' stato bakato TTTwoLevel (bucket 2 slot), il
+    //  pattern di accesso TT e' cambiato -> vale una ri-misura NPS.)
+    if (g_tt_prefetch)
+        TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
 
     // Mirror the (now legal) move on the incremental NNUE position, in
     // Stockfish encoding. The moving piece is dirtyPiece[0] (king-refresh).
@@ -2502,6 +2528,18 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
         int caphist = g_capture_hist
             ? td.capture_history[piece][target][victim] / g_caphist_div   // qui era diviso 16
             : 0;
+
+        // GoodCapTTQuiet (Reckless #1107, default OFF): TT-move quiet = la mossa
+        // migliore nota NON e' una cattura -> le catture per essere "good" devono
+        // vincere materiale NETTO (SEE >= +1; pari e perdenti scendono tra le bad).
+        // Bypassa anche il lazy-shortcut equal-capture qui sotto (QxQ = SEE 0 = bad).
+        if (g_goodcap_ttquiet && tt_move
+            && !get_move_capture(tt_move) && !get_move_promoted(tt_move)) {
+            if (td_see_at_least(td, move, 1))
+                return SCORE_GOOD_CAPTURE + mvv_lva[piece][victim] + caphist;
+            else
+                return SCORE_BAD_CAPTURE + mvv_lva[piece][victim] + caphist;
+        }
 
         // Lazy SEE: capturing a piece of equal-or-greater value is good by
         // definition (no SEE needed). Only run SEE for "attacker > victim"

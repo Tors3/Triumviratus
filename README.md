@@ -32,7 +32,7 @@
 > [!NOTE]
 > Work in progress — not yet released or gated. 5.1 remains the current stable version.
 
-Three changes over 5.1:
+Changes over 5.1:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
   feature set with a third input block of **pawn-pair features**, giving the network explicit awareness
@@ -46,6 +46,15 @@ Three changes over 5.1:
   **−22.9 at 10+0.1**, so it activates only when the game's base time ≥ 15 s and there's an increment
   (`TMv2MinBaseMs`); below that it falls back to the original time manager. Captures the long-TC gain
   without the short-TC regression.
+- **Full UCI analysis support & portability.** `MultiPV` (score-sorted lines), `searchmoves`,
+  `UCI_ShowWDL`, `hashfull`, `currmove`/`currmovenumber`, `go mate N`, and a `Clear Hash` button — all
+  gated behind official UCI options, bench-identical at their defaults. The default network is now
+  **embedded in the binary** (a same-named file next to the executable still overrides it, and `EvalFile`
+  still loads any explicit path). Added **Android arm64** build targets (`arm64-v8a` and `armv8.2+dotprod`).
+- **Search NPS/ordering refinements** — a TT-bucket prefetch on the child position (node-identical,
+  **+1.9% NPS**) and a history-scaled good/bad capture ordering split. Baked on as **co-tune seeds**: as
+  an isolated block they measure neutral at the confirmation TC (see below), but the capture split
+  reshapes the tree, so its pruning margins are re-coordinated in the mega co-tune, not in isolation.
 
 #### Incremental gains (vs 5.1 baseline)
 
@@ -56,9 +65,13 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 |---|---|---|---|---|---|
 | 1 | SPSA mega co-tune (50 params) | 10+0.1 | 1058 | **+15.8 ± 10.9** | 99.8% |
 | 2 | TMv2 time management (gated ≥ 15 s) | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
+| 3 | Search NPS/ordering block (co-tune seeds) | 20+0.2 | 2606 | **+2.4 ± 6.4** | 77% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
-manager below 15 s. Cumulative total will be gated against 5.1 at 20+0.2 once the v2 network lands.</sub>
+manager below 15 s. Row 3 is the whole NPS/ordering block measured as one gate at the confirmation TC —
+marginal (LOS 77%, not a confirmed pass), kept because the capture-ordering split is a lever for the
+mega co-tune, where its pruning margins get re-coordinated. Cumulative total will be gated against 5.1 at
+20+0.2 once the v2 network lands.</sub>
 
 ## Triumviratus 5.1
 
