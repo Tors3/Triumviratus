@@ -719,6 +719,19 @@ static bool g_corrval_ext = true;
 int  g_corrval_fut = 43;             // futility: margine += |corr|*g/128 (prune less)
 int  g_corrval_see = 27;             // SEE: soglia -= |corr|*g/128 (prune less)
 int  g_corrval_lmr = 77;             // LMR: reduction -= |corr|*g/4096 ply (reduce less)
+// ⭐ P1a CorrUncert (2026-07-14, IDEA ORIGINALE, default OFF): il DISACCORDO tra
+// le tavole di correzione (pawn vs minor vs major) come segnale di INCERTEZZA
+// locale della static eval. Distinto da CorrValMargin/CorrValExt (che usano
+// |corr| = bias sistematico NOTO e stabile): qui misuriamo quanto le tavole
+// LITIGANO tra loro = il residuo search-eval e' instabile/contestuale in questa
+// regione = la static eval e' inaffidabile QUI -> margini di pruning piu' larghi
+// (RFP/futility potano di meno). Bassa discordia = eval affidabile = pruning
+// pieno. Nessun motore noto usa varianza/disaccordo delle correction history.
+static bool g_corr_uncert = false;
+int  g_cu_rfp = 64;    // RFP:      margine += uncert * g/64
+int  g_cu_fut = 64;    // futility: margine += uncert * g/64
+int  g_cu_cap = 64;    // cap (cp) del segnale di disaccordo
+
 // MalusScaled (5.0-B, default OFF): il malus history alle quiet provate-e-fallite scala col loro
 // move-order (le tardive ricevono malus MINORE, come Reckless). OFF = malus piatto = byte-identico.
 static bool g_malus_scaled = true;
@@ -920,7 +933,13 @@ static bool g_tt_research = false;
 int  g_tt_research_margin = 79;
 static bool g_ttcut_malus    = false;  // #3d malus alla quiet AVVERSARIA che porta a un TT-cut (duale di TTCutBonus). BAKE 2026-07-06 (true/7) REVERTITO: SPRT +15.55 Elo era falsato da oversubscription/TC senza incremento; retest pulito (10+0.1, 258g) = -17.52 Elo, LOS 4.89%, LLR non conclusivo. Riaperto, serve retest pulito prima di ridecidere.
 int  g_ttcut_malus_seen      = 3;      //    solo se il padre aveva visto <= N mosse
-int  g_goodcap_hist_div      = 0;      // #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32)
+// #4 split good/bad capture a soglia -(mvv+caphist)/div (0=off, Obsidian 32).
+// STORIA (2026-07-13/14): screening VM +6.96 @10+0.1 (LOS 97%) → bakato 32 →
+// gate-blocco a 20+0.2 NEUTRO (+2.4 ±6.4 su 2606g) → REVERTITO a 0: cambia
+// l'albero (bench 377398→487874) e COMPRIME il segnale dei gate-rete durante
+// il training v2 (serie epoca-vs-epoca non piu' comparabile). Resta candidato
+// del MEGA CO-TUNE post-v2 (li' i margini si ri-coordinano attorno allo split).
+int  g_goodcap_hist_div      = 0;
 static bool g_asp_avg        = false;  // #5a aspiration centrata sulla MEDIA degli score. Bake 2026-07-07 REVERTITO: -9.04 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = +0.62 NULLO. OFF, re-ispezione a TC lungo (TC-dipendente?)
 static bool g_asp_fhred      = true;   // #5b root: depth-1 per ogni fail-high consecutivo (evita re-search piene) [BAKE 2026-07-03]
 int  g_singular_mindepth     = 6;      // #6a gate depth del blocco singular (8=storico; Obsidian 5, Berserk 6) [BAKE 2026-07-04 blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non conclusivo ma leaning+)]
@@ -1047,6 +1066,21 @@ int g_see_lmr_linear_coef = 350;   // center; gate 2-3 valori lato laptop
 // Solo analisi: TM/voting/FollowPV/optimism restano ancorati alla linea 1; gli
 // helper lazy-SMP restano single-PV (riempiono la TT come sempre).
 static int g_multipv = 1;
+// TTPrefetch (Reckless #1085): prefetch del bucket TT del FIGLIO in td_make_move,
+// appena la chiave e' definitiva (post-legalita'). Node-identical per costruzione:
+// solo NPS. Il tentativo 2026-06-07 era NPS-neutral; ri-misurato 2026-07-13 (dopo
+// il bake di TTTwoLevel, che ha cambiato il pattern di accesso TT) su VM GCP:
+// +1.88% NPS su N=100 bench (OFF 1061381 [1011790-1106739] vs ON 1081343
+// [1048327-1113268], range quasi disgiunti). BAKED ON di default (option resta
+// per un'eventuale ablazione A/B).
+static bool g_tt_prefetch = true;
+// GoodCapTTQuiet (Reckless 0.10.0 #1107, default OFF): se la TT-move del nodo e'
+// QUIET, la mossa migliore nota non e' una cattura -> per essere ordinata "good"
+// una cattura deve VINCERE materiale netto (SEE >= +1; le pari scendono tra le
+// bad). Reckless: +1.48 +-1.98 @30k games -> micro-gain, candidato co-tune, da
+// gatare ad alto N. (La loro condizione extra noisy_count>2 e' un artefatto del
+// loro picker a stadi; qui si usa la sola condizione tt-move-quiet.)
+static bool g_goodcap_ttquiet = false;
 // UCI_ShowWDL (analisi): quando ON, le info-line riportano " wdl W D L" (permille,
 // stm-relative, somma 1000) accanto allo score. Modello logistico a un parametro
 // ancorato all'UNICO punto di calibrazione noto (NORM_CP=392 intrinseco = +100cp
@@ -1077,6 +1111,12 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SEELmrLinearCoef"))    { g_see_lmr_linear_coef = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "MultiPV"))             { g_multipv = value < 1 ? 1 : (value > 64 ? 64 : value); return true; }
     if (!strcmp(name, "UCI_ShowWDL"))         { g_show_wdl = value != 0; return true; }
+    if (!strcmp(name, "TTPrefetch"))          { g_tt_prefetch = value != 0; return true; }
+    if (!strcmp(name, "GoodCapTTQuiet"))      { g_goodcap_ttquiet = value != 0; return true; }
+    if (!strcmp(name, "CorrUncert"))          { g_corr_uncert = value != 0; return true; }
+    if (!strcmp(name, "CorrUncertRFP"))       { g_cu_rfp = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "CorrUncertFut"))       { g_cu_fut = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "CorrUncertCap"))       { g_cu_cap = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "FutilityImproving"))   { g_fut_improving    = value; return true; }
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
@@ -1810,7 +1850,12 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 
     // (TT + eval-cache prefetch tried here 2026-06-07: NODE-IDENTICAL but NPS-neutral
     //  — we are eval-bound, not TT-memory-bound, so hiding TT latency doesn't help.
-    //  Removed. The T0/pre-legality variant was -2.5% from L1 pollution.)
+    //  Removed. The T0/pre-legality variant was -2.5% from L1 pollution.
+    //  RIPROVATO 2026-07-13 dietro toggle "TTPrefetch" (default OFF = byte-identico,
+    //  Reckless #1085): da giugno e' stato bakato TTTwoLevel (bucket 2 slot), il
+    //  pattern di accesso TT e' cambiato -> vale una ri-misura NPS.)
+    if (g_tt_prefetch)
+        TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
 
     // Mirror the (now legal) move on the incremental NNUE position, in
     // Stockfish encoding. The moving piece is dirtyPiece[0] (king-refresh).
@@ -2502,6 +2547,18 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
         int caphist = g_capture_hist
             ? td.capture_history[piece][target][victim] / g_caphist_div   // qui era diviso 16
             : 0;
+
+        // GoodCapTTQuiet (Reckless #1107, default OFF): TT-move quiet = la mossa
+        // migliore nota NON e' una cattura -> le catture per essere "good" devono
+        // vincere materiale NETTO (SEE >= +1; pari e perdenti scendono tra le bad).
+        // Bypassa anche il lazy-shortcut equal-capture qui sotto (QxQ = SEE 0 = bad).
+        if (g_goodcap_ttquiet && tt_move
+            && !get_move_capture(tt_move) && !get_move_promoted(tt_move)) {
+            if (td_see_at_least(td, move, 1))
+                return SCORE_GOOD_CAPTURE + mvv_lva[piece][victim] + caphist;
+            else
+                return SCORE_BAD_CAPTURE + mvv_lva[piece][victim] + caphist;
+        }
 
         // Lazy SEE: capturing a piece of equal-or-greater value is good by
         // definition (no SEE needed). Only run SEE for "attacker > victim"
@@ -3446,6 +3503,20 @@ static inline int td_corr_value(ThreadData& td, int idx) {
     return corr;
 }
 
+// P1a CorrUncert: disaccordo (somma delle distanze a coppie / 2) tra le tre
+// tavole di correzione per QUESTA posizione, in cp, cappato a g_cu_cap.
+// Chiamata solo con g_corr_uncert on (paga 2 indici extra minor/major).
+static inline int td_corr_uncert(ThreadData& td, int idx) {
+    int p  = td.corr_hist[td.side][idx];
+    int mi = td.corr_hist_minor[td.side][td_corr_index_minor(td)];
+    int ma = td.corr_hist_major[td.side][td_corr_index_major(td)];
+    int d1 = p - mi;  if (d1 < 0) d1 = -d1;
+    int d2 = p - ma;  if (d2 < 0) d2 = -d2;
+    int d3 = mi - ma; if (d3 < 0) d3 = -d3;
+    int u = (d1 + d2 + d3) / (2 * CORR_GRAIN);
+    return u > g_cu_cap ? g_cu_cap : u;
+}
+
 // One bucket's gravity update toward `target`, clamped to +/-lim.
 static inline void td_corr_bucket_update(int& cv, int target, int w, int lim) {
     cv += (target - cv) * w / g_corr_lr_div;            // slower learning -> less noise
@@ -3792,7 +3863,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // computed once; reused to apply the correction here and to learn at node exit.
     const int corr_idx = td_corr_index(td);
     int static_eval;
-    int corr_val = 0;   // correction applied to this node's static eval (used by CorrValMargin)
+    int corr_val = 0;      // correction applied to this node's static eval (used by CorrValMargin)
+    int corr_uncert = 0;   // P1a: disaccordo tra le tavole corr = incertezza locale eval
     int node_raw_eval = tt_eval_none;   // P1.1: eval PURA (pre-corr) da salvare in TT
     if (g_lazy_eval && in_check) {
         // In check, no forward-pruning rule reads static_eval (all gated
@@ -3816,6 +3888,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                         : td_evaluate(td);
         static_eval = node_raw_eval;
         if (g_corr_hist) { corr_val = td_corr_value(td, corr_idx); static_eval += corr_val; }
+        if (g_corr_uncert && g_corr_hist && g_corr_multi)
+            corr_uncert = td_corr_uncert(td, corr_idx);
         td.eval_stack[td.ply] = static_eval;
         // 5.1 (SF :830): su un MISS abbiamo appena pagato la forward NNUE -> cache l'UNADJUSTED
         // (nn_last_unadjusted, fifty-indep) nello slot naturale (no pollution) cosi' i nodi potati
@@ -3924,6 +3998,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         if (opp_worsening) rfp_margin -= g_opp_worse_margin;                 // opp worse -> prune more
         if (g_rfp_badnode && !tt_move) rfp_margin -= g_rfp_badnode;          // Q-20a: badNode -> prune more
         if (g_corrval_margin) rfp_margin += (corr_val < 0 ? -corr_val : corr_val) * g_corrval_rfp / 128;  // heavy corr -> prune less
+        if (g_corr_uncert) rfp_margin += corr_uncert * g_cu_rfp / 64;        // P1a: tavole in disaccordo -> eval incerta -> pota meno
         if (rfp_margin < 0) rfp_margin = 0;
         if (rfp_ok && eval - rfp_margin >= beta)
             // F-018.7 FailHighSmooth: midpoint verso beta = bound TT meno gonfiato -> meno re-search.
@@ -4230,6 +4305,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             && (!g_fut_spare_quiet || quiets_searched >= 1)) {   // Q-15 + Q-20c (risparmia la prima quiet)
             int futility_margin = g_fut_base + g_fut_mult * prune_depth + ((g_improving && improving) ? g_fut_improving : 0);
             if (g_corrval_ext) futility_margin += (corr_val < 0 ? -corr_val : corr_val) * g_corrval_fut / 128;   // heavy corr -> prune less
+            if (g_corr_uncert) futility_margin += corr_uncert * g_cu_fut / 64;   // P1a: disaccordo corr -> pota meno
             
             if (eval + futility_margin <= alpha) {
                 // Phase-2: once futility fires, ALL remaining quiets at this node
