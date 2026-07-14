@@ -130,6 +130,10 @@ struct ThreadData {
     // path fino a questo ply (Berserk ss->de). Slot figlio scritto al make.
     int de_stack[max_ply + 8] = {0};
 
+    // P4 TroubleMaking: se != 0, alla root si cerca SOLO questa mossa (verifica
+    // null-window del candidato "trouble"). Per-thread -> SMP-safe.
+    int root_only_move = 0;
+
     // MultiPV (analisi): best move di root gia' assegnate alle linee precedenti
     // dell'iterazione corrente — il move loop di td_negamax le SALTA alla root
     // quando mpv_count > 0. In gioco normale (MultiPV=1) mpv_count resta 0 e il

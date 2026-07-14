@@ -76,6 +76,14 @@ using Triumviratus::Eval::NNUE::AccumulatorCaches;
 // ---------------------------------------------------------------------------
 static std::unique_ptr<Network> g_net;
 
+// Generation counter, bumped on every (re)load of g_net. AccumulatorCaches
+// (finny) are seeded from the NET'S BIASES: caches built from an older net
+// silently corrupt every refresh after an EvalFile reload (bug found
+// 2026-07-14 — a semantically-identical permuted net benched differently via
+// setoption but identically as startup default). Every cache holder compares
+// its own generation and rebuilds when stale.
+static std::atomic<int> g_net_gen{1};
+
 // Vertical flip of a bitboard (engine a8=0 <-> SF a1=0 == per-rank byteswap).
 static inline std::uint64_t vflip(std::uint64_t b) {
 #if defined(_MSC_VER)
@@ -194,6 +202,7 @@ static int load_net_impl(const char* path) {
         }
     });
     g_net = std::move(net);
+    ++g_net_gen;   // invalidate every AccumulatorCaches built from the old net
     return 1;
 }
 
@@ -264,11 +273,23 @@ struct SfPos {
     // mirrored). nn_catch_up() advances appliedPly on demand, right before an eval.
     int    appliedPly = 0;
 
+    int netGen;   // generation of g_net the caches were built from
+
     SfPos() : stm(WHITE), rule50(0), ply(0) {
         accStack = std::make_unique<AccumulatorStack>();
         caches   = std::make_unique<AccumulatorCaches>(*g_net);
+        netGen   = g_net_gen;
     }
 };
+
+// Rebuild the handle's finny caches if the network was reloaded since they were
+// built. Called at root set (never mid-search: EvalFile reload stops search first).
+inline void ensure_caches_fresh(SfPos* p) {
+    if (p->netGen != g_net_gen) {
+        p->caches = std::make_unique<AccumulatorCaches>(*g_net);
+        p->netGen = g_net_gen;
+    }
+}
 
 inline Color flip(Color c) { return c == WHITE ? BLACK : WHITE; }
 
@@ -447,6 +468,7 @@ void  nn_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
 void nn_pos_set(void* handle, int side_white, const int* pieces,
                 const int* squares, int count, int rule50) {
     SfPos* p  = static_cast<SfPos*>(handle);
+    ensure_caches_fresh(p);   // EvalFile reload -> caches seeded from old net's biases
     p->stm        = side_white ? WHITE : BLACK;
     p->rule50     = rule50;
     p->ply        = 0;
@@ -539,9 +561,11 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
         thread_local std::unique_ptr<AccumulatorCaches> sCch;
         thread_local Position                           sPos;
         thread_local StateInfo                          sSi;
-        if (!sAcc) {
-            sAcc = std::make_unique<AccumulatorStack>();
+        thread_local int                                sGen = 0;
+        if (!sAcc || sGen != g_net_gen) {
+            if (!sAcc) sAcc = std::make_unique<AccumulatorStack>();
             sCch = std::make_unique<AccumulatorCaches>(*g_net);
+            sGen = g_net_gen;
         }
         int full = eval_full_from_bb(bb, p->stm, p->rule50, sPos, sSi, *sAcc, *sCch);
         if (inc != full) {
@@ -562,9 +586,11 @@ int nn_eval(int side_white, const int* pieces, const int* squares, int count, in
     static std::unique_ptr<AccumulatorCaches> s_cch;
     static Position                           s_pos;
     static StateInfo                          s_si;
-    if (!s_acc) {
-        s_acc = std::make_unique<AccumulatorStack>();
+    static int                                s_gen = 0;
+    if (!s_acc || s_gen != g_net_gen) {
+        if (!s_acc) s_acc = std::make_unique<AccumulatorStack>();
         s_cch = std::make_unique<AccumulatorCaches>(*g_net);
+        s_gen = g_net_gen;
     }
     Piece  pcs[64];
     Square sqs[64];

@@ -618,6 +618,7 @@ void uci_loop()
             printf("option name CutoffStats type spin default 0 min 0 max 1\n");    // diagnostica move-ordering: 1=stampa 'info string FMC ...' (first-move-cutoff rate) a fine ricerca
             printf("option name TTMoveKeep type spin default 1 min 0 max 1\n");      // SF: conserva la TT move sui fail-low senza mossa -> +ttrate ai cut-node. 0=off (byte-identico), 1=on
             printf("option name TTTwoLevel type spin default 1 min 0 max 1\n");       // 5.1 BAKE ON: TT a 2 livelli (depth-preferred + always-replace), ~-4%% nodi. 0=off (1-via), 1=on
+            printf("option name LargePages type spin default 1 min 0 max 1\n");        // TT su large pages 2MB (come i pesi NNUE). 0=off (new[], baseline), 1=on. Richiede privilegio "Lock pages in memory"
             printf("option name EvalTTWrite type spin default 0 min 0 max 1\n");       // cache static eval su MISS (SF :830). PROVATO 1-via=albero x1.87 (roundtrip eval). Re-test con two-level. 0=off, 1=on
             printf("option name HistPruneMargin type spin default 2240 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 80 min 20 max 300\n");
@@ -691,6 +692,10 @@ void uci_loop()
             printf("option name CorrUncertRFP type spin default 64 min 0 max 512\n");
             printf("option name CorrUncertFut type spin default 64 min 0 max 512\n");
             printf("option name CorrUncertCap type spin default 64 min 1 max 256\n");
+            printf("option name TroubleMaking type check default false\n");    // P4: in pos. persa gioca la mossa piu' "fastidiosa" (verificata)
+            printf("option name TroubleScore type spin default 150 min 0 max 1000\n");
+            printf("option name TroubleEffort type spin default 60 min 1 max 200\n");
+            printf("option name TroubleMargin type spin default 40 min 0 max 400\n");
             printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
             printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614
@@ -990,6 +995,16 @@ void uci_loop()
             mb = atoi(input + 26);
             if (mb < 1) mb = 1;
             if (mb > max_hash) mb = max_hash;
+            init_hash_table(mb);
+        }
+
+        // UCI command: "setoption name LargePages value 0|1" — ri-alloca subito
+        // la TT con l'allocatore scelto (serve per l'A/B NPS sullo stesso binario).
+        else if (strncmp(input, "setoption name LargePages value ", 32) == 0)
+        {
+            stop_search_threads();
+            wait_for_search_done();
+            g_large_pages = atoi(input + 32) != 0;
             init_hash_table(mb);
         }
 

@@ -13,6 +13,9 @@
 
 #include "defs.h"
 #include <atomic>
+#include <cstddef>
+#include <cstring>
+#include <cstdio>
 #include "profile.h"
 
  // Hash flags
@@ -116,6 +119,11 @@ extern bool g_tt_secondary_age;   // TTSecondaryAge (R-01): decisive non-EXACT d
 // evictate per anzianita' (SF fa lo stesso). Definita in threads.cpp.
 extern bool g_tt_age_refresh;
 
+// LargePages (UCI, default ON) — alloca la TT su large pages 2MB (VirtualAlloc
+// MEM_LARGE_PAGES, come i pesi NNUE). Toggle per l'A/B NPS pulito sullo STESSO
+// binario: OFF = new[] (heap normale = baseline pre-modifica). Definita in threads.cpp.
+extern bool g_large_pages;
+
 // External variables needed for compatibility functions
 extern U64 hash_key;
 extern U64 piece_keys[12][64];
@@ -131,25 +139,50 @@ extern U64 side_key;
 #define mate_score 30000
 #endif
 
+// Large-page allocator (SF, nnue/memory.cpp). Forward-declared here to avoid
+// pulling windows.h into tt.h (incluso da 5 TU). usize == std::size_t (misc.h).
+namespace Triumviratus {
+void* aligned_large_pages_alloc(std::size_t size);
+void  aligned_large_pages_free(void* mem);
+bool  has_large_pages();
+}
+
 // Initialize hash table
 inline void init_hash_table(int mb) {
+    // Come e' stata allocata la tabella CORRENTE (per liberarla con l'allocatore
+    // abbinato). static in funzione inline = una sola istanza condivisa fra le TU.
+    static bool tt_on_large_pages = false;
+
     U64 size = (U64)mb * 1024 * 1024;
     hash_entries = size / sizeof(tt_entry);
     hash_entries &= ~3ULL;   // multiplo di 4: il bucket TT4Way (base+3) resta in bounds
 
-    // Free old table if exists
+    // Free old table if exists — free ABBINATO all'allocatore che l'ha creata.
     if (hash_table) {
-        delete[] hash_table;
+        if (tt_on_large_pages) Triumviratus::aligned_large_pages_free(hash_table);
+        else                   delete[] hash_table;
     }
 
-    hash_table = new tt_entry[hash_entries]();
-
-    // Clear table
-    for (U64 i = 0; i < hash_entries; i++) {
-        hash_table[i].key = 0;
-        hash_table[i].data = 0;
-        hash_table[i].ext = 0;
+    // TT su large pages (2MB): meno miss TLB sugli accessi random alla tabella.
+    // L'allocatore fa fallback automatico a pagine normali se il privilegio
+    // "Lock pages in memory" non e' concesso (nessun crash, solo niente gain).
+    // Con LargePages OFF si torna al new[] (baseline pre-modifica) per l'A/B.
+    const U64 bytes = hash_entries * sizeof(tt_entry);
+    if (g_large_pages) {
+        hash_table = static_cast<tt_entry*>(Triumviratus::aligned_large_pages_alloc(bytes));
+        std::memset(hash_table, 0, bytes);   // VirtualAlloc azzera su Win; memset copre il fallback aligned_alloc
+        tt_on_large_pages = true;
+    } else {
+        hash_table = new tt_entry[hash_entries]();   // () = zero-inizializzata
+        tt_on_large_pages = false;
     }
+
+    // Report esplicito (per misurare "bene"): distingue disabilitato da fallback.
+    // "unavailable" = privilegio mancante O RAM fisica non contigua (frammentazione,
+    // err 1450): su Windows desktop e' spesso il secondo, non c'e' rimedio nel motore.
+    const char* lp = !g_large_pages ? "off (disabled)"
+                   : Triumviratus::has_large_pages() ? "ON" : "off (unavailable)";
+    printf("info string Hash: %d MB, large pages %s\n", mb, lp);
 }
 
 // Clear hash table

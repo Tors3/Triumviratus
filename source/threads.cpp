@@ -439,6 +439,7 @@ int g_caphist_div = 25;   // bakato SPSA 16->14 (rock-solid in convergenza)
 bool g_tt_4way = false;
 void set_tt_4way(bool v) { g_tt_4way = v; }
 bool g_tt_twolevel = true;    // 5.1 BAKE ON (TT2L on vs off: +4.55 LOS 86%% @1758g 12+0.12, mai neg, -4%% nodi). bucket 2-slot depth-preferred + always-replace
+bool g_large_pages = true;    // LargePages: TT su large pages 2MB (default ON). OFF = new[] (baseline) per A/B NPS
 
 // Sentinella "nessuna static eval a questo ply" per eval_stack (FIX P0.6): scritta
 // ai nodi in scacco quando LazyEval salta la NNUE. Fuori dal range eval reale.
@@ -731,6 +732,17 @@ static bool g_corr_uncert = false;
 int  g_cu_rfp = 64;    // RFP:      margine += uncert * g/64
 int  g_cu_fut = 64;    // futility: margine += uncert * g/64
 int  g_cu_cap = 64;    // cap (cp) del segnale di disaccordo
+
+// ⭐ P4 TroubleMaking (2026-07-14, IDEA ORIGINALE, default OFF): in posizione
+// PERSA (score < -Score), se un'altra mossa di root e' costata all'avversario
+// uno sforzo COMPARABILE alla best (NodeCache root: nodi >= best*Effort% =
+// difficile da refutare) e una verifica null-window a depth/2 conferma che vale
+// quasi quanto la best (>= score-Margin), gioca QUELLA: massimizza le chances
+// pratiche ("complica la vita") a costo teorico limitato e verificato.
+static bool g_trouble = false;
+int  g_trouble_score  = 150;   // "persa" = score < -N (unita' search)
+int  g_trouble_effort = 60;    // candidato se nodi >= best_nodes * N%
+int  g_trouble_margin = 40;    // verifica: cand >= score - N
 
 // MalusScaled (5.0-B, default OFF): il malus history alle quiet provate-e-fallite scala col loro
 // move-order (le tardive ricevono malus MINORE, come Reckless). OFF = malus piatto = byte-identico.
@@ -1117,6 +1129,10 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CorrUncertRFP"))       { g_cu_rfp = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrUncertFut"))       { g_cu_fut = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrUncertCap"))       { g_cu_cap = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TroubleMaking"))       { g_trouble = value != 0; return true; }
+    if (!strcmp(name, "TroubleScore"))        { g_trouble_score = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "TroubleEffort"))       { g_trouble_effort = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "TroubleMargin"))       { g_trouble_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "FutilityImproving"))   { g_fut_improving    = value; return true; }
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
@@ -4231,6 +4247,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // Ora move   garantita essere la migliore
         // `move` is supplied by mp_next() in the while condition above.
         if (move == excluded_move) continue;   // singular search: skip the TT move
+        // P4 TroubleMaking: verifica del candidato -> alla root SOLO quella mossa
+        if (is_root_node && td.root_only_move && move != td.root_only_move) continue;
         // searchmoves (analisi): se una whitelist e' attiva, alla root cerca SOLO
         // quelle mosse. Vale per la linea principale e per tutte le linee MultiPV.
         if (is_root_node && g_searchmoves_count) {
@@ -5327,6 +5345,44 @@ static void thread_search(int thread_id, int max_depth) {
                 td.best_score = mpv_buf[ord[0]].score;
             }
             td.mpv_count = 0;   // le iterazioni/ricerche successive ripartono senza esclusioni
+        }
+
+        // ---- P4 TroubleMaking (solo main thread, posizione persa) ----
+        // Candidato = mossa root (≠ best) col max sforzo cumulativo nella NodeCache
+        // (stessa entry per best e candidato -> confronto omogeneo). Se lo sforzo e'
+        // comparabile (>= Effort% della best) una verifica null-window a depth/2
+        // conferma che vale >= score-Margin -> best_move scambiata (score/PV restano
+        // quelli teorici: cambio solo la mossa GIOCATA, non il display).
+        if (g_trouble && thread_id == 0 && mpv_nlines == 1 && current_depth >= 8
+            && td.best_move && score < -g_trouble_score && score > -mate_score
+            && !stop_threads.load(std::memory_order_relaxed)) {
+            ThreadData::NCEntry* e = nc_try(td, td.hash_key);
+            if (e) {
+                int cand = 0; U64 cn = 0, bn = 0;
+                for (int i = 0; i < ThreadData::NC_MOVES && e->mv[i]; i++) {
+                    if (e->mv[i] == td.best_move) bn = e->mv_nodes[i];
+                    else if (e->mv_nodes[i] > cn) { cand = e->mv[i]; cn = e->mv_nodes[i]; }
+                }
+                if (cand && bn && cn * 100 >= bn * (U64)g_trouble_effort) {
+                    int save_pv[max_ply + 8];
+                    int save_len = td.pv_length[0];
+                    memcpy(save_pv, td.pv_table[0], sizeof(save_pv));
+                    nn_root_sync(td);
+                    td.root_only_move = cand;
+                    int target = score - g_trouble_margin;
+                    int v = td_negamax(td, target - 1, target, current_depth / 2, false);
+                    td.root_only_move = 0;
+                    memcpy(td.pv_table[0], save_pv, sizeof(save_pv));
+                    td.pv_length[0] = save_len;
+                    if (!stop_threads.load(std::memory_order_relaxed) && v >= target) {
+                        td.best_move = cand;
+                        // ristampa l'info-line con la mossa scambiata in testa alla PV:
+                        // le GUI/fastchess confrontano bestmove col primo move della PV
+                        // (senza questa riga: warning "Bestmove does not match last PV").
+                        print_search_info(td, current_depth, score, 0, &cand, 1);
+                    }
+                }
+            }
         }
 
         // "go mate N": un'iterazione completata conferma un matto NOSTRO in <= N
