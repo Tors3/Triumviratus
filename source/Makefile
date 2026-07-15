@@ -116,6 +116,38 @@ ifneq (,$(filter android-dotprod,$(MAKECMDGOALS)))
 endif
 
 OPT      := -O3 -funroll-loops
+
+# ---- LTO / PGO (Linux, clang++ only) ----------------------------------------
+#   make avx512 CXX=clang++ LTO=1            -> ThinLTO sui target normali
+#   make pgo-avx512 CXX=clang++ [BOOK=...]   -> pipeline PGO completa (2 fasi):
+#     fase A strumentata -> pgo_train.py (workload UCI reale) -> llvm-profdata
+#     merge -> fase B -fprofile-use. Stessa ricetta della build Windows
+#     (build_pgo_clang_6_trann1.ps1) che vale ~+9%. Il motore ha bisogno della
+#     rete a runtime durante il training (embedded se il .nnue e' alla root,
+#     altrimenti accanto all'exe). g++ NON supportato per questi target.
+COMPILER_VER := $(shell $(CXX) --version 2>/dev/null)
+IS_CLANG     := $(findstring clang,$(COMPILER_VER))
+ifeq ($(LTO),1)
+  ifeq (,$(IS_CLANG))
+    $(error LTO=1 richiede CXX=clang++ (-flto=thin non esiste su g++))
+  endif
+  OPT += -flto=thin
+endif
+PROFDIR       ?= pgo_profiles
+BOOK          ?= $(HOME)/engine/book_8mvs.epd
+TRAINER       ?= ../pgo_train.py
+PGO_POS       ?= 200
+PGO_WORKERS   ?= $(shell nproc 2>/dev/null || echo 8)
+LLVM_PROFDATA ?= llvm-profdata
+ifeq (gen,$(PGO_PHASE))
+  OPT  += -flto=thin -fprofile-generate=$(PROFDIR) -mtune=native
+  DEFS += -DCLANG_PGO_GEN            # quit-handler flusha il profilo (uci_mt.cpp)
+endif
+ifeq (use,$(PGO_PHASE))
+  OPT  += -flto=thin -fprofile-use=$(PROFDIR)/merged.profdata -mtune=native \
+          -Wno-profile-instr-out-of-date -Wno-profile-instr-unprofiled
+endif
+
 CXXFLAGS ?= -std=c++17 $(OPT) -w $(DEFS) $(ARCH) -pthread -I. -Ifathom
 CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 
@@ -139,4 +171,34 @@ $(EXE): $(OBJS)
 clean:
 	rm -f $(OBJS) $(EXE)
 
-.PHONY: all avx512 profile release android android-dotprod clean
+# ---- PGO pipeline (ricorsivo: clean fra le fasi = niente .o con flag misti) --
+pgo-avx512:
+ifeq (,$(IS_CLANG))
+	$(error pgo-avx512 richiede CXX=clang++ (formato profdata LLVM))
+endif
+	@mkdir -p $(PROFDIR) && rm -f $(PROFDIR)/*.profraw
+	@test -f $(BOOK) || echo "[!] libro $(BOOK) assente: pgo_train.py usera' i FEN builtin"
+	$(MAKE) clean
+	$(MAKE) avx512 CXX=$(CXX) PGO_PHASE=gen
+	LLVM_PROFILE_FILE="$(PROFDIR)/prof_%p.profraw" \
+	  python3 $(TRAINER) ./$(EXE) 0 $(BOOK) $(PGO_POS) --workers $(PGO_WORKERS)
+	$(LLVM_PROFDATA) merge -output=$(PROFDIR)/merged.profdata $(PROFDIR)/*.profraw
+	$(MAKE) clean
+	$(MAKE) avx512 CXX=$(CXX) PGO_PHASE=use
+	@echo "[+] PGO fatto: ./$(EXE)  (verifica: bench 13 deve dare la stessa firma della build liscia)"
+
+pgo-avx2:
+ifeq (,$(IS_CLANG))
+	$(error pgo-avx2 richiede CXX=clang++ (formato profdata LLVM))
+endif
+	@mkdir -p $(PROFDIR) && rm -f $(PROFDIR)/*.profraw
+	$(MAKE) clean
+	$(MAKE) all CXX=$(CXX) PGO_PHASE=gen
+	LLVM_PROFILE_FILE="$(PROFDIR)/prof_%p.profraw" \
+	  python3 $(TRAINER) ./$(EXE) 0 $(BOOK) $(PGO_POS) --workers $(PGO_WORKERS)
+	$(LLVM_PROFDATA) merge -output=$(PROFDIR)/merged.profdata $(PROFDIR)/*.profraw
+	$(MAKE) clean
+	$(MAKE) all CXX=$(CXX) PGO_PHASE=use
+	@echo "[+] PGO fatto: ./$(EXE)"
+
+.PHONY: all avx512 profile release android android-dotprod clean pgo-avx512 pgo-avx2

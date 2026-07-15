@@ -373,6 +373,10 @@ void update_accumulator_incremental(Color                     perspective,
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
     }
+    // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh e' stato
+    // PROVATO e MISURATO -12.9% NPS su Zen4 (bisect interleaved, nodi identici:
+    // pessimizzazione di codegen del template caldo, non volume di prefetch).
+    // Il prefetch resta SOLO sui threat rows dentro append_changed_indices.
 
     apply_combined(perspective, featureTransformer, computed, target_state, psqAdded, psqRemoved,
                    thrAdded, thrRemoved);

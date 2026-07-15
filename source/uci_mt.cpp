@@ -611,6 +611,7 @@ void uci_loop()
             printf("option name ProbCutImprove type spin default 0 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
             printf("option name CorrCap type spin default 48 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 293 min 64 max 2048\n");
+            printf("option name CorrAsym type spin default 128 min 64 max 192\n");   // Tier-1: correzioni positive piu' lente (/128); 128=simmetrico
             printf("option name ContHistDiv type spin default 3635 min 1000 max 12000\n");
             printf("option name LmrDepthPrune type spin default 1 min 0 max 1\n");  // SF: gating futility+conthist sulla depth ridotta-LMR (chiude gap-midgame). 0=off, 1=on
             printf("option name LmrDepthHistDiv type spin default 4368 min 500 max 30000\n");  // PASSO1 SF: prune_depth += history/div (protezione-history). Solo con LmrDepthPrune ON
@@ -1026,7 +1027,21 @@ void uci_loop()
             if (resolved.empty())
                 printf("info string EvalFile: '%s' not found (kept current net)\n", val);
             else if (nn_reload_big(resolved.c_str()))
+            {
+                // Net swapped: EVERY cached eval derived from the old net is stale
+                // (same family as the finny g_net_gen bug, 2026-07-14). The eval
+                // cache has no generation tag, and the TT carries old-net static
+                // evals (ext eval16, consumed by g_tt_static_eval) plus scores
+                // searched under the old eval -> clear both. Rare, search-stopped
+                // operation; gates load the net once at startup (TT empty) so match
+                // runs pay nothing. NOT cleared: corr_hist (self-corrects, SF keeps
+                // it too). NB: "setoption EvalScale" mid-session has the same
+                // staleness family (diagnostic-only option, documented here).
+                for (size_t i = 0; i < thread_data.size(); ++i)
+                    memset(thread_data[i].eval_cache, 0, sizeof(thread_data[i].eval_cache));
+                clear_hash_table();
                 printf("info string EvalFile: loaded %s\n", resolved.c_str());
+            }
             else
                 printf("info string EvalFile: failed to load %s (kept current net)\n", resolved.c_str());
             fflush(stdout);

@@ -33,6 +33,7 @@
 #endif
 
 #include "nnue/bitboard.h"
+#include "nnue/memory.h"           // LargePagePtr / make_unique_large_page (pesi rete su large pages)
 #include "nnue/position.h"
 #include "nnue/types.h"
 #include "nnue/evaluate.h"         // EvalFileDefaultName (nome del net embeddato)
@@ -70,11 +71,18 @@ using Triumviratus::Eval::NNUE::AccumulatorCaches;
 
 // ---------------------------------------------------------------------------
 // The single immutable network, loaded once at startup (nn_load_net) and
-// optionally swapped at runtime (nn_reload_big). ~90 MB of weights -> heap.
-// AccumulatorCaches are built per handle FROM this net, so it must be loaded
-// before any nn_pos_create().
+// optionally swapped at runtime (nn_reload_big). ~90 MB of weights, walked on
+// EVERY eval -> the TLB-hottest data in the engine, so it lives on large pages
+// (aligned_large_pages_alloc: Windows VirtualAlloc MEM_LARGE_PAGES with silent
+// fallback to regular pages on failure/no-privilege; Linux 2MB-aligned +
+// madvise(MADV_HUGEPAGE) = THP). AccumulatorCaches are built per handle FROM
+// this net, so it must be loaded before any nn_pos_create().
+// Immortalized (leak-at-exit by design): the large-page deleter may exit() on
+// VirtualFree failure and the Linux path locks a mutex whose cross-TU static
+// destruction order is unspecified -- never run it during static destruction.
+// Reload-time frees (search stopped) are unaffected.
 // ---------------------------------------------------------------------------
-static std::unique_ptr<Network> g_net;
+static LargePagePtr<Network>& g_net = *new LargePagePtr<Network>();
 
 // Generation counter, bumped on every (re)load of g_net. AccumulatorCaches
 // (finny) are seeded from the NET'S BIASES: caches built from an older net
@@ -156,6 +164,7 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
     return v;
 }
 
+
 // ---------------------------------------------------------------------------
 // Net loading
 // ---------------------------------------------------------------------------
@@ -185,7 +194,7 @@ static int load_net_impl(const char* path) {
     }
     Eval::NNUE::EvalFile ef{};
     ef.defaultName = EvalFileDefaultName;  // serve al match nome-default -> embedded
-    auto net = std::make_unique<Network>(ef);
+    auto net = make_unique_large_page<Network>(ef);   // large pages (fallback automatico)
     net->load(".", load_name);  // dirs {"<internal>","",rootDir}: "" opens the path as given
     // verify() invokes the callback with a one-line SUCCESS info string when the net
     // loaded, or with a multi-line "ERROR: ..." block followed by exit(EXIT_FAILURE)
@@ -224,6 +233,14 @@ void nn_acc_stats(void) {}
 // ("incremental off") to fall back to the M2 full-refresh A/B base.
 static bool g_incremental = true;
 static bool g_verify      = false;
+
+// NB (2026-07-15): "PsqtFastPath" (eval = solo psqt del net ai nodi |psqt|>soglia,
+// saltando pairwise+propagate) PROVATO e UCCISO CON MISURA su build PGO:
+// thr700 fire 75% -> albero +154%; thr2000 fire 16% -> +28%; thr4000 fire 0.6%
+// -> +4%; time-to-depth SEMPRE peggiore. Terza falsificazione della famiglia
+// "eval economica ai nodi decisi" (smallnet SF -17 Elo, SPLE): la search e'
+// co-adattata all'eval piena, ogni surrogato grossolano gonfia l'albero piu'
+// di quanto il forward risparmiato ripaghi. NON riprovare varianti.
 // N-1 lazy mirror apply: default ON (see nn_catch_up below). OFF = pre-N1 eager
 // apply (nn_pos_do mirrors the move immediately), kept for bisection.
 static bool g_lazy_mirror = true;

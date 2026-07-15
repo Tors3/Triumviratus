@@ -54,6 +54,32 @@ one NNUE generation newer.
 
 ---
 
+## `rubicon-alea-v2` — the Triumviratus 6.0 network (Stage-3 refining + PawnPair graft)
+
+> **Naming** (net file: `nn-rubicon-alea-v2.nnue`). The **Stage-3 refining** foretold by `-v1`: same own-lineage
+> `alea` family, refined on the project's **own** self-play data and extended with a new input-feature block.
+
+The project's **third own-lineage network**. It is a **fine-tune of `rubicon-alea-v1`** (not a from-scratch train —
+exactly how Stockfish refines its nets between architecture changes), with two changes over v1: it is trained
+partly on **Triumviratus's own self-play data**, and the input is extended with a grafted **PawnPair** feature block.
+
+| | |
+|---|---|
+| **Architecture** | `Full_Threats + HalfKAv2_hm^ + **PawnPair**`, **L1 = 1024, L2 = 31, L3 = 32**, 8 LayerStacks (SFNNv13 + own PawnPair block) |
+| **Graft** | the PawnPair feature block is **zero-initialized and grafted** onto the trained v1 weights — the graft is bit-identical to v1 at init (verified: same node signature, zero eval mismatch), so training starts from v1's strength and *adds* the new signal rather than relearning |
+| **Method** | **fine-tune from `rubicon-alea-v1`**; `nnue-pytorch`, batch 65536, epoch-size 100M, **λ = 0.75** constant, one-cycle gamma 0.997 |
+| **Two-group LR** | base weights **1e-4** (gentle refine, no forgetting); the zero-init PawnPair block **1e-3** (10× — it starts from nothing and must learn fast) |
+| **Data** | **Leela T80** (full 2022, unseen by v1, + part of 2023 — ~327 GB) **plus the project's own self-play** (~67 M positions from 5.1 / v1 self-play), mixed at ≈ 6.5 % own (`OWN_REPEAT=10`) — SF-style "add own data to the refine", not replace |
+| **Serialization** | shipped **FT-permuted** (feature-transformer neuron reordering for sparsity) — eval **bit-identical**, ≈ +2 % NPS for free |
+| **Hardware** | GCP **g4** (RTX PRO 6000 Blackwell), spot instance |
+| **Result (net-isolated)** | v2 vs v1 on the **same** engine, 10+0.1: **+13.3 Elo** (ep199) → **+16.1 Elo** (ep219) — the refine adds real strength over v1, still climbing when gated |
+| **Result (release)** | **Triumviratus 6.0 + v2 vs 5.1 + v1**, long TC (20+0.2): **+30.9 ± 9.6 Elo** (LLR passed H1, 1208 games) — net refine + 6.0 search gains combined |
+
+Same honest position as the rest of the `rubicon` family: **our weights**, our data, on Stockfish's architecture
+and trainer. The PawnPair block is our own extension to the SFNNv13 feature set.
+
+---
+
 ## What "own-lineage" means (and does not)
 
 - **Means:** the network *weights* shipped with Triumviratus are trained by the project, from our own data, with no

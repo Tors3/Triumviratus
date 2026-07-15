@@ -852,6 +852,10 @@ int g_qs_bc_margin = 200;     // cuscino sopra il best-case (scala-56, SPSA)
 // Correction-history tunables (only active when CorrHist is on).
 int g_corr_cap = 48;    // max correction applied to static eval (cp). [SPSA histmulti 32->44 RIGETTATO: -1.3 LOS23% @11438 -> default]
 int g_corr_lr_div = 293;   // learning-rate divisor (bigger = slower/steadier learning) [histmulti 512->565 rigettato]
+// CorrAsym (Tier-1 corrections, port SF 7a7c033a): le correzioni POSITIVE (nudge verso l'alto)
+// imparano piu' lente delle negative. /128 sul peso quando (target-cv)>0. 128 = simmetrico =
+// byte-identico (default). Co-tune verso ~100-110 (SF ~18% piu' lente). Solo con CorrHist on.
+int g_corr_asym = 128;
 // Continuation-history pruning tunables (only active when ContHistPrune is on).
 int g_conthist_red_div = 3635;  // LMR: continuation-history reduction divisor [SPSA-tuned 5000->6595; histmulti 6595->7050 rigettato]
 // Aggressive-LMR tunables (only active when AggrLMR is on).
@@ -1149,6 +1153,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "ProbCutImprove"))      { g_probcut_improve  = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrCap"))             { g_corr_cap         = value; return true; }
     if (!strcmp(name, "CorrLearnDiv"))        { g_corr_lr_div      = value; return true; }
+    if (!strcmp(name, "CorrAsym"))            { g_corr_asym        = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "CorrContWeight"))      { g_corr_cont_weight = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrNonPawnWeight"))   { g_corr_np_weight   = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "ContHistDiv"))         { g_conthist_red_div = value; return true; }
@@ -3535,7 +3540,10 @@ static inline int td_corr_uncert(ThreadData& td, int idx) {
 
 // One bucket's gravity update toward `target`, clamped to +/-lim.
 static inline void td_corr_bucket_update(int& cv, int target, int w, int lim) {
-    cv += (target - cv) * w / g_corr_lr_div;            // slower learning -> less noise
+    int delta = target - cv;
+    // CorrAsym: nudge verso l'alto piu' lento (g_corr_asym/128). 128 -> w*128/128 = w = byte-identico.
+    int wa = (delta > 0) ? (w * g_corr_asym / 128) : w;
+    cv += delta * wa / g_corr_lr_div;                   // slower learning -> less noise
     if (cv >  lim) cv =  lim;
     else if (cv < -lim) cv = -lim;
 }
