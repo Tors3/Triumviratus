@@ -56,7 +56,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 |---|---|---|---|---|---|---|
 | 1 | SPSA mega co-tune (50 params) | 2026-07-13 | 10+0.1 | 1058 | **+15.8 ± 10.9** | 99.8% |
 | 2 | TMv2 time management (gated ≥ 15 s) | 2026-07-13 | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
-| 3 | v2 network + search re-tune + DoDeeper + NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
+| 3 | v2 network + search re-tune + large-pages NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
@@ -64,8 +64,9 @@ manager below 15 s.</sub>
 <sub>¹ Row 3 is a **cumulative development snapshot** measured against the state after rows 1–2 (mega
 co-tune + TMv2 on the graft-time, v1-identical network). It bundles four changes at once: the
 mid-training **`nn-rubicon-alea-v2`** network (checkpoint ep439 of ~800, so this *understates* the final
-net), an SPSA re-tune of the search on the new network, the **DoDeeper** LMR re-search extension (+12.95 ±
-11.6 LOS 98.6% in its own 15+0.15 test), and the **large-pages / NPS** engine changes. The definitive
+net), an SPSA re-tune of the search on the new network, and the **large-pages / NPS** engine changes. (The
+**DoDeeper** LMR re-search extension was enabled here too but is TC-dependent — +12.95 at 15+0.15,
+neutral +0.9 at this 20+0.2 — so it contributes little to this row and is not baked.) The definitive
 version-bump gate against 5.1 at 20+0.2 will run once the v2 network finishes training.</sub>
 
 ## Triumviratus 5.1
