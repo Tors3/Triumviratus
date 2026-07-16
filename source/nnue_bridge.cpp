@@ -1,7 +1,9 @@
-// Triumviratus 5.0 NNUE bridge — routes the engine's eval through the VENDORED
-// Stockfish-master SFNNv13 network code (nnue/): ThreatFeatureSet=FullThreats
-// + PSQFeatureSet=HalfKAv2_hm, L1=1024, 8 LayerStacks. This is Stockfish's own
-// ultramodern NNUE machinery adapted into our isolated Triumviratus:: namespace.
+// Triumviratus NNUE bridge — routes the engine's eval through the TRANN1 network
+// code (nnue/): ThreatFeatureSet=FullThreats + PSQFeatureSet=HalfKAv2_hm +
+// PawnFeatureSet=PawnPair + PassedFeatureSet=PassedPawns, L1=1024, 8 LayerStacks.
+// The machinery is Stockfish-master's SFNNv13 (GPLv3, attribution in COPYING/README)
+// adapted into our isolated Triumviratus:: namespace; the last two input blocks are
+// ours, so the net format diverges from SFNNv13 (see nnue/nnue/nnue_architecture.h).
 //
 // M2 drive model (full refresh): each search thread owns an opaque handle holding
 // an SF Position + a per-thread AccumulatorStack + AccumulatorCaches. The handle
@@ -214,6 +216,8 @@ static int load_net_impl(const char* path) {
     ++g_net_gen;   // invalidate every AccumulatorCaches built from the old net
     return 1;
 }
+
+const char* nn_default_net_name(void) { return EvalFileDefaultName; }
 
 int nn_load_net(const char* net_path) { return load_net_impl(net_path); }
 int nn_reload_big(const char* net_path) { return load_net_impl(net_path); }

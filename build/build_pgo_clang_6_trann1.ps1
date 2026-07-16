@@ -1,17 +1,16 @@
 ﻿# =============================================================================
-#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 6.0 TRANN1 (SFNNv13 + PawnPair).
-#  Adattato da build_pgo_clang_5.ps1 (che era BULLET) al motore v13: la rete e'
-#  la nostra own-lineage nn-rubicon-alea-v2.nnue (SFNNv13, caricata a runtime
-#  ACCANTO all'exe). Niente bullet -> niente PGO_BULLET_NET.
+#  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 6.0 TRANN1
+#  (= SFNNv13-derived + blocchi PawnPair e PassedPawns). La rete e' la nostra
+#  own-lineage nn-rubicon-alea-v3.nnue, caricata a runtime ACCANTO all'exe
+#  (sorgente: project-root; lo script la copia in x64\Release).
 #
 #  4 fasi:  1) STRUMENTA (clang-cl + ThinLTO + -fprofile-generate)
 #           2) ALLENA   (pgo_train.py su posizioni reali -> *.profraw)
 #           3) MERGE    (llvm-profdata merge -> clang.profdata)
 #           4) OTTIMIZZA(clang-cl + ThinLTO + -fprofile-use -> exe finale)
 #
-#  USO:  .\build_pgo_clang_5_v13.ps1                    # Triumviratus_5.1_avx512.exe (default -Name)
-#        .\build_pgo_clang_5_v13.ps1 -Positions 500 -Release   # piu' training + build release (nasconde opzioni tuning)
-#  NON passare -Name a mano: il default e' gia' "Triumviratus_5.1" -> exe finale "Triumviratus_5.1_avx512.exe".
+#  USO:  .\build_pgo_clang_6_trann1.ps1 -Arch both -Release -Name "Triumviratus_6.0"
+#        (di norma NON lanciarlo a mano: lo chiama build_release_all.ps1)
 #  Allena/misura a laptop SCARICO. Toolset: VS LLVM clang + llvm-profdata.
 # =============================================================================
 param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
@@ -28,8 +27,8 @@ if (-not (Test-Path $proj)) { throw "vcxproj 6.0 non trovato: $proj" }
 $projDir = Split-Path $proj
 $outDir  = "$projDir\x64\Release"
 $exe     = "$outDir\Triumviratus_6.0.exe"
-$net5    = "nn-rubicon-alea-v2.nnue"                     # rete own-lineage (runtime, accanto all'exe)
-$net5src = "$outDir\nn-rubicon-alea-v2.nnue"             # gia accanto all exe (zerograft finche la v2 non e allenata)
+$net5    = "nn-rubicon-alea-v3.nnue"                     # rete own-lineage (runtime, accanto all'exe)
+$net5src = "$projDir\$net5"                              # sorgente: project-root (= dove sta la rete di lavoro)
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsRoot  = if (Test-Path $vswhere) { (& $vswhere -latest -property installationPath) } else { "" }
@@ -54,11 +53,12 @@ if (-not (Test-Path $profdata)) { throw "llvm-profdata mancante: $profdata (VS I
 if (-not (Test-Path $book))     { throw "Libro EPD non trovato: $book (serve per il training PGO)" }
 if (-not (Test-Path $trainer))  { throw "pgo_train.py non trovato: $trainer" }
 
-# La rete SFNNv13 deve stare accanto all'exe: il motore la carica all'avvio (FATAL se manca).
+# La rete TRANN1 deve stare accanto all'exe: il motore la carica all'avvio (FATAL se manca)
+# e il training PGO deve girare sulla rete VERA. Sorgente = project-root, destinazione = outDir.
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 if (-not (Test-Path "$outDir\$net5")) {
-    if (Test-Path $net5src) { Copy-Item $net5src "$outDir\$net5" -Force }
-    else { throw "rete SFNNv13 non trovata: $net5src" }
+    if (Test-Path $net5src) { Copy-Item $net5src "$outDir\$net5" -Force; Write-Host "  rete copiata: $net5src -> $outDir" -ForegroundColor DarkGray }
+    else { throw "rete TRANN1 non trovata (ne' in $outDir ne' in $projDir): $net5" }
 }
 
 $common = @("-p:Configuration=Release","-p:Platform=x64","-p:PlatformToolset=ClangCL","-m","-nologo","-v:minimal","-p:ClangProfileLibDir=$clangLibDir")

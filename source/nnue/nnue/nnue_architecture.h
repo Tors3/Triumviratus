@@ -40,9 +40,11 @@ namespace Triumviratus::Eval::NNUE {
 
 // Input features used in evaluation function.
 // TRANN1 (Triumviratus Rubicon Alea NNUE 1): architettura derivata da
-// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + terzo blocco
-// di input PawnPair (4560 feature) assente in SF. Il nome proprio riflette
-// la divergenza reale, non nasconde la derivazione.
+// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + DUE blocchi di
+// input assenti in SF: PawnPair (4560 feature) e PassedPawns (96 feature).
+// Il nome proprio riflette la divergenza reale, non nasconde la derivazione:
+// il formato del net NON e' piu' SFNNv13 (hash diverso) e un net SFNNv13 non
+// e' caricabile.
 using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 using PawnFeatureSet   = Features::PawnPair;

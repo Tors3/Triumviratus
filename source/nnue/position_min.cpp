@@ -1,4 +1,4 @@
-// Triumviratus bridge glue for the vendored SFNNv13 NNUE:
+// Triumviratus bridge glue for the TRANN1 NNUE (SFNNv13-derived machinery):
 //   (1) set_pieces() — minimal Position setup from a piece list (full refresh path).
 //   (2) update_piece_threats<> — ported VERBATIM (scalar path) from the master
 //       position.cpp so the engine can drive the Position INCREMENTALLY (M3): the

@@ -74,7 +74,7 @@ partly on **Triumviratus's own self-play data**, and the input is extended with 
 | **Finishing** | **LR-anneal fine-tune** from ep459 with a fresh, steeper decay (base 2.5e-5 / PawnPair 2.5e-4 — the LR the main run had reached — γ = 0.95, ~50 epochs), then **over_last**: the shipped weights are the **average of the last 3 anneal checkpoints** — the same tail-averaging recipe that produced v1's best net. Validated net-isolated vs the plain ep459 checkpoint: **+3.8 ± 7.7 Elo** over 2004 games (15+0.15) — parity with a positive lean, so the variance-reduced average is what ships |
 | **Serialization** | shipped **FT-permuted** (feature-transformer neuron reordering for sparsity) — eval **bit-identical**, ≈ +2 % NPS for free |
 | **Hardware** | GCP **g4** (RTX PRO 6000 Blackwell), spot instance |
-| **Result (net-isolated)** | v2 vs v1 on the **same** engine, 10+0.1: **+13.3 Elo** (ep199) → **+16.1 Elo** (ep219) — the refine adds real strength over v1, still climbing when gated |
+| **Result (net-isolated)** | v2 vs v1 on the **same** engine — during training, 10+0.1: **+13.3 Elo** (ep199) → **+16.1 Elo** (ep219). **Final shipped net vs v1, 20+0.2: +18.27 ± 9.94 Elo (LOS 99.98 %, 1104 games)** — measured against v1 with both new blocks zero-grafted (architecturally v3-format, evaluation bit-identical to v1), so a single binary plays both sides and the comparison isolates the network |
 | **Result (release)** | **Triumviratus 6.0 + v2 vs 5.1 + v1**, long TC (20+0.2): **+30.9 ± 9.6 Elo** (LLR passed H1, 1208 games) — net refine + 6.0 search gains combined |
 
 Same honest position as the rest of the `rubicon` family: **our weights**, our data, on Stockfish's architecture
@@ -82,26 +82,36 @@ and trainer. The PawnPair block is our own extension to the SFNNv13 feature set.
 
 ---
 
-## `rubicon-alea-v3` — in progress (PassedPawns graft, screening)
+## `rubicon-alea-v3` — the PassedPawns network
 
-Not shipped as the default net yet, but a **validated fallback candidate already exists**. Same graft
-methodology as PawnPair: a **PassedPawns** feature block (96 features — one per passed pawn, 48 oriented
-squares × own/enemy) zero-init grafted onto the v2 weights, engine and trainer verified bit-identical at
-init. A cheap **frozen-base screening** (only the new block trains, `lr=1e-3`, the rest of the network
-frozen) was run to decide whether the feature is worth a full two-group fine-tune.
+> **Naming** (net file: `nn-rubicon-alea-v3.nnue`). Same own-lineage `alea` family, extended with a
+> second grafted input block: **passed pawns**.
 
-**Result: after only ~4 epochs of frozen-base training**, net-isolated vs v2 (15+0.15, fixed games,
-same engine/options): **+6.96 ± 6.56 Elo, LOS 98.1 % over 2596 games** — three independent reads, all
-positive, LOS rising (94 % → 91 % → 98 %) rather than regressing to noise. Treated as confirmed for
-project purposes. **This checkpoint is archived and shippable as-is in the worst case** even if the
-ongoing full training doesn't improve on it further.
+The project's **fourth own-lineage network**, and the second extension of the SFNNv13 feature set with
+a Triumviratus-specific block. Where `PawnPair` gave the network pawn-*structure* geometry, `PassedPawns`
+gives it the single most documented NNUE blind spot: **which pawns are passed** — a relational property
+that requires combining the enemy pawn configuration across three files, and that `HalfKAv2_hm`
+(king-relative, per-piece) cannot express directly.
 
-Currently running: a **data-enrichment experiment** — a dataloader filter (`min_passed_pawns`, opt-in,
-default off) skips positions with no passed pawn during streaming, so the block trains (and validates)
-on a distribution where the feature is actually active, instead of diluted across mostly-irrelevant
-positions. Resumed from the same screening checkpoint (no wasted compute). If this confirms further
-gains, a full two-group fine-tune (~100 epochs, informed by the v2 run's lessons — see the v2 section
-above) will follow; this section will be updated once that concludes.
+| | |
+|---|---|
+| **Architecture** | `Full_Threats + HalfKAv2_hm^ + PawnPair + **PassedPawns**`, **L1 = 1024, L2 = 31, L3 = 32**, 8 LayerStacks (SFNNv13 + two own blocks) |
+| **Feature space** | **96 features** — one per passed pawn: 48 oriented squares × {own, enemy}. "Passed" = no enemy pawn on the same or adjacent files ahead, **and** no own pawn directly ahead on the same file. Deliberately **square-only**: blocked / king-supported / connected flags were considered and rejected — the first two are already learnable through the SFNNv13 pairwise-multiplied L1 against the `HalfKA` and `PawnPair` blocks, and "blocked" would have broken the pawn-event-only incremental update |
+| **Graft** | zero-initialised and grafted onto the finished v2 weights — bit-identical to v2 at init (verified end-to-end: same bench signature through graft → serialize → engine reader), so training starts from v2's strength and *adds* signal |
+| **Method** | **frozen-base screening**: the pre-trained network is frozen (`lr = 0`) and **only the new block trains** (`lr = 1e-3`). Intended as a cheap go/no-go probe before a full fine-tune — it turned out to be the whole training |
+| **Training length** | **~4 epochs.** The block is only ~99 k parameters (50× smaller than `PawnPair`) and saturates almost immediately: checkpoints at ep9 and ep14 measured **no better** than ep4 (ep9 vs ep4: −0.32 ± 10.29, parity), so ep4 is what ships. A full two-group fine-tune was never needed |
+| **Serialization** | shipped **FT-permuted** — verified eval bit-identical to the plain net (same bench signature), ≈ +2 % NPS for free |
+| **Engine** | the block folds into the existing threat accumulator (no new SIMD path), reuses the `PawnPair` pawn-event incremental trigger, and the reader is **dual-format** — the same binary loads v2 and v3 nets |
+| **Result (net-isolated)** | v3 vs v2 on the **same** engine, 15+0.15: **+6.96 ± 6.56 Elo (LOS 98.1 %, 2596 games)** — three independent reads, all positive, LOS rising (94 % → 91 % → 98 %). Cumulative vs `rubicon-alea-v1`, 20+0.2: **+15.14 ± 7.69 Elo (LOS 99.99 %, 1998 games)** — measured against v1 with both new blocks zero-grafted, so one binary plays both sides |
+
+The economics are the point: **~4 epochs of training on a 99 k-parameter block bought ≈ +7 Elo**, on a
+network that had otherwise hit its data ceiling (see the v2 entry — 400 epochs of flat validation loss).
+Adding *information the network cannot infer* beat adding *more training on information it already had*.
+
+Also worth recording as a **negative result**: a data-enrichment experiment (a dataloader filter that
+streams only positions containing passed pawns, so the block trains on a distribution where it is
+actually active instead of diluted) did **not** improve on the plain ep4 checkpoint. The filter works
+and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ---
 

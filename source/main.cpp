@@ -165,17 +165,20 @@ int main()
     // Initialize hash table with default 64 MB (silent)
     init_hash_table(64);
 
-    // Triumviratus 5.0 evaluation = the vendored Stockfish-master SFNNv13 NNUE
-    // (FullThreats + HalfKAv2_hm, L1=1024; see nnue/ + nnue_bridge). We init the
-    // shared substrate (bitboard + slider-magic attack tables) and load the network.
-    // Resolve relative to the exe so the engine works from ANY working directory; a
-    // missing net fails loudly. Override at runtime via the UCI "EvalFile" option.
+    // Evaluation = the TRANN1 NNUE (FullThreats + HalfKAv2_hm + PawnPair + PassedPawns,
+    // L1=1024; see nnue/ + nnue_bridge), SFNNv13-derived with two own input blocks.
+    // We init the shared substrate (bitboard + slider-magic attack tables) and load the
+    // network. Resolve relative to the exe so the engine works from ANY working directory;
+    // a missing net fails loudly. Override at runtime via the UCI "EvalFile" option.
     nn_init_tables();   // bitboards + Attacks::init (substrate for the NNUE feature extraction)
     // Own-lineage net, dev and release builds alike (2026-07-05: dev builds used to default to
-    // the Stockfish SFNNv13 reference net here, which silently made a dev-build bench/SPRT run
-    // on different weights than a release build unless EvalFile was set explicitly -> never
+    // a Stockfish reference net here, which silently made a dev-build bench/SPRT run on
+    // different weights than a release build unless EvalFile was set explicitly -> never
     // again; both build kinds load our own net by default now).
-    const char* netName = "nn-rubicon-alea-v2.nnue";  // TRANN1 (3 blocchi: threats+halfka+pawnpair)
+    // TRANN1 (4 blocchi: threats+halfka+pawnpair+passedpawns). UNA sola fonte di verita'
+    // per il nome (EvalFileDefaultName in nnue/evaluate.h), esposta via bridge: una stringa
+    // duplicata qui e' gia' costata un quasi-incidente (release che spediva lo zerograft).
+    const char* netName = nn_default_net_name();
     std::string netPath = resolve_net_path(netName);
     // Un file accanto all'exe/progetto (se c'e') VINCE sempre — override comodo in
     // sviluppo. Senza file, il nome nudo instrada sul net EMBEDDATO nell'exe
@@ -190,7 +193,7 @@ int main()
         return 1;
     }
     if (!g_startup_quiet) {
-        printf("info string Net: %s (%s; SFNNv13-derived + PawnPair)\n",
+        printf("info string Net: %s (%s; TRANN1 = SFNNv13-derived + PawnPair + PassedPawns)\n",
                netName, netPath.empty() ? "embedded" : netPath.c_str());
         fflush(stdout);
     }

@@ -34,7 +34,7 @@ namespace Eval {
 // Windows) quando nessun file con questo nome e' trovato accanto all'exe;
 // l'opzione UCI "EvalFile" con un path esplicito carica sempre dal disco.
 // (Vincolo SF sul formato nn-[sha].nnue non applicabile: niente fishtest.)
-#define EvalFileDefaultName "nn-rubicon-alea-v2.nnue"
+#define EvalFileDefaultName "nn-rubicon-alea-v3.nnue"
 
 namespace NNUE {
 class Network;

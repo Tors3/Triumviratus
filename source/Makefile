@@ -21,7 +21,7 @@ CXX ?= g++
 CC  ?= gcc
 EXE ?= triumviratus
 
-# Vendored Stockfish-master SFNNv13 NNUE (nnue/). We compile ONLY the subset
+# TRANN1 NNUE (nnue/), SFNNv13-derived + PawnPair/PassedPawns. We compile ONLY the subset
 # the NNUE eval needs (mirror of the Windows vcxproj): position_min.cpp provides
 # Position::set_pieces + update_piece_threats; the heavy master position.cpp /
 # nnue_misc.cpp / evaluate.cpp / m1_evalmatch.cpp / tune/score/ucioption are NOT
@@ -41,16 +41,18 @@ OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
 # Define replicati dalla build MSVC Release (USE_POPCNT su GCC = __builtin_popcountll
 # = hardware, risultato identico). TRIUMV5_THREATS_INCR = accumulatore-threats
 # incrementale (default, come la build Windows).
-# EMBEDDING (2026-07-13): se nn-rubicon-alea-v2.nnue e' presente alla build-root,
-# viene EMBEDDATA nel binario via incbin (un file omonimo accanto all'exe la
-# sovrascrive; EvalFile carica qualsiasi path). Senza file -> NNUE_EMBEDDING_OFF
-# come prima (es. bundle sorgenti-only per le VM).
-ifneq (,$(wildcard nn-rubicon-alea-v2.nnue))
+# EMBEDDING (2026-07-13): se il net di default (EvalFileDefaultName, vedi
+# nnue/evaluate.h) e' presente alla build-root, viene EMBEDDATA nel binario via
+# incbin (un file omonimo accanto all'exe la sovrascrive; EvalFile carica
+# qualsiasi path). Senza file -> NNUE_EMBEDDING_OFF come prima (es. bundle
+# sorgenti-only per le VM). NB: il nome deve restare allineato a evaluate.h.
+NET_NAME := nn-rubicon-alea-v3.nnue
+ifneq (,$(wildcard $(NET_NAME)))
   EMBED_DEF :=
-  $(info [i] nn-rubicon-alea-v2.nnue trovata: rete EMBEDDATA nel binario)
+  $(info [i] $(NET_NAME) trovata: rete EMBEDDATA nel binario)
 else
   EMBED_DEF := -DNNUE_EMBEDDING_OFF
-  $(info [i] nessuna nn-rubicon-alea-v2.nnue alla build-root: embedding OFF, serve il file accanto al binario)
+  $(info [i] nessuna $(NET_NAME) alla build-root: embedding OFF, serve il file accanto al binario)
 endif
 DEFS := -DNDEBUG $(EMBED_DEF) -DTRIUMV5_THREATS_INCR -DUSE_PEXT -DUSE_POPCNT \
         -DUSE_SSE -DUSE_SSE2 -DUSE_SSSE3 -DUSE_SSE41 -DUSE_AVX2
@@ -58,7 +60,7 @@ DEFS := -DNDEBUG $(EMBED_DEF) -DTRIUMV5_THREATS_INCR -DUSE_PEXT -DUSE_POPCNT \
 ARCH := -mavx2 -mbmi2 -mfma -mpopcnt -msse4.1 -mssse3 -msse2
 
 # `make avx512` aggiunge AVX512 + VNNI + ICL (VBMI/VBMI2/BITALG) = identico alla
-# build Windows shipping (SFNNv13 forward + dirty-threats vettoriali). OK su c3
+# build Windows shipping (TRANN1 forward + dirty-threats vettoriali). OK su c3
 # (Sapphire Rapids) e c3d (Zen4): entrambi hanno VBMI/VBMI2.
 ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
   DEFS += -DUSE_AVX512 -DUSE_VNNI -DUSE_AVX512ICL

@@ -702,7 +702,7 @@ int g_capfut_chist = 205;   // [F-002 audit 2026-07-02: 125->123, SPSA+SPRT] cap
 int g_capfut_depth = 8;     // reduced-depth gate (FIXED small int, NOT a primary SPSA target)
 // --- Other missing SF-master cut features (ported 2026-06-23, ALL default OFF/legacy = byte-identical).
 //     SPSA targets = the cp MARGINS (wide range); toggles + small-int gates are NOT primary SPSA targets.
-//     Block to be co-tuned together at long TC on the SFNNv13 net (lesson #13: never gate isolated). ---
+//     Block to be co-tuned together at long TC on the own-lineage net (lesson #13: never gate isolated). ---
 static bool g_opp_worsening = true;  // OppWorsening (SF :841): shave RFP margin when opponent worsening
 int  g_opp_worse_margin = 23;         // cp shaved from RFP margin when opp worsening (SPSA target)
 static bool g_triple_ext = true;     // TripleExt (SF :1244): +3 singular extension beyond the double
@@ -775,7 +775,7 @@ static bool g_bad_noisy = true;
 int  g_bad_noisy_count = 7;           // tiene le prime N catture, pota dalla (N+1)-esima (SPSA target; 3=SF/aggr.)
 // LMREnrich (archivio 4.2, audit SF, default OFF): se la TT-move è NOISY (cattura/ep/promo) mentre
 // la mossa corrente è quiet (qui sempre, blocco is_quiet), le quiet sono meno probabili -> riduci di
-// PIU' (SF: ttCapture && !capture -> r += ...). Su b1a57 era −25 (over-reduction); ri-test sul net SFNNv13.
+// PIU' (SF: ttCapture && !capture -> r += ...). Su b1a57 era −25 (over-reduction); ri-test sul net own-lineage.
 static bool g_lmr_enrich = true;
 int  g_lmr_enrich_amount = 2;         // ply extra di riduzione quando la TT-move è noisy (SPSA target)
 int  g_razor_quad_coef = 92;           // RazorQuadCoef (SF :967): quadratic razor term (base + mult*d + coef*d^2); 0 = linear/off
@@ -1106,7 +1106,7 @@ static bool g_goodcap_ttquiet = false;
 static bool g_show_wdl = false;
 // (The SFNNv10 eval-wrapper tunables — g_small_net_threshold / g_eval_optimism /
 // g_eval_pawn_scale / g_eval_complexity_div / g_eval_blend_delta — were removed in
-// M2: the SFNNv13 bridge applies Stockfish's fixed cp scaling, so they no longer
+// M2: the TRANN1 bridge applies Stockfish's fixed cp scaling, so they no longer
 // exist. The matching UCI options + set_search_param cases were removed too.)
 
 void init_lmr_table();   // defined below; re-run when LMR core coefficients change

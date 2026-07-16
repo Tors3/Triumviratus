@@ -1,4 +1,4 @@
-// M1 eval-match validator: load the SFNNv13 net, build a Position from a FEN via
+// M1 eval-match validator: load the TRANN1 net, build a Position from a FEN via
 // the minimal set_pieces(), run the master Network::evaluate(), print the raw NNUE
 // value (psqt+positional, stm-relative internal units). Compare vs SF master `eval`.
 #include <cstdio>

@@ -1,4 +1,4 @@
-// mens_dump: load the SFNNv13 net, evaluate FEN positions with the master Network,
+// mens_dump: load the TRANN1 net, evaluate FEN positions with the master Network,
 // and dump REAL data for the "Mens" visualizer as one JSON line per position:
 //   - eval (psqt+positional, stm-relative internal units)
 //   - 1024 first-layer accumulator activations (both perspectives)

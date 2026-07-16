@@ -407,7 +407,10 @@ void uci_loop()
         // "ucinewgame" -> its handler below would be dead code).
         if (strcmp(input, "uci") == 0)
         {
-            printf("id name %s %s\n", NAME, VERSION);
+            // NB: VERSION contiene gia' il separatore (" - 6.0") -> %s%s, senza spazio
+            // in mezzo. Con "%s %s" usciva "Triumviratus  - 6.0" (doppio spazio): l'id
+            // name e' l'identita' del motore per GUI e liste rating, deve essere pulito.
+            printf("id name %s%s\n", NAME, VERSION);
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
@@ -418,7 +421,7 @@ void uci_loop()
             // Opzioni ufficiali di analisi/utilizzo (sempre visibili, anche in release):
             printf("option name UCI_ShowWDL type check default false\n");  // W/D/L nelle info-line (via generic handler)
             printf("option name Clear Hash type button\n");                // svuota la TT su richiesta
-            printf("option name UCI_EngineAbout type string default %s %s by %s\n", NAME, VERSION, AUTHOR);
+            printf("option name UCI_EngineAbout type string default %s%s by %s\n", NAME, VERSION, AUTHOR);
             // --- Tuning / experimental / diagnostic options: hidden in the release build
             //     (define TRIUMV_RELEASE). Dev/tuning builds expose them for SPSA. ---
 #ifndef TRIUMV_RELEASE
@@ -452,7 +455,7 @@ void uci_loop()
             printf("option name ProbCutTT type check default true\n");        // N2: fail-high di probcut salvato in TT (SF)
             printf("option name EvalOff type check default false\n");
 #endif
-            printf("option name EvalFile type string default nn-rubicon-alea-v2.nnue\n");  // own-lineage net (dev and release alike)
+            printf("option name EvalFile type string default %s\n", nn_default_net_name());  // own-lineage net (dev and release alike)
             // Gruppo Syzygy STANDARD (come Stockfish & co.): SyzygyPath + le 3 compagne.
             // Le GUI ChessBase/Fritz riconoscono un motore come "tablebase-capable" dal SET
             // completo: con la sola SyzygyPath il campo poteva non comparire. Stampate QUI (in
@@ -465,7 +468,7 @@ void uci_loop()
             printf("option name Syzygy50MoveRule type check default true\n");
             printf("option name SyzygyProbeLimit type spin default 7 min 0 max 7\n");
 #ifndef TRIUMV_RELEASE
-            printf("option name EvalScale type spin default 56 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (SFNNv13)
+            printf("option name EvalScale type spin default 56 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (TRANN1)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)
@@ -1010,8 +1013,8 @@ void uci_loop()
             init_hash_table(mb);
         }
 
-        // UCI command: "setoption name EvalFile value <path>" -> reload the SFNNv13
-        // network at runtime. Default at startup is nn-rubicon-alea-v2.nnue (own-lineage).
+        // UCI command: "setoption name EvalFile value <path>" -> reload the TRANN1
+        // network at runtime. Default at startup = EvalFileDefaultName (own-lineage).
         else if (strncmp(input, "setoption name EvalFile value ", 30) == 0)
         {
             // Swapping the net under a running search would read half-loaded
@@ -1049,7 +1052,7 @@ void uci_loop()
         }
 
         // UCI command: "setoption name EvalScale value N" -> % scale of the final eval
-        // (re-calibrate the SFNNv13 cp scale to the search margins). Diagnostic sweep.
+        // (re-calibrate the TRANN1 cp scale to the search margins). Diagnostic sweep.
         else if (strncmp(input, "setoption name EvalScale value ", 31) == 0)
         {
             nn_set_eval_scale(atoi(input + 31));

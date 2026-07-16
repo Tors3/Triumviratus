@@ -2,22 +2,25 @@
 #ifndef SF_BRIDGE_H
 #define SF_BRIDGE_H
 
-// Thin bridge to the vendored Stockfish-master SFNNv13 NNUE (in nnue/):
-// ThreatFeatureSet=FullThreats + PSQFeatureSet=HalfKAv2_hm, L1=1024, L2/L3, 8
-// LayerStacks. Keeps all Stockfish headers/types/macros out of the rest of the
-// engine so there is no clash with Triumviratus's own globals.
-//
-// M2 = full-refresh integration: every eval rebuilds the SF Position from the
-// engine's bitboards and runs Network::evaluate from scratch (correctness first).
-// M3 will reuse the master AccumulatorStack/DirtyPiece/DirtyThreats for the
-// incremental path. The Bullet own-lineage net and the legacy SFNNv10 path were
-// removed in M2 (see notes/TRIUM5_DEV_LOG.md).
+// Thin bridge to the TRANN1 NNUE (in nnue/) — Triumviratus Rubicon Alea NNUE 1:
+// FOUR input blocks (FullThreats + HalfKAv2_hm + PawnPair + PassedPawns), L1=1024,
+// L2/L3, 8 LayerStacks. The evaluation machinery is derived from Stockfish-master's
+// SFNNv13 (GPLv3, attribution in COPYING/README); the last two blocks are ours, so
+// the net format is NOT SFNNv13 and an SFNNv13 net cannot be loaded (the reader
+// accepts only the TRANN1 4-block hash and the 3-block v2 hash, which zero-fills
+// the PassedPawns segment). Keeps all Stockfish headers/types/macros out of the
+// rest of the engine so there is no clash with Triumviratus's own globals.
 
 // Initialize the shared substrate tables: bitboards + slider-magic attacks.
 // (Attacks::init() is SEPARATE from Bitboards::init() in the master.)
 void nn_init_tables(void);
 
-// Load the SFNNv13 network from a file path. Returns 1 on success (file opened +
+// Nome del net di default (macro EvalFileDefaultName, definita in nnue/evaluate.h).
+// Esposto qui perche' il resto del motore NON include gli header Stockfish: un solo
+// punto di verita' per il nome, niente stringhe duplicate da tenere in sync.
+const char* nn_default_net_name(void);
+
+// Load the TRANN1 network from a file path. Returns 1 on success (file opened +
 // arch-hash verified), 0 otherwise. Must be called once at startup before any
 // nn_pos_create() (the per-handle accumulator caches are built from the net).
 int nn_load_net(const char* net_path);

@@ -34,6 +34,20 @@ DEFAULT_BOOK = os.path.join(_REPO, "OpeningBooks", "uho_2024", "UHO_2024_+085_+0
 # Spettro di movetime (ms): copre le profondita' reali del bullet 0.5+0.1.
 MOVETIMES = [40, 100, 250, 600, 1000]
 
+# Mid/endgame extra (--mix-endgames): il libro copre SOLO aperture, ma il match
+# reale passa meta' del tempo in medio/finale (material scaling, TB-probe paths,
+# king-bucket refresh) -> interleave per un profilo piu' rappresentativo.
+EXTRA_FENS = [
+    "fen 8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",           # finale di torre
+    "fen 8/8/4k3/8/2p5/2P1K3/4P3/8 w - - 0 1",                 # K+P
+    "fen 8/5pk1/6p1/8/5PK1/6P1/8/8 w - - 0 1",                 # corsa di pedoni
+    "fen 4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",                     # KPK
+    "fen 8/3k4/8/8/3PK3/8/8/8 w - - 0 1",
+    "fen r2q1rk1/1b1nbppp/p2ppn2/1p6/3NPP2/2N2Q2/PPP3PP/2KR1B1R w - - 0 11",  # mediogioco d'attacco
+    "fen 2rq1rk1/pp1bppbp/3p1np1/8/2PNP3/2N1BP2/PP1Q2PP/R3KB1R w KQ - 0 11",
+    "fen 6k1/5pp1/7p/8/1q6/2r5/5PPP/1Q3RK1 w - - 0 1",         # Q+R tattico
+]
+
 # Fallback se il libro non si trova: set vario (apertura/medio/tattica/finale).
 FALLBACK_POS = [
     "startpos",
@@ -72,7 +86,8 @@ def load_positions(book, n):
     return lines, os.path.basename(book)
 
 
-def run_worker(worker_id, exe, positions, times, total_searches, t0):
+def run_worker(worker_id, exe, positions, times, total_searches, t0,
+               hash_mb=256, threads=1, newgame_every=0):
     """
     Lancia un singolo processo del motore e lo fa girare su `positions`.
     Ogni processo strumentato riceve un ID univoco da pgort -> scrive
@@ -95,8 +110,8 @@ def run_worker(worker_id, exe, positions, times, total_searches, t0):
                 return
 
     send("uci"); wait("uciok")
-    send("setoption name Hash value 256")
-    send("setoption name Threads value 1")
+    send(f"setoption name Hash value {hash_mb}")
+    send(f"setoption name Threads value {threads}")
     # If PGO_BULLET_NET is set, route eval through the BULLET path so the PGO profile
     # covers the bullet hot code (head/apply_col/update). Without it the profile only
     # sees the SFNNv10 path and PGO gives ~0 on the bullet path (5.0 ships bullet).
@@ -107,13 +122,20 @@ def run_worker(worker_id, exe, positions, times, total_searches, t0):
     send("isready"); wait("readyok")
 
     done = 0
+    done_pos = 0
     for pos in positions:
+        # --newgame-every K: TT/history freddi ogni K posizioni, come l'inizio
+        # di una partita vera (senza: il profilo vede SOLO TT calda in crescita
+        # e mai i cold-path di clear/new_search).
+        if newgame_every and done_pos and done_pos % newgame_every == 0:
+            send("ucinewgame"); send("isready"); wait("readyok")
         send("position " + pos)
         send("isready"); wait("readyok")
         for mt in times:
             send(f"go movetime {mt}")
             wait("bestmove")
             done += 1
+        done_pos += 1
 
     send("quit")
     try:
@@ -137,13 +159,24 @@ def split_chunks(lst, n):
 
 
 def main():
-    # Parsing argomenti posizionali + --workers
+    # Parsing argomenti posizionali + flag (stile strip-loop, no argparse:
+    # la chiamata storica `python pgo_train.py exe mt book npos --workers N`
+    # resta byte-identica; tutti i nuovi default = comportamento storico).
     args = sys.argv[1:]
-    workers = 8  # default
-    if "--workers" in args:
-        idx = args.index("--workers")
-        workers = int(args[idx + 1])
-        args = args[:idx] + args[idx + 2:]
+
+    def pop_flag(name, default):
+        if name in args:
+            i = args.index(name)
+            v = int(args[i + 1])
+            del args[i:i + 2]
+            return v
+        return default
+
+    workers       = pop_flag("--workers", 8)
+    hash_mb       = pop_flag("--hash", 256)           # allinea alla Hash del gate
+    threads       = pop_flag("--threads", 1)          # pass multi-thread (profilo SMP)
+    newgame_every = pop_flag("--newgame-every", 0)    # 0 = mai (storico)
+    mix_pct       = pop_flag("--mix-endgames", 0)     # % di EXTRA_FENS interleaved
 
     exe      = args[0] if len(args) > 0 else \
         os.path.join(_REPO, "x64", "Release", "Triumviratus_pgo.exe")
@@ -154,6 +187,17 @@ def main():
     times = [movetime] if movetime > 0 else MOVETIMES
     positions, src = load_positions(book, n_pos)
 
+    # --mix-endgames PCT: 1 posizione EXTRA_FENS ogni round(100/PCT) del libro.
+    if mix_pct > 0:
+        stride = max(1, round(100 / mix_pct))
+        mixed = []
+        for i, p in enumerate(positions):
+            mixed.append(p)
+            if (i + 1) % stride == 0:
+                mixed.append(EXTRA_FENS[(i // stride) % len(EXTRA_FENS)])
+        positions = mixed
+        src += f" + {mix_pct}% endgames builtin"
+
     # Limita workers al numero di posizioni disponibili
     workers = min(workers, len(positions))
     chunks  = split_chunks(positions, workers)
@@ -163,14 +207,16 @@ def main():
     print(f"  sorgente posizioni : {src}  ({len(positions)} pos)")
     print(f"  movetime (ms)      : {times}")
     print(f"  workers paralleli  : {workers}  ({[len(c) for c in chunks]} pos/worker)")
-    print(f"  ricerche totali    : {total}  | Hash 256MB / 1 thread per worker")
+    print(f"  ricerche totali    : {total}  | Hash {hash_mb}MB / {threads} thread per worker"
+          + (f" | ucinewgame ogni {newgame_every} pos" if newgame_every else ""))
 
     t0 = time.time()
     completed_total = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(run_worker, wid, exe, chunk, times, total, t0): wid
+            pool.submit(run_worker, wid, exe, chunk, times, total, t0,
+                        hash_mb, threads, newgame_every): wid
             for wid, chunk in enumerate(chunks)
         }
         for fut in as_completed(futures):
