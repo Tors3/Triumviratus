@@ -152,8 +152,11 @@ int td_see(ThreadData& td, int move) {
         
         gain[depth] = attacker_value - gain[depth - 1];
         
-        // Stand-pat pruning
-        if (gain[depth] < 0 && gain[depth - 1] < 0) break;
+        // Stand-pat pruning (swap-SEE classico: max(-gain[d-1], gain[d]) < 0).
+        // BUG FIX 2026-07-16: la seconda clausola era `gain[d-1] < 0`, insoddisfacibile
+        // (se gain[d-1]<0 allora gain[d]=val-gain[d-1]>0) -> break MORTO, prune mai attivo.
+        // Corretto = `gain[d-1] > 0`. Value-preserving (stessa SEE, solo esce prima) -> bench invariato.
+        if (gain[depth] < 0 && gain[depth - 1] > 0) break;
         
         attacker_value = see_piece_values[attacker];
         

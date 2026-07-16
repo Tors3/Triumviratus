@@ -1316,6 +1316,22 @@ void uci_loop()
             set_tt_4way(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
+        // "setoption name TTTwoLevel value <0|1>" — come TT4Way cambia tt_ways()
+        // (1->2) e la larghezza di tt_base_index: togglato sotto ricerca = tt indexing
+        // cambia sotto i thread = OOB/torn bucket. Fermare come Hash/TT4Way.
+        // (Intercettato QUI, prima del generic spin handler che chiamerebbe
+        //  set_search_param senza stop.)
+        else if (strncmp(input, "setoption name TTTwoLevel value ", 32) == 0)
+        {
+            stop_search_threads(); wait_for_search_done();
+            const char* vs = input + 32;
+            int v;
+            if      (strncmp(vs, "true",  4) == 0 || strncmp(vs, "on",  2) == 0) v = 1;
+            else if (strncmp(vs, "false", 5) == 0 || strncmp(vs, "off", 3) == 0) v = 0;
+            else v = atoi(vs);
+            set_search_param("TTTwoLevel", v);
+        }
+
         // "setoption name TTEvalImprove value <true|false>" (P1.1: tt_score come eval)
         else if (strncmp(input, "setoption name TTEvalImprove value ", 35) == 0)
         {

@@ -4168,7 +4168,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 if (!get_move_capture(move)) continue;
                 // The capture's material swing must be able to bridge the eval
                 // up to probcut_beta, else it can't plausibly cause the cutoff.
-                if (!td_see_at_least(td, move, probcut_beta - eval)) continue;
+                // BUG FIX 2026-07-16: td_see NON conta il guadagno di promozione (~+800cp per Q)
+                // -> sottovaluta una capture-promotion vincente e la filtra fuori dal probcut =
+                // cutoff speculativo mancato. Le capture-promotion passano sempre il gate SEE.
+                if (!get_move_promoted(move) && !td_see_at_least(td, move, probcut_beta - eval)) continue;
 
                 UndoInfo undo;
                 td.ply++;

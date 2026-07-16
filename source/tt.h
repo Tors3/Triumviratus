@@ -304,8 +304,18 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
         return false;
     }
 
-    // Valid entry - unpack
+    // Valid entry - unpack.
+    // BUG FIX 2026-07-16: tt_find ha validato key^data su una lettura PRECEDENTE; qui
+    // rileggiamo entry->data -> in multi-thread un writer puo' aver sovrascritto lo slot
+    // nel mezzo = torn read (unpack di move/score di un'altra posizione). Ri-valido sullo
+    // stesso snapshot: se un writer e' passato, key^data != hash_key -> trattalo come miss.
+    // 1-thread (i gate): l'entry appena validata non cambia -> sempre valido, byte-identico.
     U64 data = entry->data;
+    if ((entry->key ^ data) != hash_key) {
+        tt_move = 0; tt_score = 0; tt_depth = 0;
+        tt_flag = hash_flag_alpha; tt_eval = tt_eval_none; is_pv = false;
+        return false;
+    }
     tt_move = unpack_move(data);
     tt_score = unpack_score(data);
     tt_depth = unpack_depth(data);
