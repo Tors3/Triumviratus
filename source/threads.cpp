@@ -3266,6 +3266,11 @@ static int td_quiescence(ThreadData& td, int alpha, int beta, int qs_depth = 0) 
                        : td.bitboards[P] ? 100 : 0;
                 if (td.bitboards[p] & 0x00FF000000000000ULL) maxvic += 800;  // promo: +Q-P
             }
+            // maxvic e' in cp classici (900/500/330/100), ma stand_pat/alpha sono
+            // in unita'-motore COMPRESSE (EvalScale ~56-62%). Riportalo sulla stessa
+            // scala, altrimenti sovrastima il guadagno-cattura e pota di meno del
+            // dovuto (bug direzione-sicura, era near-noop col path default-OFF).
+            maxvic = maxvic * nn_get_eval_scale() / 100;
             if (stand_pat + maxvic + g_qs_bc_margin < alpha) return stand_pat;
         }
         else if (stand_pat + g_qs_delta < alpha) return stand_pat;
@@ -3575,8 +3580,12 @@ static inline void td_corr_update(ThreadData& td, int idx, int static_eval,
     if (g_corr_cont) {
         if (int16_t* cc = td_cont_corr_bucket(td)) {
             int cv = *cc;                       // gravity update on the int16 bucket
-            td_corr_bucket_update(cv, target, w, lim);
-            *cc = (int16_t)cv;                  // lim < 32767 -> always fits int16
+            // BUG FIX 2026-07-16: con CorrCap>=128, lim = cap*256 >= 32768 > INT16_MAX
+            // -> il clamp permetteva 32768, che castato a int16 INVERTE il segno della
+            // correzione. Cappa lim al range int16 per QUESTA tabella (le altre sono int).
+            int lim16 = lim < 32767 ? lim : 32767;
+            td_corr_bucket_update(cv, target, w, lim16);
+            *cc = (int16_t)cv;
         }
     }
 }
@@ -3869,6 +3878,9 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // riduciamo di 1 ply per ottenere a basso costo una hash move. (Se l'IID sopra ha
     // trovato una mossa, tt_move != 0 -> questa riduzione NON scatta.)
     if (depth >= 4 && !tt_move && !excluded_move && !follow_pv) depth--;   // Q-15: niente IIR sui nodi che seguono la PV
+    // NB (2026-07-16): l'IIR spara ANCHE in scacco, annullando la check-ext (+1 poi -1).
+    // Fix "&& !in_check" candidato +1.5 LTC (SF/Alexandria) ma NON confermabile coi tempi
+    // attuali (LTC = troppe partite) -> IN CODA al blocco finale, NON bakato a fiducia.
 
     // cutoffCnt: azzera il contatore 2 ply avanti (come SF (ss+2)=0), cosi e' fresco
     // per i figli di questo nodo. Letto in LMR solo se g_cutoffcnt_penalty>0.

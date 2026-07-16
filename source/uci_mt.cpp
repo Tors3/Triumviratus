@@ -937,6 +937,7 @@ void uci_loop()
                 apply_history_priors(thread_data[i]);   // Q-26 (no-op se prior = 0)
             }
             g_tm_pred_hash = 0;   // TM v2 Q-06: la predizione non sopravvive alla partita
+            { extern std::atomic<int> g_optimism[2]; g_optimism[0] = g_optimism[1] = 0; }  // BUG FIX 2026-07-16: contempt dinamico non deve perdurare tra partite
         }
 
         // UCI command: "position"
@@ -1307,6 +1308,10 @@ void uci_loop()
         // "setoption name TT4Way value <true|false>" (A/B 4-way bucketed TT)
         else if (strncmp(input, "setoption name TT4Way value ", 28) == 0)
         {
+            // BUG FIX 2026-07-16: cambia tt_ways = larghezza indicizzazione TT; se
+            // applicato sotto ricerca (il loop UCI legge stdin durante il search)
+            // -> tt_base_index cambia sotto i thread = OOB. Fermare come fa Hash.
+            stop_search_threads(); wait_for_search_done();
             const char* v = input + 28;
             set_tt_4way(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
