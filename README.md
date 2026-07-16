@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[6.0 (prerelease)](#triumviratus-60-prerelease) · [Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
+[6.0 (prerelease)](#triumviratus-60-prerelease) · [Triumviratus 5.1](#triumviratus-51) · [Results](#results) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -111,14 +111,7 @@ actually needs it, not paid on every legal move — plus a `-mtune=native` PGO b
 Source in [`source/`](source/). Build: see [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md) (Linux `make`,
 MSVC `Triumviratus_5.0.vcxproj`, or clang-PGO).
 
-## Triumviratus 5.0
-
-**SFNNv13** NNUE (`Full_Threats + HalfKAv2_hm`) with an SPSA-co-tuned alpha-beta search and Lazy SMP. Ships
-the own-lineage network **`nn-rubicon-alea-v1`**. See [`NETWORKS.md`](NETWORKS.md) for training details.
-
-## Triumviratus 4.2
-
-First release with a **NNUE network trained by the author**. *(CCRL rating: to be added.)*
+<sub>Earlier releases (**5.0**, **4.2**) and their match results: [`HISTORY.md`](HISTORY.md).</sub>
 
 ## Results
 
@@ -143,21 +136,6 @@ out: the direct gate moved from **+14.6** (before the network work) to **+33.2**
 **+18.6** contribution from the network, matching the independent net-isolated measurement of
 **+15.14 ± 7.69** for `v3` vs `v1` within noise.</sub>
 
-#### 5.1 vs 5.0 — official release gate (2026-07-07)
-
-> [!NOTE]
-> `v5.0` vs `v5.1`, **AVX2 build** (the CCRL binary), same network (`nn-rubicon-alea-v1`),
-> no score-based adjudication (games decided by mate / 50-move / repetition only).
-> The definitive 2000-game version-bump gate.
-
-Book: **UHO 2024** (`UHO_2024_8mvs_big_+080_+099.epd`).
-
-| Time control | Threads | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
-|---|---|---|---|---|---|---|
-| 20+0.2 | 1 | 64 MB | 2000 | 59.2% | **+64.7 ± 7.6** | 100.00% |
-
-<sub>v5.1: W 621 · L 253 · D 1126. Pentanomial (v5.1) [0–2]: [1, 87, 483, 401, 28].</sub>
-
 #### Pawnocchio 1.9.1
 
 `v5.1` vs Pawnocchio 1.9.1 (znver5 build), AVX512, 1 thread, 64 MB hash, no score-based adjudication,
@@ -180,24 +158,8 @@ the small edge (LOS 75%) is within noise, not a confirmed gap.</sub>
 | 2026-07-05 | Pawnocchio 1.9.1 | 20+0.2 | 512 MB | 558 | 48.9% | **-7.5 ± 14.8** | 15.9% |
 | 2026-07-05 | Berserk 14 | 25+0.25 | 1024 MB | 322 | 46.3% | **-25.9 ± 18.1** | 0.24% |
 
-<details>
-<summary><b>Historical</b></summary>
-<br>
-
-| Date | Match | Time control | Book | Games | Score | Elo | LOS |
-|---|---|---|---|---|---|---|---|
-| 2026-07-03 | 5.1 vs 5.0 | 10+0.2 | UHO | 250 | 60.8% | **+76.25 ± 29.82** | 100.00% |
-| 2026-07-04 | 5.1-patched vs 5.1 (all patch improvements) | 12+0.12 | UHO | 500 | 53.8% | **+26.5 ± 15.4** | 99.96% |
-| 2026-07-03 | 5.1 vs 5.0 | 30+0.2 | UHO | 600 | 58.7% draws | **+31.5 ± 17.6** | 99.98% |
-| — | 5.1 vs 5.0 | 10+0.1 | UHO | 300 | — | **+27** | 99% |
-| — | 5.1 vs 5.0 | 3min+1s | UHO | 100 | 54% | **+36** | — |
-| — | 5.0 vs 4.2 | 20+0.2 | self-play | — | — | **+50** | — |
-| — | 5.0 vs 4.2 | 3min+1s | UHO | 100 | 61.5% | **+81** | — |
-
-</details>
-
-Gap widens at longer TC (deeper search rewards the stronger network). Balanced-book matches draw far more
-than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo number.
+<sub>Balanced-book matches draw far more than the unbalanced UHO set — compare sign/LOS across rows, not
+the raw Elo number. Older gates (5.1 vs 5.0, 5.0 vs 4.2): [`HISTORY.md`](HISTORY.md).</sub>
 
 ## License
 
