@@ -35,11 +35,13 @@
 Three changes over 5.1:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
-  feature set with a third input block of **pawn-pair features**, giving the network explicit awareness
-  of pawn structure (phalanxes, chains, doubled/isolated pawns) that the threat features alone don't
-  capture. The block is grafted onto `nn-rubicon-alea-v1` with zero-initialised columns — bit-identical
-  to v1 at graft time — then fine-tuned into **`nn-rubicon-alea-v2`** (training in progress). Engine-side
-  the block folds into the existing threat accumulator, so no new SIMD path is added.
+  feature set with two additional input blocks: **pawn-pair features** (phalanxes, chains,
+  doubled/isolated pawns — pawn-structure geometry the threat features alone don't capture),
+  shipped in **`nn-rubicon-alea-v2`**, and **passed-pawn features** (one feature per passed pawn),
+  currently in training/screening for `nn-rubicon-alea-v3`. Both blocks are grafted with
+  zero-initialised columns onto the previous net — bit-identical at graft time — then fine-tuned.
+  Engine-side both blocks fold into the existing threat accumulator (no new SIMD path); the reader
+  is dual-format, so the same binary loads both v2 and v3 nets. See `NETWORKS.md` for training details.
 - **SPSA mega co-tune** of ~50 search parameters, baked into the compiled defaults.
 - **TMv2 time management** — a multiplicative-stateless time manager (stability, eval-trend, node and
   predicted-move factors), SPSA-tuned. It is **time-control gated**: measured **+23.8 Elo at 20+0.2** but

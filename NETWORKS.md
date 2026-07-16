@@ -71,7 +71,7 @@ partly on **Triumviratus's own self-play data**, and the input is extended with 
 | **Two-group LR** | base weights **1e-4** (gentle refine, no forgetting); the zero-init PawnPair block **1e-3** (10× — it starts from nothing and must learn fast) |
 | **Data** | **Leela T80** (full 2022, unseen by v1, + part of 2023 — ~327 GB) **plus the project's own self-play** (~67 M positions from 5.1 / v1 self-play), mixed at ≈ 6.5 % own (`OWN_REPEAT=10`) — SF-style "add own data to the refine", not replace |
 | **Run** | planned 800 epochs; **validation loss flat from ~ep80** (train ≈ val ≈ 0.0036: converged to the label-noise floor, no overfit) — checkpoints ep299–ep459 statistically equal in play (round-robin within noise) → the run was **stopped at ~ep470** instead of burning ~340 flat epochs |
-| **Finishing** | **LR-anneal fine-tune** from ep459 with a fresh, steeper decay (base 2.5e-5 / PawnPair 2.5e-4 — the LR the main run had reached — γ = 0.95, ~50 epochs), then **over_last**: the shipped weights are the **average of the last 3 anneal checkpoints** — the same tail-averaging recipe that produced v1's best net |
+| **Finishing** | **LR-anneal fine-tune** from ep459 with a fresh, steeper decay (base 2.5e-5 / PawnPair 2.5e-4 — the LR the main run had reached — γ = 0.95, ~50 epochs), then **over_last**: the shipped weights are the **average of the last 3 anneal checkpoints** — the same tail-averaging recipe that produced v1's best net. Validated net-isolated vs the plain ep459 checkpoint: **+3.8 ± 7.7 Elo** over 2004 games (15+0.15) — parity with a positive lean, so the variance-reduced average is what ships |
 | **Serialization** | shipped **FT-permuted** (feature-transformer neuron reordering for sparsity) — eval **bit-identical**, ≈ +2 % NPS for free |
 | **Hardware** | GCP **g4** (RTX PRO 6000 Blackwell), spot instance |
 | **Result (net-isolated)** | v2 vs v1 on the **same** engine, 10+0.1: **+13.3 Elo** (ep199) → **+16.1 Elo** (ep219) — the refine adds real strength over v1, still climbing when gated |
@@ -79,6 +79,29 @@ partly on **Triumviratus's own self-play data**, and the input is extended with 
 
 Same honest position as the rest of the `rubicon` family: **our weights**, our data, on Stockfish's architecture
 and trainer. The PawnPair block is our own extension to the SFNNv13 feature set.
+
+---
+
+## `rubicon-alea-v3` — in progress (PassedPawns graft, screening)
+
+Not shipped as the default net yet, but a **validated fallback candidate already exists**. Same graft
+methodology as PawnPair: a **PassedPawns** feature block (96 features — one per passed pawn, 48 oriented
+squares × own/enemy) zero-init grafted onto the v2 weights, engine and trainer verified bit-identical at
+init. A cheap **frozen-base screening** (only the new block trains, `lr=1e-3`, the rest of the network
+frozen) was run to decide whether the feature is worth a full two-group fine-tune.
+
+**Result: after only ~4 epochs of frozen-base training**, net-isolated vs v2 (15+0.15, fixed games,
+same engine/options): **+6.96 ± 6.56 Elo, LOS 98.1 % over 2596 games** — three independent reads, all
+positive, LOS rising (94 % → 91 % → 98 %) rather than regressing to noise. Treated as confirmed for
+project purposes. **This checkpoint is archived and shippable as-is in the worst case** even if the
+ongoing full training doesn't improve on it further.
+
+Currently running: a **data-enrichment experiment** — a dataloader filter (`min_passed_pawns`, opt-in,
+default off) skips positions with no passed pawn during streaming, so the block trains (and validates)
+on a distribution where the feature is actually active, instead of diluted across mostly-irrelevant
+positions. Resumed from the same screening checkpoint (no wasted compute). If this confirms further
+gains, a full two-group fine-tune (~100 epochs, informed by the v2 run's lessons — see the v2 section
+above) will follow; this section will be updated once that concludes.
 
 ---
 
