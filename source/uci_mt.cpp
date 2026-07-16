@@ -633,6 +633,9 @@ void uci_loop()
             printf("option name CapFutMult type spin default 129 min 0 max 400\n");
             printf("option name CapFutChist type spin default 214 min 0 max 400\n");   // [F-002 audit 2026-07-02] 125->123
             printf("option name CapFutDepth type spin default 8 min 1 max 12\n");
+            // Ponte cp->unita'-eval del termine vittima, /10000 insieme a EvalScale (v. threads.cpp).
+            // 392 = NORM_CP -> fattore 2.35 a EvalScale=60. ~167 riproduce il vecchio 1x (il bug).
+            printf("option name CapFutVicScale type spin default 392 min 0 max 1000\n");
             // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
             printf("option name OppWorsening type spin default 1 min 0 max 1\n");
             printf("option name OppWorseMargin type spin default 21 min 0 max 100\n");

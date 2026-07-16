@@ -90,6 +90,30 @@ neutral +0.9 at this 20+0.2 — so it contributes little to this row and is not 
 final v2 network and the v3 network above; the definitive version-bump gate of the 6.0 prerelease
 against 5.1 at 20+0.2 is running.</sub>
 
+#### Corrections
+
+Two bugs found while preparing the prerelease. Both are fixed in the current source and in the
+published binaries; they are recorded because the first changes what *earlier* prerelease builds were.
+
+- **The Windows binaries embedded the wrong network.** The single source of truth for the default
+  net name was updated in the code but not in the Windows resource file, so the embedded blob was
+  still the zero-graft — evaluation identical to `rubicon-alea-v1`. Binaries with
+  `nn-rubicon-alea-v3.nnue` next to them were unaffected (a file on disk always wins), but running
+  the `.exe` on its own meant playing the old evaluation, ≈15 Elo weaker. Linux and Android were
+  never affected. **Replace any earlier 6.0 prerelease `.exe`.** The build now benches the binary
+  standalone and refuses to package a mismatch.
+- **Capture futility pruned good captures.** The victim's value entered the pruning margin in
+  classic centipawns while the surrounding terms were in the network's own (compressed) evaluation
+  units, under-weighting the victim ≈2.4×. The effect was the opposite of the intent: captures
+  winning material got pruned. The twin site in quiescence search had been bridged correctly a month
+  earlier; this one had not. The bridge now tracks `EvalScale` rather than being a hardcoded
+  constant, so it cannot silently drift out of calibration again.
+  <br><sub>Measured **indistinguishable from zero**: `−0.99 ± 8.88` over 1406 games at 20+0.2
+  (LOS 41%). The surrounding margins had been SPSA-tuned around the broken scale and had absorbed
+  most of the error, which is the likeliest reason correcting it changes so little. It ships as a
+  correctness fix — a per-victim scale error is not defensible whatever the scoreboard says — and it
+  lets those margins be re-tuned in a coherent space.</sub>
+
 ## Triumviratus 5.1
 
 Current release. Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from
@@ -126,6 +150,15 @@ MSVC `Triumviratus_5.0.vcxproj`, or clang-PGO).
 | 20+0.2 | 1166 | 54.8% | **+33.18 ± 9.86** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
 
 <sub>6.0: W 301 · L 190 · D 675. Pentanomial [0–2]: [3, 81, 306, 188, 5].</sub>
+
+<sub>**Measured before the capture-futility scale fix** (see [Corrections](#corrections)). That fix
+measured **indistinguishable from zero** on its own — `−0.99 ± 8.88` over 1406 games at 20+0.2 — so
+this figure carries over to the shipped binary unchanged. The fix is kept because the formula was
+objectively wrong, not because it gains strength.</sub>
+
+<sub>`[0,5]` are the SPRT bounds in **nElo** (fastchess's default model), ≈ `[0, 2.3]` in the
+logistic Elo the `+33.18` is quoted in. The point estimate is logistic Elo and is comparable to
+other engines' figures; only the pass/fail threshold is nElo.</sub>
 
 <sub>**Why this is smaller than the sum of the incremental rows above:** the incremental gains are
 **not additive**, and this was measured, not assumed — back on 2026-07-13 the first two rows (+15.8 and

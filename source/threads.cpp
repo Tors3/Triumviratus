@@ -700,6 +700,19 @@ int g_capfut_chist = 205;   // [F-002 audit 2026-07-02: 125->123, SPSA+SPRT] cap
                             // 140=-25 Elo (LOS 0.4%/2%, entrambi conclusivi) -> ottimo STRETTO attorno al default;
                             // 123 neutro/lean positivo a 10+0.1 (+0.9) e 20+0.2 (+8.7), mai negativo -> bakato.
 int g_capfut_depth = 8;     // reduced-depth gate (FIXED small int, NOT a primary SPSA target)
+// PONTE DI SCALA cp -> unita'-eval per il termine vittima (BUG FIX 2026-07-16).
+// see_piece_values[] (see.h) e' in cp CLASSICI (pedone=100); eval/alpha sono in unita'-eval, che
+// girano a ~NORM_CP/100 = 3.92x la scala-100 e sono poi compresse da EvalScale (oggi 60) -> il
+// fattore netto e' g_capfut_vic_scale*EvalScale/10000 = 2.35 a EvalScale=60. Senza ponte la vittima
+// entrava a 1x = sotto-pesata ~2.4x -> `fut` troppo basso -> le catture BUONE venivano potate,
+// l'esatto contrario di cio' che il commento al sito di uso dichiarava.
+// Il gemello in qsearch (g_qfut_margin, ~riga 3360) ha da giugno un ponte *3 hardcoded e il suo
+// commento documenta che ometterlo costo' -126 Elo: stesso bug, un sito fixato e questo no.
+// Perche' segue EvalScale: *3 fu tarato a EvalScale=56; a 60 il fattore giusto e' ~3.2. Legandolo a
+// nn_get_eval_scale() il ponte non si ri-scalibra al prossimo bake di EvalScale.
+// Default 392 = NORM_CP (la costante con cui threads.cpp:~5051 converte score->cp mostrati): e' la
+// stima onesta, non un numero inventato. E' spin perche' l'SPSA lo assesti nel blocco CapFut*.
+int g_capfut_vic_scale = 392;   // CapFutVicScale, /10000 insieme a EvalScale
 // --- Other missing SF-master cut features (ported 2026-06-23, ALL default OFF/legacy = byte-identical).
 //     SPSA targets = the cp MARGINS (wide range); toggles + small-int gates are NOT primary SPSA targets.
 //     Block to be co-tuned together at long TC on the own-lineage net (lesson #13: never gate isolated). ---
@@ -1168,6 +1181,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CapFutMult"))          { g_capfut_mult  = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CapFutChist"))         { g_capfut_chist = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CapFutDepth"))         { g_capfut_depth = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "CapFutVicScale"))      { g_capfut_vic_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "OppWorsening"))        { g_opp_worsening = value != 0; return true; }
     if (!strcmp(name, "OppWorseMargin"))      { g_opp_worse_margin = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "TripleExt"))           { g_triple_ext = value != 0; return true; }
@@ -4363,7 +4377,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // carry a large see_piece_values[vic] term -> never pruned; only futile
         // (material-neutral/losing) captures at a node already below alpha get cut.
         // Like our quiet futility / qsearch capture-futility, this fires before
-        // make (no pre-move gives-check gate, matching the quiet path). Default OFF.
+        // make (no pre-move gives-check gate, matching the quiet path).
+        // NB: il termine vittima va convertito cp -> unita'-eval (vedi g_capfut_vic_scale).
+        // Fino al 2026-07-16 entrava a 1x: sotto-pesato ~2.4x -> si potavano proprio le catture
+        // buone che le due righe qui sopra dichiarano intoccabili.
         if (g_cap_futility && !pv_node && !in_check && is_capture && !is_promotion &&
             best_score > -mate_score) {
             int d_idx = depth < 64 ? depth : 63;
@@ -4378,8 +4395,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 for (int pc = s; pc <= e; pc++)
                     if (get_bit(td.bitboards[pc], tgt)) { vic = pc; break; }
                 int ch  = td.capture_history[get_move_piece(move)][tgt][vic];
+                int vic_ev = (int)((long long)see_piece_values[vic]
+                                   * g_capfut_vic_scale * nn_get_eval_scale() / 10000);
                 int fut = eval + g_capfut_base + g_capfut_mult * cap_lmr_depth
-                        + see_piece_values[vic] + g_capfut_chist * ch / 1024;
+                        + vic_ev + g_capfut_chist * ch / 1024;
                 if (fut <= alpha)
                     continue;                          // captures don't bump quiets_searched
             }
