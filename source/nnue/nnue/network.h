@@ -117,6 +117,10 @@ class Network {
     // Hash value of evaluation function structure
     static constexpr u32 hash =
       FeatureTransformer::get_hash_value() ^ NetworkArchitecture::get_hash_value();
+    // Formato v2 (senza blocco PassedPawns): accettato in lettura, segmento
+    // passed zero-fillato -> eval byte-identica al motore v2.
+    static constexpr u32 hash_v2 =
+      FeatureTransformer::get_hash_value_v2() ^ NetworkArchitecture::get_hash_value();
 
     friend struct AccumulatorCaches;
 };

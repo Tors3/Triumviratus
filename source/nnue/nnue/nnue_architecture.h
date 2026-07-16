@@ -27,6 +27,7 @@
 
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
+#include "features/passed_pawns.h"
 #include "features/pawn_pair.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
@@ -45,6 +46,7 @@ namespace Triumviratus::Eval::NNUE {
 using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 using PawnFeatureSet   = Features::PawnPair;
+using PassedFeatureSet = Features::PassedPawns;  // v3 graft: 96 feature passed-pawn, folded dopo PawnPair
 
 // Number of input feature dimensions after conversion
 constexpr IndexType L1 = 1024;

@@ -33,7 +33,7 @@ CPP_SRCS := $(filter-out nnt.cpp,$(wildcard *.cpp)) \
             $(V13)/misc.cpp $(V13)/memory.cpp \
             $(V13)/nnue/network.cpp $(V13)/nnue/nnue_accumulator.cpp \
             $(V13)/nnue/features/full_threats.cpp $(V13)/nnue/features/half_ka_v2_hm.cpp \
-            $(V13)/nnue/features/pawn_pair.cpp
+            $(V13)/nnue/features/pawn_pair.cpp $(V13)/nnue/features/passed_pawns.cpp
 C_SRCS   := fathom/tbprobe.c
 
 OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
@@ -179,12 +179,12 @@ endif
 	@mkdir -p $(PROFDIR) && rm -f $(PROFDIR)/*.profraw
 	@test -f $(BOOK) || echo "[!] libro $(BOOK) assente: pgo_train.py usera' i FEN builtin"
 	$(MAKE) clean
-	$(MAKE) avx512 CXX=$(CXX) PGO_PHASE=gen
+	$(MAKE) avx512 $(RELGOAL) CXX=$(CXX) PGO_PHASE=gen
 	LLVM_PROFILE_FILE="$(PROFDIR)/prof_%p.profraw" \
 	  python3 $(TRAINER) ./$(EXE) 0 $(BOOK) $(PGO_POS) --workers $(PGO_WORKERS)
 	$(LLVM_PROFDATA) merge -output=$(PROFDIR)/merged.profdata $(PROFDIR)/*.profraw
 	$(MAKE) clean
-	$(MAKE) avx512 CXX=$(CXX) PGO_PHASE=use
+	$(MAKE) avx512 $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)  (verifica: bench 13 deve dare la stessa firma della build liscia)"
 
 pgo-avx2:
@@ -193,12 +193,12 @@ ifeq (,$(IS_CLANG))
 endif
 	@mkdir -p $(PROFDIR) && rm -f $(PROFDIR)/*.profraw
 	$(MAKE) clean
-	$(MAKE) all CXX=$(CXX) PGO_PHASE=gen
+	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=gen
 	LLVM_PROFILE_FILE="$(PROFDIR)/prof_%p.profraw" \
 	  python3 $(TRAINER) ./$(EXE) 0 $(BOOK) $(PGO_POS) --workers $(PGO_WORKERS)
 	$(LLVM_PROFDATA) merge -output=$(PROFDIR)/merged.profdata $(PROFDIR)/*.profraw
 	$(MAKE) clean
-	$(MAKE) all CXX=$(CXX) PGO_PHASE=use
+	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)"
 
 .PHONY: all avx512 profile release android android-dotprod clean pgo-avx512 pgo-avx2

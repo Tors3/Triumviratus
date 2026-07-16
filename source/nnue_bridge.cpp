@@ -119,7 +119,7 @@ static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
 // a DIFFERENT scale than the SFNNv10 eval-wrapper the engine's search margins were
 // SPSA-tuned for (pawn ~56 vs ~332) -> the pruning thresholds are mis-sized. This
 // multiplier re-aligns the eval with the existing margins; sweep it at fixed depth.
-static int g_eval_scale_pct = 56;
+static int g_eval_scale_pct = 60;   // BAKE 2026-07-16: vettore iter1800 (era 56)
 // 5.1 EvalTTWrite: ultimo valore UNADJUSTED (pre-rule50, pre-EvalScale) calcolato da nn_scale
 // su QUESTO thread = lo "unadjustedStaticEval" di SF, fifty-independent -> si cacha questo e si
 // ri-finalizza col fifty corrente (hit su TUTTE le trasposizioni, sempre esatto).

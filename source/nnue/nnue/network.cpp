@@ -362,10 +362,22 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
     u32 hashValue;
     if (!read_header(stream, &hashValue, &netDescription))
         return false;
-    if (hashValue != Network::hash)
+    // v3: accetta anche il formato v2 (3 blocchi) -> il segmento PassedPawns
+    // viene zero-fillato in FeatureTransformer::read_parameters (eval identica).
+    const bool v2Compat = (hashValue == Network::hash_v2);
+    if (hashValue != Network::hash && !v2Compat)
         return false;
-    if (!Detail::read_parameters(stream, featureTransformer))
-        return false;
+    {
+        // Sezione FT: header di sezione + parametri (dual-format; specchia
+        // Detail::read_parameters, che non puo' passare il flag).
+        u32 header = read_little_endian<u32>(stream);
+        const u32 expected =
+          v2Compat ? FeatureTransformer::get_hash_value_v2() : FeatureTransformer::get_hash_value();
+        if (!stream || header != expected)
+            return false;
+        if (!featureTransformer.read_parameters(stream, v2Compat))
+            return false;
+    }
     for (usize i = 0; i < LayerStacks; ++i)
     {
         if (!Detail::read_parameters(stream, network[i]))
