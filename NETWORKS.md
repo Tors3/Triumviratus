@@ -70,6 +70,8 @@ partly on **Triumviratus's own self-play data**, and the input is extended with 
 | **Method** | **fine-tune from `rubicon-alea-v1`**; `nnue-pytorch`, batch 65536, epoch-size 100M, **λ = 0.75** constant, one-cycle gamma 0.997 |
 | **Two-group LR** | base weights **1e-4** (gentle refine, no forgetting); the zero-init PawnPair block **1e-3** (10× — it starts from nothing and must learn fast) |
 | **Data** | **Leela T80** (full 2022, unseen by v1, + part of 2023 — ~327 GB) **plus the project's own self-play** (~67 M positions from 5.1 / v1 self-play), mixed at ≈ 6.5 % own (`OWN_REPEAT=10`) — SF-style "add own data to the refine", not replace |
+| **Run** | planned 800 epochs; **validation loss flat from ~ep80** (train ≈ val ≈ 0.0036: converged to the label-noise floor, no overfit) — checkpoints ep299–ep459 statistically equal in play (round-robin within noise) → the run was **stopped at ~ep470** instead of burning ~340 flat epochs |
+| **Finishing** | **LR-anneal fine-tune** from ep459 with a fresh, steeper decay (base 2.5e-5 / PawnPair 2.5e-4 — the LR the main run had reached — γ = 0.95, ~50 epochs), then **over_last**: the shipped weights are the **average of the last 3 anneal checkpoints** — the same tail-averaging recipe that produced v1's best net |
 | **Serialization** | shipped **FT-permuted** (feature-transformer neuron reordering for sparsity) — eval **bit-identical**, ≈ +2 % NPS for free |
 | **Hardware** | GCP **g4** (RTX PRO 6000 Blackwell), spot instance |
 | **Result (net-isolated)** | v2 vs v1 on the **same** engine, 10+0.1: **+13.3 Elo** (ep199) → **+16.1 Elo** (ep219) — the refine adds real strength over v1, still climbing when gated |
