@@ -21,33 +21,51 @@
 
 <div align="center">
 
-[6.0 (dev)](#triumviratus-60-in-development) · [Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
+[6.0 (prerelease)](#triumviratus-60-prerelease) · [Triumviratus 5.1](#triumviratus-51) · [Triumviratus 5.0](#triumviratus-50) · [Triumviratus 4.2](#triumviratus-42) · [Results](#results) · [License](#license) · [Credits](#credits)
 
 </div>
 
 ---
 
-## Triumviratus 6.0 (in development)
+## Triumviratus 6.0 (prerelease)
 
 > [!NOTE]
-> Work in progress — not yet released or gated. 5.1 remains the current stable version.
+> **Prerelease available.** Version-bump gate against 5.1 **passed**: **+33.18 ± 9.86 Elo** at 20+0.2
+> (LOS 100%, SPRT `[0,5]` passed, 1166 games) — see [Results](#results).
 
 Three changes over 5.1:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
-  feature set with two additional input blocks: **pawn-pair features** (phalanxes, chains,
-  doubled/isolated pawns — pawn-structure geometry the threat features alone don't capture),
-  shipped in **`nn-rubicon-alea-v2`**, and **passed-pawn features** (one feature per passed pawn),
-  currently in training/screening for `nn-rubicon-alea-v3`. Both blocks are grafted with
-  zero-initialised columns onto the previous net — bit-identical at graft time — then fine-tuned.
-  Engine-side both blocks fold into the existing threat accumulator (no new SIMD path); the reader
-  is dual-format, so the same binary loads both v2 and v3 nets. See `NETWORKS.md` for training details.
-- **SPSA mega co-tune** of ~50 search parameters, baked into the compiled defaults.
+  feature set with two input blocks of our own: **pawn-pair features** (4560 — phalanxes, chains,
+  doubled/isolated pawns: pawn-structure geometry the threat features alone don't capture) and
+  **passed-pawn features** (96 — one per passed pawn: a relational property `HalfKAv2_hm` cannot
+  express directly). Both are grafted with zero-initialised columns onto the previous net —
+  bit-identical at graft time — then fine-tuned; both fold into the existing threat accumulator, so
+  no new SIMD path is added. Shipped in **`nn-rubicon-alea-v3`**, whose net format is consequently
+  **not** SFNNv13 (the reader still loads v2-format nets, zero-filling the passed-pawn segment, so a
+  single binary can gate v2 against v3). See [`NETWORKS.md`](NETWORKS.md) for training details.
+- **SPSA mega co-tune** of the search parameters, co-tuned as a block and baked into the compiled
+  defaults.
 - **TMv2 time management** — a multiplicative-stateless time manager (stability, eval-trend, node and
   predicted-move factors), SPSA-tuned. It is **time-control gated**: measured **+23.8 Elo at 20+0.2** but
   **−22.9 at 10+0.1**, so it activates only when the game's base time ≥ 15 s and there's an increment
   (`TMv2MinBaseMs`); below that it falls back to the original time manager. Captures the long-TC gain
   without the short-TC regression.
+
+#### Network gains (net-isolated)
+
+Same binary on both sides — **only the network changes** — so these isolate the network from the
+search. Measured against `v1` with both new blocks zero-grafted (a v3-format net whose evaluation is
+bit-identical to v1), so one binary plays both sides.
+
+| Comparison | Date | TC | Games | Elo | LOS |
+|---|---|---|---|---|---|
+| `v2` vs `v1` — PawnPair block + own self-play data | 2026-07-17 | 20+0.2 | 1104 | **+18.27 ± 9.94** | 99.98% |
+| `v3` vs `v2` — PassedPawns block | 2026-07-17 | 15+0.15 | 2596 | **+6.96 ± 6.56** | 98.1% |
+| **`v3` vs `v1` — cumulative** | 2026-07-17 | 20+0.2 | 1998 | **+15.14 ± 7.69** | 99.99% |
+
+<sub>Net gains shrink at longer time controls (a deeper search compensates for part of what the
+evaluation already knows), which is why the 15+0.15 row is not additive with the 20+0.2 rows.</sub>
 
 #### Incremental gains (vs 5.1 baseline)
 
@@ -68,8 +86,9 @@ co-tune + TMv2 on the graft-time, v1-identical network). It bundles four changes
 mid-training **`nn-rubicon-alea-v2`** network (checkpoint ep439 of ~800, so this *understates* the final
 net), an SPSA re-tune of the search on the new network, and the **large-pages / NPS** engine changes. (The
 **DoDeeper** LMR re-search extension was enabled here too but is TC-dependent — +12.95 at 15+0.15,
-neutral +0.9 at this 20+0.2 — so it contributes little to this row and is not baked.) The definitive
-version-bump gate against 5.1 at 20+0.2 will run once the v2 network finishes training.</sub>
+neutral +0.9 at this 20+0.2 — so it contributes little to this row and is not baked.) It predates the
+final v2 network and the v3 network above; the definitive version-bump gate of the 6.0 prerelease
+against 5.1 at 20+0.2 is running.</sub>
 
 ## Triumviratus 5.1
 
@@ -102,6 +121,27 @@ the own-lineage network **`nn-rubicon-alea-v1`**. See [`NETWORKS.md`](NETWORKS.m
 First release with a **NNUE network trained by the author**. *(CCRL rating: to be added.)*
 
 ## Results
+
+#### 6.0 vs 5.1 — version-bump gate (2026-07-17)
+
+> [!NOTE]
+> Release binary vs release binary (AVX-512), each loading **its own** network (6.0 → `rubicon-alea-v3`,
+> 5.1 → `rubicon-alea-v1`), 1 thread, 64 MB, UHO 2024 book.
+
+| Time control | Games | Score (6.0) | Elo (6.0) | LOS | SPRT |
+|---|---|---|---|---|---|
+| 20+0.2 | 1166 | 54.8% | **+33.18 ± 9.86** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
+
+<sub>6.0: W 301 · L 190 · D 675. Pentanomial [0–2]: [3, 81, 306, 188, 5].</sub>
+
+<sub>**Why this is smaller than the sum of the incremental rows above:** the incremental gains are
+**not additive**, and this was measured, not assumed — back on 2026-07-13 the first two rows (+15.8 and
++23.8) already gave only **+14.6 ± 15.5** in a direct 6.0-vs-5.1 gate. Gains overlap (a re-tuned search
+partly compensates for what the network already knows), row 1 was measured at a shorter time control,
+and row 3's ±17.1 over 394 games was too noisy to carry a point estimate. The consistency check works
+out: the direct gate moved from **+14.6** (before the network work) to **+33.2** (with `v3`) — a
+**+18.6** contribution from the network, matching the independent net-isolated measurement of
+**+15.14 ± 7.69** for `v3` vs `v1` within noise.</sub>
 
 #### 5.1 vs 5.0 — official release gate (2026-07-07)
 
@@ -164,7 +204,7 @@ than the unbalanced UHO set — compare sign/LOS across rows, not the raw Elo nu
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
 
 > [!IMPORTANT]
-> **GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13 evaluation in `nnue/`, GPLv3); the search, the rest of the engine, and the shipped network are the project's own (see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is distributed under GPLv3**, with Stockfish's copyright notices preserved.
+> **GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13 evaluation machinery in `nnue/`, GPLv3); the search, the rest of the engine, the two extra feature blocks (`PawnPair`, `PassedPawns`) and the shipped network are the project's own (see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is distributed under GPLv3**, with Stockfish's copyright notices preserved.
 
 ## Credits
 
