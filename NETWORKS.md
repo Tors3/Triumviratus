@@ -118,11 +118,19 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ---
 
-## `Outposts` — a third input block (architecture in the engine; network in training)
+## `Outposts` — a third input block, tested and **rejected** (negative result, kept for the record)
 
-> **Status: the block is implemented and verified in the engine; the network that uses it is still
-> training.** No `rubicon-alea-v4` has been released. This section documents the architecture, not a
-> shipped result.
+> **Status: implemented, verified, trained, and measured at parity — not shipped.** The block was
+> mechanically sound (a network with random Outposts weights collapses by −614 Elo, so the features
+> demonstrably drive the evaluation) but added no strength: frozen-base training showed no signal by
+> epoch 3-5, where `PassedPawns` had already shown its gain, and whole-network co-adaptation first
+> *lost* ~18 Elo, then merely recovered to parity. The information is evidently already inferable
+> from the threat features and `PawnPair` through the L1 pairwise product. Two lessons worth the GPU
+> hours: square-only features that are meaningless without a piece standing on them get a diluted
+> gradient (an outpost square matters only when something occupies it — a passed pawn matters by
+> itself), and training loss is useless as a guide at the label-noise floor (it sat flat at ~0.0036
+> while playing strength swung by tens of Elo). The engine keeps the third block slot and the
+> tri-format reader; the slot now carries the next candidate.
 
 The engine's feature set can now carry a third project-specific block, on the same pattern as
 `PawnPair` and `PassedPawns`:
