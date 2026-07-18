@@ -64,10 +64,10 @@ class FullThreats {
     // clang-format on
 
     // Maximum number of simultaneously active features.
-    // TRANN1: la lista ospita anche gli indici PawnPair e PassedPawns folded
-    // (refresh: fino a 128 threat + 120 coppie + 16 passati = 264;
-    // incrementale: ~96 + ~46 + pochi passati) -> 288.
-    static constexpr IndexType MaxActiveDimensions = 288;
+    // TRANN1: la lista ospita anche gli indici PawnPair, PassedPawns e
+    // Outposts folded (refresh: fino a 128 threat + 120 coppie + 16 passati
+    // + 32 outpost = 296; incrementale: molti meno) -> 320.
+    static constexpr IndexType MaxActiveDimensions = 320;
     using IndexList                                = ValueList<IndexType, MaxActiveDimensions>;
     using DiffType                                 = DirtyThreats;
 

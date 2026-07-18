@@ -850,6 +850,31 @@ int g_asp_score_mult = 38;   // >> 20 scale; SPSA range [0,2000], init-when-ON ~
 int g_cmhc_scale = 6;       // Q-12 CMHC: bonus conthist *= (100 + scale*consistenza)/100. 0 = neutro
 int g_probcut_margin = 271;   // ProbCut: capture verification must beat beta by this margin
 int g_probcut_improve = 4;    // Q-20b (Alexandria): abbassa probcut_beta di questo quando improving (probcut piu' facile). 0 = OFF
+
+// ⭐ GATE STRUTTURALI (2026-07-17): interi hardcoded delle DECISIONI DI PROFONDITA' — mai tunati
+// perche' troppo piccoli per SPSA (range<=4 = perturbazione annullata), NON perche' ottimi. Esposti
+// qui coi valori attuali (byte-identico) per test DISCRETO via SPRT. SF/Berserk li tunano.
+// SCREENING 2026-07-17 (12+0.12): l'IIR e' GIA' OTTIMO, tutte e 3 le varianti NEGATIVE. Chiuso.
+//   IIRNotInCheck=true  -> -5.79  (LOS 3.7%)   il "fix" annulla-check-ext e' negativo a STC
+//   IIRMinDepth=6       -> -10.08 (LOS 0.1%)   sparare MENO (gate 4->6) fa male
+//   IIRMinDepth=3       -> -14.67 (LOS 0.5%)   sparare PIU' (gate 4->3) fa peggio -> 4 e' il punto giusto
+int  g_iir_min_depth   = 4;   // IIR: depth minima perche' scatti il depth-- senza TT move (:3894)
+int  g_iir_amount      = 1;   // IIR: di quanto riduce
+static bool g_iir_not_in_check = false;  // fix bug: IIR NON spara in scacco. Testato -5.79 -> resta OFF
+// ⭐ SCREENING 2026-07-17 (12+0.12): gate 5->7 = +12.54 +/-9.52 (LOS 99.5%, 1330g) = PRIMO HIT VERO.
+//   ProbCut deve sparare MENO (a depth 5-6 la verifica ridotta e' inaffidabile). 5->4 era neutro (-0.46).
+//   mind9 = +4.42 (LOS 72%) < mind7 -> picco ~7.
+// ⚠️ RICONFERMA 20+0.2 (2026-07-18): il +12.5 e' EVAPORATO. PC7-solo = +0.67 (LOS 55%), INCR(PC7+SG4)
+//   = +3 sfumando (LOS 76%). Puro TC-decay: a 20s la ricerca profonda rende ProbCut gia' affidabile.
+//   -> gate=5 RESTA. L'hit STC vale solo a blitz. Search-side confermato tunato al TC di release.
+int  g_probcut_min_depth = 5; // ProbCut: depth minima del gate (:4157)
+// SCREENING 2026-07-17 (12+0.12): off=4 e' gia' ottimo. off=3 (verifica piu' profonda) -1.57 neutro;
+//   off=5 (verifica piu' bassa) -8.92 (LOS 5%) fa male. Chiuso: pc_depth = depth-4 sta bene.
+int  g_probcut_depth_off = 4; // ProbCut: pc_depth = depth - questo (:4205)
+// SCREENING 2026-07-17 (12+0.12): ttm=2 (piu' esigente, meno singular) -8.03 (LOS 7%) male;
+//   ttm=4 (meno esigente, PIU' singular) +6.58 +/-8.70 (LOS 93%) = candidato (LOS<95%, da riconfermare 20s).
+int  g_singular_ttmargin = 3; // Singular: tt_depth >= depth - questo (:4483)
+int  g_singular_depth_div = 2;// Singular: singular_depth = (depth-1) / questo (:4486)
 // Q-20a (Alexandria): badNode = predicato IIR (nessuna TT move utile) -> il fail-high
 // statico e' MENO contraddetto da info profonde -> margine RFP ridotto (prune piu' facile).
 int g_rfp_badnode = 4;        // rfp_margin -= questo se !tt_move. 0 = OFF
@@ -1194,6 +1219,13 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "CorrValFut"))          { g_corrval_fut = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrValSee"))          { g_corrval_see = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CorrValLmr"))          { g_corrval_lmr = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "IIRMinDepth"))         { g_iir_min_depth = value < 1 ? 1 : value; return true; }        // gate strutturali
+    if (!strcmp(name, "IIRAmount"))           { g_iir_amount = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "IIRNotInCheck"))       { g_iir_not_in_check = value != 0; return true; }
+    if (!strcmp(name, "ProbCutMinDepth"))     { g_probcut_min_depth = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "ProbCutDepthOff"))     { g_probcut_depth_off = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "SingularTTMargin"))    { g_singular_ttmargin = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "SingularDepthDiv"))    { g_singular_depth_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "MalusScaled"))         { g_malus_scaled = value != 0; return true; }
     if (!strcmp(name, "MalusScaleCoef"))      { g_malus_scale_coef = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "DoDeeper"))            { g_do_deeper = value != 0; return true; }
@@ -3891,7 +3923,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // Internal Iterative Reduction: senza TT move l'ordinamento e' scadente,
     // riduciamo di 1 ply per ottenere a basso costo una hash move. (Se l'IID sopra ha
     // trovato una mossa, tt_move != 0 -> questa riduzione NON scatta.)
-    if (depth >= 4 && !tt_move && !excluded_move && !follow_pv) depth--;   // Q-15: niente IIR sui nodi che seguono la PV
+    if (depth >= g_iir_min_depth && !tt_move && !excluded_move && !follow_pv
+        && !(g_iir_not_in_check && in_check)) depth -= g_iir_amount;   // Q-15: niente IIR su follow-PV; fix opz. in-check
     // NB (2026-07-16): l'IIR spara ANCHE in scacco, annullando la check-ext (+1 poi -1).
     // Fix "&& !in_check" candidato +1.5 LTC (SF/Alexandria) ma NON confermabile coi tempi
     // attuali (LTC = troppe partite) -> IN CODA al blocco finale, NON bakato a fiducia.
@@ -4154,7 +4187,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
     // Skipped in PV / in check / near mate / during a singular search, and when a
     // deep-enough TT entry already proves the value stays below probcut_beta.
     if (g_probcut && !pv_node && !in_check && !excluded_move &&
-        depth >= 5 && beta < mate_score && beta > -mate_score) {
+        depth >= g_probcut_min_depth && beta < mate_score && beta > -mate_score) {
         int probcut_beta = beta + g_probcut_margin - ((g_improving && improving) ? g_probcut_improve : 0);
         bool tt_blocks = tt_hit && tt_depth >= depth - 3 &&
                          tt_score < probcut_beta && tt_score > -mate_score;
@@ -4202,7 +4235,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // pay for the reduced-depth (depth-4) confirmation search.
                 // Q-10 ProbCutImproving (default OFF): -1 ply quando improving
                 // (depth 0 -> td_negamax cade in qsearch, come SF/Reckless).
-                int pc_depth = depth - 4 - ((g_probcut_improving && improving) ? 1 : 0);
+                int pc_depth = depth - g_probcut_depth_off - ((g_probcut_improving && improving) ? 1 : 0);
                 int pc_score = -td_quiescence(td, -probcut_beta, -probcut_beta + 1);
                 if (pc_score >= probcut_beta)
                     pc_score = -td_negamax(td, -probcut_beta, -probcut_beta + 1,
@@ -4480,10 +4513,10 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         // ply >= 2*rootDepth (entrambi i rivali ce l'hanno).
         if (excluded_move == 0 && move == tt_move && depth >= g_singular_mindepth && td.ply &&
             (!g_singular_plyguard || td.ply < 2 * td.root_depth) &&
-            tt_hit && tt_depth >= depth - 3 && tt_flag != hash_flag_alpha &&
+            tt_hit && tt_depth >= depth - g_singular_ttmargin && tt_flag != hash_flag_alpha &&
             tt_score > -mate_score && tt_score < mate_score) {
             int singular_beta = tt_score - g_singular_mpd * depth;   // F-002: era hardcoded 2*depth
-            int singular_depth = (depth - 1) / 2;
+            int singular_depth = (depth - 1) / g_singular_depth_div;
             int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
             if (s < singular_beta) {
                 extension = 1;

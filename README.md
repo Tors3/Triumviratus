@@ -97,11 +97,11 @@ published binaries; they are recorded because the first changes what *earlier* p
 
 - **The Windows binaries embedded the wrong network.** The single source of truth for the default
   net name was updated in the code but not in the Windows resource file, so the embedded blob was
-  still the zero-graft — evaluation identical to `rubicon-alea-v1`. Binaries with
-  `nn-rubicon-alea-v3.nnue` next to them were unaffected (a file on disk always wins), but running
-  the `.exe` on its own meant playing the old evaluation, ≈15 Elo weaker. Linux and Android were
-  never affected. **Replace any earlier 6.0 prerelease `.exe`.** The build now benches the binary
-  standalone and refuses to package a mismatch.
+  still `rubicon-alea-v2`. Binaries with `nn-rubicon-alea-v3.nnue` next to them were unaffected
+  (a file on disk always wins), but running the `.exe` on its own meant playing the previous
+  network, ≈7 Elo weaker. Linux and Android were never affected. **Replace any earlier 6.0
+  prerelease `.exe`.** The build now benches the binary standalone and refuses to package a
+  mismatch.
 - **Capture futility pruned good captures.** The victim's value entered the pruning margin in
   classic centipawns while the surrounding terms were in the network's own (compressed) evaluation
   units, under-weighting the victim ≈2.4×. The effect was the opposite of the intent: captures

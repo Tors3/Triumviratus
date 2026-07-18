@@ -2,11 +2,14 @@
 
 Triumviratus ships its **own** NNUE network — weights trained by the project, **not** a Stockfish network.
 
-To be precise about provenance (and GPL-honest): the NNUE **evaluation code** and the network **architecture**
+To be precise about provenance (and GPL-honest): the NNUE **evaluation code** and the base network **architecture**
 are Stockfish's (GPLv3 — see [`README`](README.md) and [`COPYING`](COPYING)); the official Stockfish **trainer**
-([`nnue-pytorch`](https://github.com/official-stockfish/nnue-pytorch)) is used to train. What is **ours** is the
-**network weights** — trained from our own data pipeline, from scratch (no Stockfish net used as a seed). This
-document records how each shipped network was trained, for transparency and reproducibility.
+([`nnue-pytorch`](https://github.com/official-stockfish/nnue-pytorch)) is used to train. The **training data is
+mostly public** — Leela Chess Zero `test79`/`test80` binpacks, plus Stockfish-generated packs in one early stage,
+plus a small slice of our own self-play. What is **ours** is the **network weights**: trained from scratch, with no
+Stockfish network used as a seed or teacher, on a data mix and schedule we chose — and the extra input feature
+blocks (`PawnPair`, `PassedPawns`) that the architecture carries. This document records how each shipped network
+was trained, for transparency and reproducibility.
 
 ---
 
@@ -115,10 +118,50 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ---
 
+## `Outposts` — a third input block (architecture in the engine; network in training)
+
+> **Status: the block is implemented and verified in the engine; the network that uses it is still
+> training.** No `rubicon-alea-v4` has been released. This section documents the architecture, not a
+> shipped result.
+
+The engine's feature set can now carry a third project-specific block, on the same pattern as
+`PawnPair` and `PassedPawns`:
+
+| | |
+|---|---|
+| **Feature space** | **96 features** — 48 oriented squares × {own outpost, enemy outpost}. A square is an *outpost* for a side when it is **defended by one of that side's pawns** and **no enemy pawn can ever attack it** (no enemy pawn on an adjacent file still able to advance onto it). |
+| **Why square-only** | No flags for the piece standing there, its colour complex, or whether it is defended twice. Those are learnable through the pairwise-multiplied L1 against `HalfKAv2_hm` (which already knows which piece is on which square), and adding them would break the pawn-event-only incremental update. Only the part the network *cannot* infer — the cross-file pawn configuration — is encoded. Same reasoning that shaped `PassedPawns`. |
+| **Cost** | Folds into the existing threat accumulator and reuses the `PassedPawns` pawn-event trigger, so it adds **no new SIMD path** and no measurable inference cost. |
+| **Reader** | The reader is now **tri-format**: one binary loads a v4 net (with Outposts), a v3 net (zero-filling Outposts) and a v2 net (zero-filling both PassedPawns and Outposts). Format detection is automatic from the network hash — no option, no separate build. This is what makes net-isolated A/B gating possible with a single executable. |
+| **Verification** | The zero-initialised graft is **bit-identical** to its parent (same bench signature through graft → serialize → reader), the incremental update matches a full refresh with **zero mismatches**, and the C++ loader agrees with an independent Python reference on every test position. |
+
+One methodological observation worth recording, independent of whether this network ships: grafting a
+new block and then **co-adapting the whole network** (a two-group fine-tune — low learning rate on the
+base, high on the new block) behaves very differently from the frozen-base screening used for
+`PassedPawns`. Early in such a run the network is measurably *weaker* than its parent, because the
+base is being pulled around by a block that is still changing quickly; it recovers only after a few
+epochs. Training loss is close to useless as a guide here — it sat flat at the label-noise floor
+(~0.0036) throughout, while playing strength moved by tens of Elo in both directions. Only game
+results tracked what was actually happening.
+
+---
+
 ## What "own-lineage" means (and does not)
 
-- **Means:** the network *weights* shipped with Triumviratus are trained by the project, from our own data, with no
-  Stockfish network used as a seed. The evaluation values are ours.
-- **Does not mean:** independence from Stockfish *code*. The NNUE inference and the network *architecture* are
-  Stockfish's (GPLv3), and the trainer is Stockfish's `nnue-pytorch`. The whole project is GPLv3 and credits
-  Stockfish accordingly (see `README` / `COPYING`). Renaming code does not change this; the attribution is kept.
+- **Means:** the network *weights* shipped with Triumviratus are trained by the project, **from scratch**, with
+  **no Stockfish network used as a seed or teacher**. Every training run in the table above starts either from
+  random initialisation or from one of our own earlier networks. The evaluation values are ours.
+- **Does not mean: our own data.** The training data is overwhelmingly **public**: Leela Chess Zero `test79`/`test80`
+  binpacks make up the bulk of every run, and the first stage of `rubicon-alea-v1` used **Stockfish-generated**
+  5000-node data packs (the public `vondele` sets, ~136 GB). The project's own self-play contributes a small
+  minority — roughly **6.5 %** of the `rubicon-alea-v2` mix (~67 M positions, repeated ×10 against ~327 GB of
+  Leela data). Calling the data "ours" would be wrong; what is ours is the training, the mix, and the resulting
+  weights.
+- **Does not mean:** independence from Stockfish *code*. The NNUE inference and the base network *architecture* are
+  Stockfish's (GPLv3) — extended with our own input blocks — and the trainer is Stockfish's `nnue-pytorch`. The whole
+  project is GPLv3 and credits Stockfish accordingly (see `README` / `COPYING`). Renaming code does not change this;
+  the attribution is kept.
+- **Why it still matters:** an own-lineage network plateaus measurably below the strongest Stockfish network
+  (≈ −40 Elo for `rubicon-alea-v1`, less for later ones) — that gap is the accepted cost. What the project gets in
+  return is a network whose weights, mix and feature extensions are its own rather than a redistribution of
+  someone else's.

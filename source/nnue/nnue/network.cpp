@@ -362,20 +362,27 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
     u32 hashValue;
     if (!read_header(stream, &hashValue, &netDescription))
         return false;
-    // v3: accetta anche il formato v2 (3 blocchi) -> il segmento PassedPawns
-    // viene zero-fillato in FeatureTransformer::read_parameters (eval identica).
-    const bool v2Compat = (hashValue == Network::hash_v2);
-    if (hashValue != Network::hash && !v2Compat)
+    // v4: accetta anche i formati v3 (4 blocchi) e v2 (3 blocchi) -> i
+    // segmenti mancanti (Outposts, e per il v2 anche PassedPawns) vengono
+    // zero-fillati in FeatureTransformer::read_parameters (eval identica).
+    const int compat = hashValue == Network::hash    ? FeatureTransformer::LOAD_NATIVE
+                     : hashValue == Network::hash_v3 ? FeatureTransformer::LOAD_V3
+                     : hashValue == Network::hash_v2 ? FeatureTransformer::LOAD_V2
+                                                     : -1;
+    if (compat < 0)
         return false;
     {
-        // Sezione FT: header di sezione + parametri (dual-format; specchia
+        // Sezione FT: header di sezione + parametri (tri-format; specchia
         // Detail::read_parameters, che non puo' passare il flag).
         u32 header = read_little_endian<u32>(stream);
         const u32 expected =
-          v2Compat ? FeatureTransformer::get_hash_value_v2() : FeatureTransformer::get_hash_value();
+          compat == FeatureTransformer::LOAD_V2 ? FeatureTransformer::get_hash_value_v2()
+          : compat == FeatureTransformer::LOAD_V3
+            ? FeatureTransformer::get_hash_value_v3()
+            : FeatureTransformer::get_hash_value();
         if (!stream || header != expected)
             return false;
-        if (!featureTransformer.read_parameters(stream, v2Compat))
+        if (!featureTransformer.read_parameters(stream, compat))
             return false;
     }
     for (usize i = 0; i < LayerStacks; ++i)

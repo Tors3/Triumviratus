@@ -649,6 +649,14 @@ void uci_loop()
             printf("option name CorrValFut type spin default 43 min 0 max 400\n");   // peso fold futility
             printf("option name CorrValSee type spin default 27 min 0 max 400\n");   // peso fold SEE
             printf("option name CorrValLmr type spin default 77 min 0 max 400\n");   // peso fold LMR
+            // Gate strutturali (interi delle decisioni di profondita', mai tunati: SPSA non li vede)
+            printf("option name IIRMinDepth type spin default 4 min 1 max 12\n");
+            printf("option name IIRAmount type spin default 1 min 1 max 3\n");
+            printf("option name IIRNotInCheck type check default false\n");           // fix: IIR non spara in scacco
+            printf("option name ProbCutMinDepth type spin default 5 min 3 max 10\n");
+            printf("option name ProbCutDepthOff type spin default 4 min 2 max 6\n");
+            printf("option name SingularTTMargin type spin default 3 min 1 max 6\n");
+            printf("option name SingularDepthDiv type spin default 2 min 1 max 4\n");
             printf("option name MalusScaled type spin default 1 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
             printf("option name MalusScaleCoef type spin default 58 min 0 max 200\n");
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR

@@ -365,6 +365,7 @@ void update_accumulator_incremental(Color                     perspective,
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
+        OutpostFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
     }
     else
@@ -373,6 +374,7 @@ void update_accumulator_incremental(Color                     perspective,
                                                  thrRemoved, pfBase, pfStride);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
+        OutpostFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
     }
     // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh e' stato
@@ -510,8 +512,9 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
-    PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
-    PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
+    PawnFeatureSet::append_active_indices(perspective, pos, active);     // TRANN1 folded
+    PassedFeatureSet::append_active_indices(perspective, pos, active);   // v3 folded
+    OutpostFeatureSet::append_active_indices(perspective, pos, active);  // v4 folded
 
     accumulator.computed[perspective] = true;
 

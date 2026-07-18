@@ -105,6 +105,9 @@
     <ClCompile Include="nnue\nnue\features\passed_pawns.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>
+    <ClCompile Include="nnue\nnue\features\outposts.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="nnue\nnue\features\half_ka_v2_hm.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>
@@ -334,6 +337,17 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
+
+
+
+
+
+
+
+
+
 
 
 
