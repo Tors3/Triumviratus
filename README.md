@@ -171,8 +171,18 @@ out: the direct gate moved from **+14.6** (before the network work) to **+33.2**
 
 #### Pawnocchio 1.9.1
 
-`v5.1` vs Pawnocchio 1.9.1 (znver5 build), AVX512, 1 thread, 64 MB hash, no score-based adjudication,
-UHO 2024 book.
+**6.0** vs Pawnocchio 1.9.1, 1 thread, 128 MB, UHO 2024 book, resign-adjudicated:
+
+| Date | Time control | Games | Score (6.0) | Elo (6.0) | LOS |
+|---|---|---|---|---|---|
+| 2026-07-18 | 45+0.45 | 1000 | 56.0% | **+41.89 ± 11.08** | 100.00% |
+
+<sub>6.0: W 285 · L 165 · D 550. Pentanomial [0–2]: [3, 68, 241, 182, 6]. Where 5.1 was essentially
+even with Pawnocchio 1.9.1 (below), 6.0 clears it by a confirmed margin — consistent with the
++33 gate over 5.1.</sub>
+
+Earlier, **5.1** vs Pawnocchio 1.9.1 (znver5 build), AVX512, 1 thread, 64 MB hash, no score-based
+adjudication, UHO 2024 book:
 
 | Date | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
 |---|---|---|---|---|---|---|
@@ -180,8 +190,8 @@ UHO 2024 book.
 | 2026-07-08 | 20+0.2 | UHO_2024_8mvs_big_+080_+099.epd | 800 | 51.4% | **+9.56 ± 12.89** | 92.71% |
 | 2026-07-06 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
 
-<sub>At long TC (60+0.6, 2000 games) Triumviratus 5.1 and Pawnocchio 1.9.1 are essentially even —
-the small edge (LOS 75%) is within noise, not a confirmed gap.</sub>
+<sub>At long TC (60+0.6, 2000 games) Triumviratus 5.1 and Pawnocchio 1.9.1 were essentially even —
+the small edge (LOS 75%) within noise. 6.0 turns that into a clear +42.</sub>
 
 #### vs. external engines (2026-07-05)
 `v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
