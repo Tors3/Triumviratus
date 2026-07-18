@@ -86,19 +86,16 @@ class FeatureTransformer {
     using OutputType = TransformedFeatureType;
 
     // Number of input/output dimensions
-    static constexpr IndexType ThreatInputDimensions  = ThreatFeatureSet::Dimensions;
-    static constexpr IndexType PawnInputDimensions    = PawnFeatureSet::Dimensions;
-    static constexpr IndexType PassedInputDimensions  = PassedFeatureSet::Dimensions;
-    static constexpr IndexType OutpostInputDimensions = OutpostFeatureSet::Dimensions;
-    // TRANN1 "folded" design: i pesi PawnPair/PassedPawns/Outposts (int8 come
-    // i threats) vivono IN CODA allo stesso array threatWeights e gli indici
-    // arrivano gia' offsettati (PawnPair dopo i threats, PassedPawns dopo
-    // PawnPair, Outposts dopo PassedPawns) -> tutto il SIMD a valle (apply,
-    // refresh, prefetch) resta INVARIATO: coppie di pedoni, passati e outpost
-    // sono semplicemente "threat" extra.
+    static constexpr IndexType ThreatInputDimensions = ThreatFeatureSet::Dimensions;
+    static constexpr IndexType PawnInputDimensions   = PawnFeatureSet::Dimensions;
+    static constexpr IndexType PassedInputDimensions = PassedFeatureSet::Dimensions;
+    // TRANN1 "folded" design: i pesi PawnPair e PassedPawns (int8 come i threats)
+    // vivono IN CODA allo stesso array threatWeights e gli indici arrivano gia'
+    // offsettati (PawnPair dopo i threats, PassedPawns dopo PawnPair) -> tutto il
+    // SIMD a valle (apply, refresh, prefetch) resta INVARIATO: le coppie di pedoni
+    // e i passati sono semplicemente "threat" extra.
     static constexpr IndexType ThreatPlusPawnDimensions =
-      ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions
-      + OutpostInputDimensions;
+      ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions;
     static constexpr IndexType InputDimensions =
       PSQFeatureSet::Dimensions + ThreatPlusPawnDimensions;
     static constexpr IndexType OutputDimensions = HalfDimensions;
@@ -140,32 +137,17 @@ class FeatureTransformer {
     }
 
     // Hash value embedded in the evaluation file (TRANN1: threats + halfka +
-    // pawnpair + passedpawns + outposts — must match the trainer's
-    // composed._compute_hash, which folds the blocks in feature-string order)
+    // pawnpair + passedpawns — must match the trainer's composed._compute_hash,
+    // which folds the blocks in feature-string order)
     static constexpr u32 get_hash_value() {
-        return combine_hash({ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue,
-                             PawnFeatureSet::HashValue, PassedFeatureSet::HashValue,
-                             OutpostFeatureSet::HashValue})
-             ^ (OutputDimensions * 2);
-    }
-
-    // Formati legacy accettati in lettura con zero-fill dei blocchi mancanti
-    // in coda -> eval byte-identica al motore d'origine. Permette a UN solo
-    // binario di caricare net v2/v3/v4 durante la transizione.
-    enum LoadCompat : int {
-        LOAD_NATIVE = 0,  // v4: tutti i blocchi presenti
-        LOAD_V3     = 1,  // 4 blocchi, senza Outposts (zero-fill outposts)
-        LOAD_V2     = 2   // 3 blocchi, senza PassedPawns+Outposts (zero-fill entrambi)
-    };
-
-    // Hash del formato v3 (4 blocchi, senza Outposts)
-    static constexpr u32 get_hash_value_v3() {
         return combine_hash({ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue,
                              PawnFeatureSet::HashValue, PassedFeatureSet::HashValue})
              ^ (OutputDimensions * 2);
     }
 
-    // Hash del formato v2 (3 blocchi, senza PassedPawns/Outposts)
+    // Hash del formato v2 (3 blocchi, senza PassedPawns): accettato in lettura
+    // con zero-fill del segmento passed -> eval byte-identica al motore v2.
+    // Permette a UN solo binario di caricare net v2 e v3 durante la transizione.
     static constexpr u32 get_hash_value_v2() {
         return combine_hash(
                  {ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue, PawnFeatureSet::HashValue})
@@ -191,7 +173,7 @@ class FeatureTransformer {
     // (serialize.py write_feature_transformer). I segmenti pawn atterrano in
     // CODA agli array threat (folded); i psqt leb128 passano da un temp heap
     // (read_leb_128 vuole std::array interi) — solo a load-time.
-    bool read_parameters(std::istream& stream, int compat = LOAD_NATIVE) {
+    bool read_parameters(std::istream& stream, bool v2Compat = false) {
         read_leb_128(stream, biases);
 
         read_little_endian<ThreatWeightType>(stream, threatWeights.data(),
@@ -220,7 +202,7 @@ class FeatureTransformer {
         // v3: blocco PassedPawns (quarto segmento dello stream, feature-string
         // order) -> coda dell'array threat dopo il segmento PawnPair. Un net
         // v2 (3 blocchi) non ha il segmento: zero-fill = eval identica al v2.
-        if (compat < LOAD_V2)
+        if (!v2Compat)
         {
             read_little_endian<ThreatWeightType>(
               stream,
@@ -244,42 +226,6 @@ class FeatureTransformer {
             std::memset(threatPsqtWeights.data()
                           + usize(ThreatInputDimensions + PawnInputDimensions) * PSQTBuckets,
                         0, PassedInputDimensions * PSQTBuckets * sizeof(PSQTWeightType));
-        }
-
-        // v4: blocco Outposts (quinto segmento dello stream) -> coda dell'array
-        // threat dopo il segmento PassedPawns. Net v2/v3 non hanno il segmento:
-        // zero-fill = eval identica al motore d'origine.
-        if (compat == LOAD_NATIVE)
-        {
-            read_little_endian<ThreatWeightType>(
-              stream,
-              threatWeights.data()
-                + usize(ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions)
-                    * HalfDimensions,
-              OutpostInputDimensions * HalfDimensions);
-            {
-                auto tmp = std::make_unique<
-                  std::array<PSQTWeightType, OutpostInputDimensions * PSQTBuckets>>();
-                read_leb_128(stream, *tmp);
-                std::memcpy(threatPsqtWeights.data()
-                              + usize(ThreatInputDimensions + PawnInputDimensions
-                                      + PassedInputDimensions)
-                                  * PSQTBuckets,
-                            tmp->data(), sizeof(*tmp));
-            }
-        }
-        else
-        {
-            std::memset(threatWeights.data()
-                          + usize(ThreatInputDimensions + PawnInputDimensions
-                                  + PassedInputDimensions)
-                              * HalfDimensions,
-                        0, OutpostInputDimensions * HalfDimensions * sizeof(ThreatWeightType));
-            std::memset(threatPsqtWeights.data()
-                          + usize(ThreatInputDimensions + PawnInputDimensions
-                                  + PassedInputDimensions)
-                              * PSQTBuckets,
-                        0, OutpostInputDimensions * PSQTBuckets * sizeof(PSQTWeightType));
         }
 
         permute_weights();
@@ -332,25 +278,6 @@ class FeatureTransformer {
             std::memcpy(tmp->data(),
                         copy->threatPsqtWeights.data()
                           + usize(ThreatInputDimensions + PawnInputDimensions) * PSQTBuckets,
-                        sizeof(*tmp));
-            write_leb_128<PSQTWeightType>(stream, *tmp);
-        }
-
-        // v4: blocco Outposts (quinto segmento, specchia read_parameters)
-        write_little_endian<ThreatWeightType>(
-          stream,
-          copy->threatWeights.data()
-            + usize(ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions)
-                * HalfDimensions,
-          OutpostInputDimensions * HalfDimensions);
-        {
-            auto tmp =
-              std::make_unique<std::array<PSQTWeightType, OutpostInputDimensions * PSQTBuckets>>();
-            std::memcpy(tmp->data(),
-                        copy->threatPsqtWeights.data()
-                          + usize(ThreatInputDimensions + PawnInputDimensions
-                                  + PassedInputDimensions)
-                              * PSQTBuckets,
                         sizeof(*tmp));
             write_leb_128<PSQTWeightType>(stream, *tmp);
         }

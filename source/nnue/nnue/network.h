@@ -117,11 +117,8 @@ class Network {
     // Hash value of evaluation function structure
     static constexpr u32 hash =
       FeatureTransformer::get_hash_value() ^ NetworkArchitecture::get_hash_value();
-    // Formati legacy (v3 senza Outposts, v2 senza PassedPawns+Outposts):
-    // accettati in lettura, segmenti mancanti zero-fillati -> eval
-    // byte-identica al motore d'origine.
-    static constexpr u32 hash_v3 =
-      FeatureTransformer::get_hash_value_v3() ^ NetworkArchitecture::get_hash_value();
+    // Formato v2 (senza blocco PassedPawns): accettato in lettura, segmento
+    // passed zero-fillato -> eval byte-identica al motore v2.
     static constexpr u32 hash_v2 =
       FeatureTransformer::get_hash_value_v2() ^ NetworkArchitecture::get_hash_value();
 

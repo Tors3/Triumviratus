@@ -129,8 +129,9 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 > hours: square-only features that are meaningless without a piece standing on them get a diluted
 > gradient (an outpost square matters only when something occupies it — a passed pawn matters by
 > itself), and training loss is useless as a guide at the label-noise floor (it sat flat at ~0.0036
-> while playing strength swung by tens of Elo). The engine keeps the third block slot and the
-> tri-format reader; the slot now carries the next candidate.
+> while playing strength swung by tens of Elo). The third block slot went on to carry one more
+> candidate (`CandidatePassers`, below) with the same outcome, after which the slot and the
+> tri-format reader were **removed from the engine** — the shipped format is the four-block v3.
 
 The engine's feature set can now carry a third project-specific block, on the same pattern as
 `PawnPair` and `PassedPawns`:
@@ -140,7 +141,7 @@ The engine's feature set can now carry a third project-specific block, on the sa
 | **Feature space** | **96 features** — 48 oriented squares × {own outpost, enemy outpost}. A square is an *outpost* for a side when it is **defended by one of that side's pawns** and **no enemy pawn can ever attack it** (no enemy pawn on an adjacent file still able to advance onto it). |
 | **Why square-only** | No flags for the piece standing there, its colour complex, or whether it is defended twice. Those are learnable through the pairwise-multiplied L1 against `HalfKAv2_hm` (which already knows which piece is on which square), and adding them would break the pawn-event-only incremental update. Only the part the network *cannot* infer — the cross-file pawn configuration — is encoded. Same reasoning that shaped `PassedPawns`. |
 | **Cost** | Folds into the existing threat accumulator and reuses the `PassedPawns` pawn-event trigger, so it adds **no new SIMD path** and no measurable inference cost. |
-| **Reader** | The reader is now **tri-format**: one binary loads a v4 net (with Outposts), a v3 net (zero-filling Outposts) and a v2 net (zero-filling both PassedPawns and Outposts). Format detection is automatic from the network hash — no option, no separate build. This is what makes net-isolated A/B gating possible with a single executable. |
+| **Reader** | During the experiment the reader was **tri-format**: one binary loaded a v4 net (with Outposts), a v3 net (zero-filling Outposts) and a v2 net (zero-filling both PassedPawns and Outposts), with automatic format detection from the network hash. This is what made net-isolated A/B gating possible with a single executable. Removed together with the slot once the experiments closed. |
 | **Verification** | The zero-initialised graft is **bit-identical** to its parent (same bench signature through graft → serialize → reader), the incremental update matches a full refresh with **zero mismatches**, and the C++ loader agrees with an independent Python reference on every test position. |
 
 One methodological observation worth recording, independent of whether this network ships: grafting a
@@ -151,6 +152,35 @@ base is being pulled around by a block that is still changing quickly; it recove
 epochs. Training loss is close to useless as a guide here — it sat flat at the label-noise floor
 (~0.0036) throughout, while playing strength moved by tens of Elo in both directions. Only game
 results tracked what was actually happening.
+
+---
+
+## `CandidatePassers` — the second slot candidate, also **rejected** (negative result, kept for the record)
+
+> **Status: implemented, verified, trained frozen-base, and measured negative — not shipped.** After
+> Outposts, the same third-block slot carried a **candidate-passer / pawn-majority** feature: 96
+> features (48 oriented squares × own/enemy), where a pawn is a *candidate* when it is not passed,
+> sits on a semi-open file, and its potential helpers on adjacent files are at least as many as the
+> enemy sentries ahead of it. Same pawn-event incremental trigger, same zero-init graft discipline
+> as `PassedPawns`.
+
+Wiring was proven the same way (random block weights collapse the net by **−240 Elo**, so the
+features drive the eval), and the block demonstrably *learned* — its mean absolute weight after 7
+epochs of frozen-base training exceeded that of the shipped `PassedPawns` block. It still measured
+**negative at every gate**: −1.9 / −3.1 / −6.8 at 12 s across epochs 3-7, and −5.0 at 18 s with
+adjudication for the final check. Learned-but-useless is the interesting part: the information is
+real but evidently already inferable from the threat features and `PawnPair` through the L1 pairwise
+product. Together with Outposts (and a re-test of the best co-adapted Outposts checkpoint, which
+came back neutral), this closed the slot: **the slot-5 code and the tri-format reader were removed
+from the engine**, and the experimental nets are archived off-tree
+(`nn-rubicon-alea-v4-coadapt-ep3-UNCONFIRMED.nnue`, `nn-rubicon-alea-v5-candidates-ep7-NEGATIVE.nnue`).
+
+The refined lesson after two rejections, added to the feature-selection criteria: a block earns its
+place only when the encoded information is (a) **not inferable** from existing inputs through the
+pairwise L1, (b) carries **large evaluation magnitude** in classical terms, (c) **correlates with
+the label** strongly enough to survive the label-noise floor, and (d) **means something by itself**,
+without a piece having to stand on the square (`PassedPawns` passes all four; Outposts fails (d),
+CandidatePassers fails (a)).
 
 ---
 

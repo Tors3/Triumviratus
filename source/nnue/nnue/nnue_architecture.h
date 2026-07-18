@@ -27,7 +27,6 @@
 
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
-#include "features/outposts.h"
 #include "features/passed_pawns.h"
 #include "features/pawn_pair.h"
 #include "layers/affine_transform.h"
@@ -41,18 +40,15 @@ namespace Triumviratus::Eval::NNUE {
 
 // Input features used in evaluation function.
 // TRANN1 (Triumviratus Rubicon Alea NNUE 1): architettura derivata da
-// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + TRE blocchi di
-// input assenti in SF: PawnPair (4560 feature), PassedPawns (96 feature) e
-// Outposts (96 feature). Feature string (trainer):
-// Full_Threats+HalfKAv2_hm^+PawnPair+PassedPawns+Outposts.
+// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + DUE blocchi di
+// input assenti in SF: PawnPair (4560 feature) e PassedPawns (96 feature).
 // Il nome proprio riflette la divergenza reale, non nasconde la derivazione:
 // il formato del net NON e' piu' SFNNv13 (hash diverso) e un net SFNNv13 non
 // e' caricabile.
-using ThreatFeatureSet  = Features::FullThreats;
-using PSQFeatureSet     = Features::HalfKAv2_hm;
-using PawnFeatureSet    = Features::PawnPair;
-using PassedFeatureSet  = Features::PassedPawns;  // v3 graft: 96 feature passed-pawn, folded dopo PawnPair
-using OutpostFeatureSet = Features::Outposts;     // v4 graft: 96 feature outpost, folded dopo PassedPawns
+using ThreatFeatureSet = Features::FullThreats;
+using PSQFeatureSet    = Features::HalfKAv2_hm;
+using PawnFeatureSet   = Features::PawnPair;
+using PassedFeatureSet = Features::PassedPawns;  // v3 graft: 96 feature passed-pawn, folded dopo PawnPair
 
 // Number of input feature dimensions after conversion
 constexpr IndexType L1 = 1024;
