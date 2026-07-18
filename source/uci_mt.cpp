@@ -650,6 +650,7 @@ void uci_loop()
             printf("option name CorrValSee type spin default 27 min 0 max 400\n");   // peso fold SEE
             printf("option name CorrValLmr type spin default 77 min 0 max 400\n");   // peso fold LMR
             // Gate strutturali (interi delle decisioni di profondita', mai tunati: SPSA non li vede)
+            printf("option name LMPCheckGuard type check default false\n");   // guard: la LMP non pota le quiet che danno scacco
             printf("option name IIRMinDepth type spin default 4 min 1 max 12\n");
             printf("option name IIRAmount type spin default 1 min 1 max 3\n");
             printf("option name IIRNotInCheck type check default false\n");           // fix: IIR non spara in scacco
@@ -659,6 +660,11 @@ void uci_loop()
             printf("option name SingularDepthDiv type spin default 2 min 1 max 4\n");
             printf("option name MalusScaled type spin default 1 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
             printf("option name MalusScaleCoef type spin default 58 min 0 max 200\n");
+            printf("option name MalusQuad type check default false\n");                  // decay malus quadratico invece che lineare
+            printf("option name MalusQuadCoef type spin default 45 min 0 max 200\n");
+            printf("option name RazorTTQuiet type check default false\n");           // razora solo con TT move rumorosa
+            printf("option name RazorTTLower type check default false\n");           // niente razoring se bound TT = LOWER
+            printf("option name SingularExactMargin type check default true\n");     // BAKATA (+6.64, LOS 95.4%): margine singular dimezzato su bound EXACT
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
             printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
             printf("option name HindsightExt type spin default 1 min 0 max 1\n");    // 5.1 BAKE ON (Pawnocchio): ri-estendi nodi ridotti se l'eval e' girata male

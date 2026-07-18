@@ -177,6 +177,13 @@ int g_nmp_verif_depth = 1;   // spin "NMPVerifDepth" (SPSA)
 // scala comune LMPScale. Two-basin: costanti da co-tunare, non copiate.
 static bool g_lmp_improving = true;
 void set_lmp_improving(bool v) { g_lmp_improving = v; }
+// ⭐ LMPCheckGuard (2026-07-18, da scan Reckless v0.9.0+): la LMP pota le quiet per move-count
+// SENZA guardare se danno SCACCO. Reckless 5e5443d ("Guard LMP for moves that give check") vale
+// +9.46 Elo LTC = il singolo patch piu' grosso del loro scan; la stessa famiglia (guard di pruning)
+// aggrega ~+35. Noi il guard ce l'abbiamo GIA' sulla LMR (:4649, :4790) ma NON sulla LMP.
+// Costo: quando il guard e' ON non si puo' piu' fare skip dell'intero stage quiet (una quiet
+// tardiva puo' dare scacco) -> si testa mossa per mossa. Default OFF = byte-identico.
+static bool g_lmp_check_guard = false;
 int g_lmp_base = 16;     // spin "LMPBase"
 int g_lmp_quad = 138;   // spin "LMPQuad" (/100: 100 = d^2 pieno)
 
@@ -761,6 +768,37 @@ int  g_trouble_margin = 40;    // verifica: cand >= score - N
 // move-order (le tardive ricevono malus MINORE, come Reckless). OFF = malus piatto = byte-identico.
 static bool g_malus_scaled = true;
 int  g_malus_scale_coef = 59;        // denom = 1024 + coef*indice -> malus = bonus*1024/denom
+// ⭐ MalusQuad (2026-07-18, scan Reckless 5e669a6 "Apply decay to quiet move malus", STC +4.67 /
+// LTC +5.18): stessa idea del decay che abbiamo gia', ma la caduta col move-order e' QUADRATICA
+// invece che lineare -> le quiet molto tardive prendono un malus quasi nullo. E' l'unica patch
+// dello scan che sia un upgrade diretto di codice nostro gia' presente e gia' positivo.
+// Reckless usa coef 45 per il quadratico (il nostro 59 e' tunato per il LINEARE, non riusarlo).
+// OFF = decay lineare attuale = byte-identico.
+static bool g_malus_quad = false;
+int  g_malus_quad_coef = 45;         // denom = 1024 + coef*indice -> malus = bonus*(1024/denom)^2
+// ⭐ Guard di razoring (scan Reckless: la famiglia "guard di pruning" aggrega ~+35 Elo LTC).
+// Il razoring butta il nodo in qsearch quando l'eval e' molto sotto alpha. Ma la qsearch vede
+// SOLO catture: se la posizione non e' tatticamente ovvia, quel giudizio non vale niente.
+//   [1] RazorTTQuiet (2b0812d, STC +3.64 / LTC +2.49): razora SOLO se la TT move e' rumorosa
+//       (cattura/promozione). TT move quiet -> la posizione non e' tattica -> NON razorare.
+//       ⚠️ Fedele a Reckless: NESSUNA tt move = niente razoring (per loro Move::NULL e' "quiet").
+//       Il nostro razor e' gia' VERIFICATO (giriamo la qsearch e torniamo solo se conferma),
+//       quindi e' gia' piu' sicuro del loro: il guard potrebbe rendere meno. Da misurare.
+//   [2] RazorTTLower (b2ad933, STC +1.10 / LTC +1.85): in piu', non razorare se il bound in TT
+//       e' LOWER (hash_flag_beta = ha gia' fallito alto qui) -> l'eval bassa e' sospetta.
+// Entrambi OFF = byte-identico.
+static bool g_razor_ttquiet = false;
+static bool g_razor_ttlower = false;
+// ⭐ SingularExactMargin (3461653, STC +2.58 / LTC +4.94; con 00a31a7 la famiglia fa ~+8 LTC):
+// il margine singular oggi e' uguale per tutti i nodi. Reckless lo DIMEZZA quando il bound in TT
+// e' EXACT: score esatto = piu' affidabile = si puo' essere piu' generosi nel dichiarare singolare
+// una mossa (singular_beta piu' alto -> piu' estensioni proprio dove il valore e' fidato).
+// ✅ BAKATA ON 2026-07-18: +8.60 +/- 7.62 Elo (nElo +16.01), LOS 98.65%, 2304 partite @10+0.1
+//    (conc16, UHO_4060_v4, stesso binario A/B; Ptnml [11,257,563,306,15]). Da noi rende PIU' che da
+//    loro a STC (+2.58) e la loro misura LTC e' +4.94 -> attesa in crescita al TC di release.
+//    Bench 592074 -> 548419: l'albero si STRINGE del 7.4% pur estendendo di piu' (estendere la
+//    mossa giusta arriva prima alla verita' -> ordinamento migliore a valle -> piu' tagli).
+static bool g_singular_exact_margin = true;
 // DoDeeper/DoShallower (5.0-B, audit SF-master, default OFF): dopo che la re-search LMR a piena
 // profondita' fallisce alto, aggiusta la profondita' in base a QUANTO batte il best corrente
 // (molto sopra -> +1 ply; appena sopra -> -1 ply). OFF = full_depth invariato = byte-identico.
@@ -1228,6 +1266,11 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SingularDepthDiv"))    { g_singular_depth_div = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "MalusScaled"))         { g_malus_scaled = value != 0; return true; }
     if (!strcmp(name, "MalusScaleCoef"))      { g_malus_scale_coef = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "MalusQuad"))           { g_malus_quad = value != 0; return true; }
+    if (!strcmp(name, "MalusQuadCoef"))       { g_malus_quad_coef = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "RazorTTQuiet"))        { g_razor_ttquiet = value != 0; return true; }
+    if (!strcmp(name, "RazorTTLower"))        { g_razor_ttlower = value != 0; return true; }
+    if (!strcmp(name, "SingularExactMargin")) { g_singular_exact_margin = value != 0; return true; }
     if (!strcmp(name, "DoDeeper"))            { g_do_deeper = value != 0; return true; }
     if (!strcmp(name, "DoDeeperBase"))        { g_dodeeper_base = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "HindsightExt"))        { g_hindsight_ext = value != 0; return true; }
@@ -1339,6 +1382,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "TMv2MateIters"))       { g_tmv2_mate_iters = value < 1 ? 1 : value; return true; }
     if (!strcmp(name, "TTCutBonusScale"))     { g_ttcut_bonus_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "NMPVerifDepth"))       { g_nmp_verif_depth = value < 1 ? 1 : value; return true; }
+    if (!strcmp(name, "LMPCheckGuard"))       { g_lmp_check_guard = value != 0; return true; }
     if (!strcmp(name, "LMPBase"))             { g_lmp_base = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMPQuad"))             { g_lmp_quad = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CheckExtDepth"))       { g_check_ext_depth = value < 0 ? 0 : value; return true; }
@@ -1682,6 +1726,62 @@ static inline int td_is_square_attacked(ThreadData& td, int square, int attacker
         if (get_rook_attacks(square, occ) & (td.bitboards[r] | td.bitboards[q])) return 1;
     }
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// LMPCheckGuard: "questa quiet da' scacco?" calcolato PRIMA della make.
+// Il gives_check del motore (:4631+) vive DOPO la make; la LMP pota prima, quindi
+// serve il test SF-style con le check-squares: le case da cui un pezzo di tipo T
+// attaccherebbe il re nemico, calcolate UNA VOLTA per nodo (pigramente, solo se la
+// LMP scatta davvero) e poi O(1) per mossa.
+struct LmpChkCtx {
+    bool ready = false;
+    U64  chk[6] = {0,0,0,0,0,0};   // indicizzato per tipo: P,N,B,R,Q,K (K inutilizzato)
+    U64  disc   = 0;               // nostri pezzi che, muovendosi, scoprono uno scacco
+};
+
+static inline void td_lmp_chk_init(ThreadData& td, LmpChkCtx& c) {
+    const int us   = td.side;
+    const int off  = (us == white) ? 0 : 6;          // offset nostro nei bitboards
+    const int eoff = (us == white) ? 6 : 0;          // offset nemico
+    const int eksq = get_ls1b_index(td.bitboards[K + eoff]);
+    const U64 occ  = td.occupancies[both];
+
+    c.chk[N] = knight_attacks[eksq];
+    c.chk[B] = get_bishop_attacks(eksq, occ);
+    c.chk[R] = get_rook_attacks(eksq, occ);
+    c.chk[Q] = c.chk[B] | c.chk[R];
+    c.chk[P] = pawn_attacks[us ^ 1][eksq];           // da dove un NOSTRO pedone attacca quel re
+    c.chk[K] = 0;
+
+    // Scacchi di scoperta: un nostro pezzo e' l'unico schermo fra un nostro slider e il re
+    // nemico. Il re nemico NON e' sotto scacco (e' il nostro tratto), quindi qualunque nostro
+    // R/Q (risp. B/Q) che compare togliendo lo schermo e' per forza dietro di esso.
+    const U64 ours = td.occupancies[us];
+    const U64 orq  = td.bitboards[R + off] | td.bitboards[Q + off];
+    const U64 obq  = td.bitboards[B + off] | td.bitboards[Q + off];
+    U64 cand = c.chk[R] & ours;
+    while (cand) {
+        int s = get_ls1b_index(cand); pop_bit(cand, s);
+        if (get_rook_attacks(eksq, occ ^ (1ULL << s)) & orq) c.disc |= 1ULL << s;
+    }
+    cand = c.chk[B] & ours;
+    while (cand) {
+        int s = get_ls1b_index(cand); pop_bit(cand, s);
+        if (get_bishop_attacks(eksq, occ ^ (1ULL << s)) & obq) c.disc |= 1ULL << s;
+    }
+    c.ready = true;
+}
+
+// ponytail: sovrastima di proposito. Un pezzo "disc" che si muove RESTANDO sulla linea del re
+// non scopre nulla, ma qui conta comunque come scacco (manca una tabella aligned()) — e lo
+// stesso per l'arrocco, dove la torre puo' dare scacco dalla casa d'arrivo. Sovrastimare =
+// potare MENO = direzione sicura per un guard. Se il patch rende, si affina.
+static inline bool td_lmp_gives_check(ThreadData& td, int move, LmpChkCtx& c) {
+    if (!c.ready) td_lmp_chk_init(td, c);
+    const int tgt = get_move_target(move);
+    const int pt  = get_move_piece(move) % 6;        // P..K indipendente dal colore
+    return (c.chk[pt] & (1ULL << tgt)) || (c.disc & (1ULL << get_move_source(move)));
 }
 
 // Incremental occupancy update. Flips only the bits that the move touches,
@@ -4172,7 +4272,11 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
 
     // Razoring
     int razor_cap = g_razor_depth_cap > 0 ? g_razor_depth_cap : (g_razor_depth4 ? 4 : 3);
-    if (!pv_node && !in_check && depth <= razor_cap) {
+    bool razor_ok = true;
+    if (g_razor_ttquiet)   // razora solo con TT move rumorosa (nessuna TT move => niente razoring)
+        razor_ok = tt_move != 0 && (get_move_capture(tt_move) || get_move_promoted(tt_move));
+    if (g_razor_ttlower && tt_hit && tt_flag == hash_flag_beta) razor_ok = false;   // bound LOWER = ha gia' fallito alto
+    if (!pv_node && !in_check && razor_ok && depth <= razor_cap) {
         int razor_margin = g_razor_base + g_razor_mult * depth + g_razor_quad_coef * depth * depth;  // coef 0 = legacy linear
         if (eval + razor_margin < alpha) {
             score = td_quiescence(td, alpha, beta);
@@ -4297,6 +4401,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         nc = nc_get(td, td.hash_key);
     int moves_searched = 0;
     int quiets_searched = 0;
+    LmpChkCtx lmp_chk;   // LMPCheckGuard: check-squares del nodo, riempite alla prima LMP
 
     // Quiet moves searched at this node (for history malus on a beta cutoff).
     int searched_quiets[64];
@@ -4378,10 +4483,17 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 lmp_threshold = lmp_table[lmp_idx] * g_lmp_scale / 100;   // LMPScale (100 = invariato)
             }
             if (lmp_threshold >= 0 && quiets_searched >= lmp_threshold) {
+                if (g_lmp_check_guard) {
+                    // Guard: le quiet che danno SCACCO non si potano mai (forzanti: tattica e
+                    // matti si trovano tardissimo se le tagli). Qui NON si puo' spegnere l'intero
+                    // stage quiet — una quiet piu' tardiva potrebbe dare scacco — quindi si paga
+                    // il test mossa per mossa invece dello skip di stage.
+                    if (!td_lmp_gives_check(td, move, lmp_chk)) continue;
+                }
                 // Phase-2: with the staged picker we can skip the entire quiet
                 // stage instead of testing every move individually. The flag is
                 // set once; mp_next() will never enter MPS_GEN_QUIET again.
-                if (use_picker) { mp.skip_quiets = true; continue; }
+                else if (use_picker) { mp.skip_quiets = true; continue; }
                 else continue;
             }
         }
@@ -4515,7 +4627,11 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             (!g_singular_plyguard || td.ply < 2 * td.root_depth) &&
             tt_hit && tt_depth >= depth - g_singular_ttmargin && tt_flag != hash_flag_alpha &&
             tt_score > -mate_score && tt_score < mate_score) {
-            int singular_beta = tt_score - g_singular_mpd * depth;   // F-002: era hardcoded 2*depth
+            // F-002: era hardcoded 2*depth. SingularExactMargin: bound EXACT -> margine dimezzato
+            // (score fidato -> piu' facile dichiarare singolare -> piu' estensioni dove serve).
+            int singular_beta = tt_score - ((g_singular_exact_margin && tt_flag == hash_flag_exact)
+                                            ? g_singular_mpd * depth / 2
+                                            : g_singular_mpd * depth);
             int singular_depth = (depth - 1) / g_singular_depth_div;
             int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
             if (s < singular_beta) {
@@ -4951,8 +5067,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                             // MalusScaled (default OFF -> qmalus=bonus=piatto): le quiet TARDIVE (q grande)
                             // ricevono malus MINORE (come Reckless): denom = 1024 + coef*q.
                             // F-018.10c MalusPct (100=identico al bonus): costanti malus separate.
-                            int qmalus = (g_malus_scaled ? bonus * 1024 / (1024 + g_malus_scale_coef * q) : bonus)
-                                         * g_malus_pct / 100;
+                            int qmalus;
+                            if (g_malus_quad) {           // caduta quadratica (Reckless 5e669a6)
+                                int denom = 1024 + g_malus_quad_coef * q;
+                                qmalus = bonus * 1024 / denom;
+                                qmalus = qmalus * 1024 / denom;   // in due passi: bonus*1024*1024 sfonda int32
+                            } else
+                                qmalus = g_malus_scaled ? bonus * 1024 / (1024 + g_malus_scale_coef * q) : bonus;
+                            qmalus = qmalus * g_malus_pct / 100;
                             td_update_history(td.history_moves[td_hbucket(td, qm)][get_move_piece(qm)][get_move_target(qm)], -qmalus);
                             if (prev_cm)
                                 td_update_history(td.continuation_history[pcp][pct][get_move_piece(qm)][get_move_target(qm)], -qmalus);
@@ -5890,4 +6012,4 @@ void search_position_mt(int depth) {
     }
     printf("\n");
     fflush(stdout);
-}
+}

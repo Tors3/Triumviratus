@@ -77,9 +77,20 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 1 | SPSA mega co-tune (50 params) | 2026-07-13 | 10+0.1 | 1058 | **+15.8 ± 10.9** | 99.8% |
 | 2 | TMv2 time management (gated ≥ 15 s) | 2026-07-13 | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
 | 3 | v2 network + search re-tune + large-pages NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
+| 4 | Singular margin halved on exact-bound TT nodes ² | 2026-07-18 | 10+0.1 | 2304 | **+8.6 ± 7.6** | 98.7% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
+
+<sub>² A singular extension asks whether the transposition-table move is the *only* move that holds:
+the alternatives are re-searched below `tt_score − margin`, and if they all fail low the move is
+extended. That margin used to be the same everywhere, but transposition entries are not equally
+trustworthy — an **exact** bound is a true value, while a lower/upper bound is only a limit left by a
+cutoff. The margin is now **halved on exact-bound nodes**, so extensions are granted more readily
+exactly where the score can be trusted, and are unchanged elsewhere. The search tree gets **7.4 %
+smaller** despite extending more often (bench 592074 → 548419): extending the right move reaches the
+truth sooner, which improves move ordering further down. Measured with the same binary on both sides,
+toggling only this option.</sub>
 
 <sub>¹ Row 3 is a **cumulative development snapshot** measured against the state after rows 1–2 (mega
 co-tune + TMv2 on the graft-time, v1-identical network). It bundles four changes at once: the
