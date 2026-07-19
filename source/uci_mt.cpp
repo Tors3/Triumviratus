@@ -447,7 +447,7 @@ void uci_loop()
             printf("option name LMPImproving type check default true\n");      // P1.7 LMP SF-style senza cap d8
             printf("option name LMPBase type spin default 16 min 0 max 20\n");
             printf("option name LMPQuad type spin default 138 min 20 max 300\n"); // /100
-            printf("option name CheckExtDepth type spin default 30 min 0 max 128\n"); // P1.9: 128 = sempre (storico)
+            printf("option name CheckExtDepth type spin default 0 min 0 max 128\n");  // BAKATO a 0 (+7.98 Elo, LOS 97.3% @30+0.3): niente check-extension, come SF
 #endif
             printf("option name Move Overhead type spin default 50 min 0 max 5000\n"); // ms riservati a lag/GUI per mossa
 #ifndef TRIUMV_RELEASE

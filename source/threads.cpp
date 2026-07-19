@@ -187,10 +187,22 @@ static bool g_lmp_check_guard = false;
 int g_lmp_base = 16;     // spin "LMPBase"
 int g_lmp_quad = 138;   // spin "LMPQuad" (/100: 100 = d^2 pieno)
 
-// P1.9 (spin "CheckExtDepth", default 128 = SEMPRE = comportamento storico):
-// gate sulla check-extension incondizionata (SF l'ha rimossa ~10 anni fa).
-// Il co-tune puo' abbassarlo (0 = mai estendere); a 128 e' byte-identico.
-int g_check_ext_depth = 30;
+// P1.9 (spin "CheckExtDepth"): gate sulla check-extension incondizionata.
+// ✅ BAKATO A 0 (2026-07-19) = estensione da scacco DISATTIVATA, come SF (che non ha
+//    alcuna check-extension: solo le singolari — verificato su search.cpp master).
+//    SPRT `CheckExtDepth=0` vs 30: **+7.98 +/- 8.14 Elo, nElo +16.43, LOS 97.3%, 1654 partite
+//    @30+0.3** (c3-88, conc 80, hash 128, UHO_4060_v4, stesso binario A/B). Segno stabile e
+//    positivo da ~1000 partite. Misurato a TC LUNGO, dove oggi abbiamo imparato che i risultati
+//    reggono (la singular brillava a STC e affondava a LTC: vedi g_singular_exact_margin).
+//    EFFETTO ALBERO — attenzione, il bench INGANNA su questa patch:
+//      bench 8 posizioni d18: -80.8%  <- MA l'80% e' UNA sola posizione (finale di promozioni)
+//      posizioni del LIBRO UHO d18:   -11.5%   d22: -7.0%   <- il risparmio VERO in partita
+//      finale promozioni d18: 9.148.851 -> 1.062.876 (-88%), da 38x a 4.5x su SF18
+//    ⚠️ I valori INTERMEDI sono peggiori di entrambi gli estremi (su Kiwipete d22: 30 -> 2.33M,
+//    8 -> 2.56M, 4 -> 4.59M (+97%!), 0 -> 1.96M): estendere solo sotto una soglia crea profondita'
+//    incoerenti che fanno saltare le corrispondenze in TT. La scelta e' BINARIA, niente da tunare.
+//    Il vecchio comportamento si riottiene con CheckExtDepth=30 (o qualunque valore >= depth max).
+int g_check_ext_depth = 0;
 
 // N1 (UCI "EvalCacheUndamp", default ON): eval-cache con chiave senza fifty e
 // valore undamped (vedi td_evaluate). Piu' hit nei finali; OFF = legacy.

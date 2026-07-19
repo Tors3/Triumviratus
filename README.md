@@ -77,9 +77,20 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 1 | SPSA mega co-tune (50 params) | 2026-07-13 | 10+0.1 | 1058 | **+15.8 ± 10.9** | 99.8% |
 | 2 | TMv2 time management (gated ≥ 15 s) | 2026-07-13 | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
 | 3 | v2 network + search re-tune + large-pages NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
+| 4 | Unconditional check extension removed ² | 2026-07-19 | 30+0.3 | 1654 | **+8.0 ± 8.1** | 97.3% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
+
+<sub>² The search used to extend by one ply on **every** check, at any depth — a technique Stockfish
+dropped years ago and no longer has in any form (only singular extensions remain). Removing it cuts
+the benchmark tree by 55.8 % (bench 592074 → 261932). That figure flatters it, though: most of the
+saving comes from one pathological promotion endgame in the suite, where check chains multiply and
+our node count fell from 9.1 M to 1.1 M. On the positions the engine actually meets in games — the
+opening book used for gating — the tree shrinks by a more modest 11.5 % at depth 18. Partial settings
+are worse than either extreme: extending only below some depth leaves inconsistent depths across the
+tree and breaks transposition matches, so at a cap of 4 the tree nearly doubles. The choice is binary.
+The old behaviour is still reachable with `CheckExtDepth=30`.</sub>
 
 <sub>**A short-time-control mirage, recorded because the lesson cost a day.** A fourth row briefly
 lived here: halving the singular-extension margin on exact-bound transposition entries, measured at
