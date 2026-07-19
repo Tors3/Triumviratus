@@ -74,16 +74,15 @@ void communicate() {
     read_input();
 }
 
-// count bits within a bitboard (Brian Kernighan's way)
+// count bits within a bitboard. Build already requires BMI2/POPCNT (USE_PEXT is on),
+// so the hardware instruction is always available -> no Kernighan fallback needed.
 int count_bits(U64 bitboard)
 {
-    int count = 0;
-    while (bitboard)
-    {
-        count++;
-        bitboard &= bitboard - 1;
-    }
-    return count;
+#ifdef _WIN32
+    return (int)__popcnt64(bitboard);
+#else
+    return __builtin_popcountll(bitboard);
+#endif
 }
 
 // get least significant 1st bit index
