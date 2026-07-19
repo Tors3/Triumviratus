@@ -877,6 +877,16 @@ int g_lmr_cap_scale     = 52;    // F-004: % della lmr_table applicata alle catt
 int g_singular_dmargin = 59;    // double-extension margin below singular_beta         [SPSA-tuned: 63->43]
 int g_hist_red_div = 3190;  // LMR history-reduction divisor                      [SPSA-tuned: 3500->1041]
 int g_asp_init_delta = 19;    // aspiration: initial window half-width               [SPSA-tuned: 25->31]
+// ⭐ AspStableShrink (2026-07-18, scan Reckless 4192617 "Shrink initial aspiration window if our
+// search has been stable", STC +4.58 / LTC +2.08). Se la ricerca e' stata stabile (stessa best move
+// E score fermo per N iterazioni consecutive), la finestra iniziale puo' partire piu' STRETTA:
+// una finestra stretta che non fallisce = ricerca piu' economica; se poi fallisce si riallarga
+// comunque. Loro: delta 23 - min(eval_stab, pv_stab, 7). Noi delta 19 -> cap 4 (= il cap del
+// nostro eval_stab_iters) e' la scala equivalente.
+// ⚠️ Vive nel ramo TM (thread 0 + timeset) -> a profondita' fissa NON scatta: il BENCH NON CAMBIA,
+// non e' un errore. La verifica byte-identica va fatta per costruzione, non col bench.
+static bool g_asp_stable_shrink = false;
+int  g_asp_stable_cap = 4;    // massimo restringimento del delta iniziale (AspStableCap)
 int g_asp_grow = 34;    // aspiration: growth % on fail                        [SPSA-tuned: 100->31]
 // Q-28 AspScoreMult (Stormphrax 9081510+03d4c83): la finestra iniziale si ALLARGA
 // col quadrato dello score (EMA). avgSq = (avgSq + score*|score|)/2 aggiornato per
@@ -1095,8 +1105,13 @@ int g_lmrf_all      = 618;    // [5.1 BAKE 272->723]   scaling ALL-node: r += r*
 int g_lmrf_improv   = 489;    // [5.1 BAKE 1024->411]  non-improving
 int g_lmrf_evalcut  = 979;   // [5.1 BAKE 1024->1517] eval+margin < alpha
 int g_lmrf_cutoff   = 1520;   // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
+int g_lmr_expect    = 0;      // LMRExpect (spin, 0=OFF byte-identico): bonus EXTRA al termine
+                              // cutoffCnt quando il nodo e' ALL (ne' PV ne' cut) = "aspettativa
+                              // rispettata". Reckless usa +256/+384 nelle stesse unita' (1/1024 ply).
 // EvalOptimism (5.1): alimenta g_optimism (nnue_bridge) dalla root col contempt dinamico di SF
-// (optimism = strength*score/(|score|+div)). OFF = g_optimism resta 0 = byte-identico.
+// (optimism = strength*score/(|score|+div)).
+// ⚠️ DEFAULT = ON (bakato 5.1; il valore vive in nnue_bridge.cpp:138, non qui). Spegnendolo
+// g_optimism resta 0 = byte-identico al pre-5.1 — ma NON e' lo stato di default.
 extern int g_eval_optimism;   // definito in nnue_bridge.cpp
 extern std::atomic<int> g_optimism[2];   // F-019: atomic (main scrive, helper leggono)
 int g_opt_strength = 170;      // [5.1 BAKE 137->89]  optimism = strength*score/(|score|+div)
@@ -1217,6 +1232,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "SingularDoubleMargin")){ g_singular_dmargin = value; return true; }
     if (!strcmp(name, "HistReductionDiv"))    { g_hist_red_div     = value; return true; }
     if (!strcmp(name, "AspInitDelta"))        { g_asp_init_delta   = value; return true; }
+    if (!strcmp(name, "AspStableShrink"))     { g_asp_stable_shrink = value != 0; return true; }
+    if (!strcmp(name, "AspStableCap"))        { g_asp_stable_cap = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "AspGrow"))             { g_asp_grow         = value; return true; }
     if (!strcmp(name, "AspScoreMult"))        { g_asp_score_mult   = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "CMHCScale"))           { g_cmhc_scale = value < 0 ? 0 : value; return true; }
@@ -1301,6 +1318,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRFImprov"))          { g_lmrf_improv = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRFEvalCut"))         { g_lmrf_evalcut = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRFCutoff"))          { g_lmrf_cutoff = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "LMRExpect"))           { g_lmr_expect = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "EvalOptimism"))        { g_eval_optimism = value != 0; if (!g_eval_optimism) { g_optimism[0] = g_optimism[1] = 0; } return true; }
     if (!strcmp(name, "EvalOptStrength"))     { g_opt_strength = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "EvalOptDiv"))          { g_opt_div = value < 1 ? 1 : value; return true; }
@@ -4872,7 +4890,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 r -= (long long)sscore * g_lmrf_ss / 4096;
                 if (g_improving && !improving) r += g_lmrf_improv;
                 if (eval + g_lmr_eval_margin < alpha) r += g_lmrf_evalcut;
-                if (td.cutoff_cnt[td.ply] > 1) r += g_lmrf_cutoff;
+                if (td.cutoff_cnt[td.ply] > 1) {
+                    r += g_lmrf_cutoff;
+                    // LMRExpect (Reckless 0efe38e, STC +3.08 / LTC +4.13): "aspettativa del nodo
+                    // RISPETTATA". A un ALL-node (ne' PV ne' cut) ci si aspetta che tutto fallisca
+                    // basso; se per giunta il figlio ha cuttato molto, l'aspettativa e' confermata
+                    // -> si puo' ridurre ancora di piu'. E' l'INTERAZIONE fra i due segnali che
+                    // gia' abbiamo separati (g_lmrf_cutoff e g_lmrf_all), mai combinati.
+                    // Stesse unita' di Reckless (1/1024 di ply): loro +256/+384. 0 = byte-identico.
+                    if (g_lmr_expect && !pv_node && !is_cut_node) r += g_lmr_expect;
+                }
                 // scaling ALL-node (ne' PV ne' cut): taglia di piu' dove tutto fallisce-basso
                 if (!pv_node && !is_cut_node) r += r * g_lmrf_all / (256LL * depth + 285);
                 // Q-19a (Caissa): termine di PLY — riduci MENO vicino alla radice. LMRFine
@@ -5387,6 +5414,12 @@ static void thread_search(int thread_id, int max_depth) {
         // F-018.5a AspAvg (default OFF): centro = media mobile degli score invece del
         // prev_score secco -> il rumore iterazione-su-iterazione non sposta la finestra.
         int alpha = -infinity, beta = infinity, delta = g_asp_init_delta;
+        if (g_asp_stable_shrink) {   // ricerca stabile -> parti piu' stretto (Reckless 4192617)
+            int stab = eval_stab_iters < stable_iters ? eval_stab_iters : stable_iters;
+            if (stab > g_asp_stable_cap) stab = g_asp_stable_cap;
+            delta -= stab;
+            if (delta < 1) delta = 1;
+        }
         // Q-28 AspScoreMult: allarga il delta iniziale col quadrato-EMA dello score
         // (i64: |avgSq| fino a ~9e8, *mult sfora i32). 0 = OFF.
         if (g_asp_score_mult > 0 && avg_score != infinity) {
@@ -5603,7 +5636,11 @@ static void thread_search(int thread_id, int max_depth) {
 
             // TM v2 Q-03: counter di stabilita' dell'EVAL (bidirezionale: misura se lo
             // score resta fermo attorno alla media mobile, non solo se cala).
-            if (g_tmv2 && g_tmv2_tc_ok && current_depth > start_depth && avg_score != infinity) {
+            // ⚠️ 2026-07-18: SGANCIATO dal gate TMv2. Era calcolato solo con TMv2 attivo (quindi
+            // MAI sotto i 15s), ma ora serve anche ad AspStableShrink, che vive a ogni TC. Il
+            // CONSUMO da parte di TMv2 e' invariato -> nessun cambio di comportamento con
+            // AspStableShrink=false (il counter viene solo tenuto aggiornato invece che a zero).
+            if (current_depth > start_depth && avg_score != infinity) {
                 int ediff = score - avg_score;
                 if (ediff < 0) ediff = -ediff;
                 if (ediff <= g_tmv2_eval_window) { if (eval_stab_iters < 4) eval_stab_iters++; }

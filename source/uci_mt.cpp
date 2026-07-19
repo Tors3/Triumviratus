@@ -432,7 +432,7 @@ void uci_loop()
             printf("option name MateDistPruning type check default true\n");   // P1.4
             printf("option name DrawDither type check default true\n");        // P1.11 patte = ±1cp
             printf("option name TTCutBonus type check default true\n");        // P1.13 history bonus al ttMove su TT-cutoff
-            printf("option name TTCutBonusScale type spin default 116 min 0 max 400\n");  // /100 del stat_bonus; SPSA
+            printf("option name TTCutBonusScale type spin default 111 min 0 max 400\n");  // /100 del stat_bonus; SPSA
             printf("option name TTAgeRefresh type check default true\n");      // P1.10a probe-hit rinfresca l'age
             printf("option name PawnKeyIncr type check default true\n");       // P2.1 pawn key incrementale (node-identical)
             printf("option name NPKeyIncr type check default true\n");         // CorrNonPawn: np_key incrementale (node-identical; false=rescan oracle)
@@ -443,11 +443,11 @@ void uci_loop()
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
             printf("option name QSChecks type check default true\n");          // P1.3 quiet check alla prima ply di qsearch
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
-            printf("option name NMPVerifDepth type spin default 2 min 1 max 64\n");
+            printf("option name NMPVerifDepth type spin default 1 min 1 max 64\n");
             printf("option name LMPImproving type check default true\n");      // P1.7 LMP SF-style senza cap d8
-            printf("option name LMPBase type spin default 17 min 0 max 20\n");
-            printf("option name LMPQuad type spin default 145 min 20 max 300\n"); // /100
-            printf("option name CheckExtDepth type spin default 31 min 0 max 128\n"); // P1.9: 128 = sempre (storico)
+            printf("option name LMPBase type spin default 16 min 0 max 20\n");
+            printf("option name LMPQuad type spin default 138 min 20 max 300\n"); // /100
+            printf("option name CheckExtDepth type spin default 30 min 0 max 128\n"); // P1.9: 128 = sempre (storico)
 #endif
             printf("option name Move Overhead type spin default 50 min 0 max 5000\n"); // ms riservati a lag/GUI per mossa
 #ifndef TRIUMV_RELEASE
@@ -468,7 +468,7 @@ void uci_loop()
             printf("option name Syzygy50MoveRule type check default true\n");
             printf("option name SyzygyProbeLimit type spin default 7 min 0 max 7\n");
 #ifndef TRIUMV_RELEASE
-            printf("option name EvalScale type spin default 56 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (TRANN1)
+            printf("option name EvalScale type spin default 60 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (TRANN1)
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)
@@ -493,25 +493,25 @@ void uci_loop()
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
-            printf("option name PawnHistoryWeight type spin default 188 min 0 max 800\n");  // [4.1 BAKE 126->139]
+            printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
-            printf("option name ThreatScale type spin default 4580 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
+            printf("option name ThreatScale type spin default 4212 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
             printf("option name ThreatHist type check default true\n");                   // [BAKE 2026-07-03] history quiet condizionata dalle minacce (from/to attaccata)
             printf("option name ThreatHistWeight type spin default 130 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75->60, ultimo step LOS82.13% @296g + SPSA concorde]
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
-            printf("option name CheckBonus type spin default 12898 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
+            printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
-            printf("option name ContHist36Weight type spin default 36 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
+            printf("option name ContHist36Weight type spin default 37 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
             printf("option name PriorBonus type check default true\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)
-            printf("option name PriorBonusScale type spin default 190 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
+            printf("option name PriorBonusScale type spin default 189 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
             printf("option name LowPlyHistory type check default true\n");    // #5: history per-ply near-root nell'ordering quiet
-            printf("option name LowPlyWeight type spin default 195 min 0 max 200\n");  // contributo lowply; co-tunabile
-            printf("option name StatEvalDiffMult type spin default 9 min 0 max 60\n");  // [4.1 BAKE 14->6] SF static-eval-diff ordering (neutro a ogni valore)
-            printf("option name CutoffCntPenalty type spin default 0 min 0 max 3\n");        // SF cutoffCnt-LMR: 0=off, 1=SF (riduzione +1 se figlio cutoffCnt>3)
-            printf("option name ProbCutInCheckMargin type spin default 325 min 0 max 800\n");  // [4.1 BAKE 0->523] SF probcut-sotto-scacco
-            printf("option name MainHistWeight type spin default 104 min 50 max 400\n");    // [4.1 BAKE 122->168]
-            printf("option name ContHistWeight type spin default 134 min 50 max 400\n");    // [4.1 BAKE 80->96]
-            printf("option name LMPScale type spin default 37 min 30 max 250\n");     // [3.7] scala % soglia LMP
+            printf("option name LowPlyWeight type spin default 179 min 0 max 200\n");  // contributo lowply; co-tunabile
+            printf("option name StatEvalDiffMult type spin default 8 min 0 max 60\n");  // [4.1 BAKE 14->6] SF static-eval-diff ordering (neutro a ogni valore)
+            printf("option name CutoffCntPenalty type spin default 2 min 0 max 3\n");        // SF cutoffCnt-LMR: 0=off, 1=SF (riduzione +1 se figlio cutoffCnt>3)
+            printf("option name ProbCutInCheckMargin type spin default 335 min 0 max 800\n");  // [4.1 BAKE 0->523] SF probcut-sotto-scacco
+            printf("option name MainHistWeight type spin default 93 min 50 max 400\n");    // [4.1 BAKE 122->168]
+            printf("option name ContHistWeight type spin default 135 min 50 max 400\n");    // [4.1 BAKE 80->96]
+            printf("option name LMPScale type spin default 35 min 30 max 250\n");     // [3.7] scala % soglia LMP
             printf("option name ContHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
             printf("option name MovePicker type check default true\n");
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
@@ -524,131 +524,131 @@ void uci_loop()
             printf("option name QFutility type check default false\n");
             printf("option name HistBonusSF type check default true\n");   // BAKED ON: +24 LOS99.99% @810
             printf("option name CaptureHist type check default true\n");   // baked ON, div16+malus-fix (era -21 a div1)
-            printf("option name CaptureHistDiv type spin default 25 min 1 max 64\n");   // bakato SPSA 16->14
-            printf("option name NMPEvalDiv type spin default 102 min 50 max 1000\n");
-            printf("option name QFutMargin type spin default 204 min 0 max 500\n");
-            printf("option name HistBonusMult type spin default 458 min 1 max 600\n");   // [4.1 BAKE 282->326]
-            printf("option name HistBonusSub type spin default 294 min 0 max 400\n");      // [4.1 BAKE 59->35]
-            printf("option name HistBonusMax type spin default 2638 min 200 max 8000\n"); // [4.1 BAKE 1247->2439; max 4000->8000 il 2026-07-10: il default era INCOLLATO al max dichiarato -> SPSA poteva solo scendere. Nessun clamp compilato, allargare e' sicuro]
+            printf("option name CaptureHistDiv type spin default 21 min 1 max 64\n");   // bakato SPSA 16->14
+            printf("option name NMPEvalDiv type spin default 100 min 50 max 1000\n");
+            printf("option name QFutMargin type spin default 199 min 0 max 500\n");
+            printf("option name HistBonusMult type spin default 490 min 1 max 600\n");   // [4.1 BAKE 282->326]
+            printf("option name HistBonusSub type spin default 299 min 0 max 400\n");      // [4.1 BAKE 59->35]
+            printf("option name HistBonusMax type spin default 2946 min 200 max 8000\n"); // [4.1 BAKE 1247->2439; max 4000->8000 il 2026-07-10: il default era INCOLLATO al max dichiarato -> SPSA poteva solo scendere. Nessun clamp compilato, allargare e' sicuro]
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
             printf("option name AggrLMR type check default false\n");
-            printf("option name AggrLMRDiv type spin default 905 min 512 max 6000\n");
-            printf("option name AggrLMRClamp type spin default 3 min 1 max 6\n");
+            printf("option name AggrLMRDiv type spin default 903 min 512 max 6000\n");
+            printf("option name AggrLMRClamp type spin default 4 min 1 max 6\n");
             printf("option name StatScoreLMR type check default true\n");                          // LMR butterfly continua (fix sotto-riduzione vs SF15.1)
             printf("option name ContHistLMR type check default true\n");                           // conthist 1/2/4 ply nella LMR
             printf("option name CutNodeLMR type check default true\n");                            // riduzione extra sui cut-node
-            printf("option name LMRStatScoreDiv type spin default 5236 min 1000 max 30000\n");       // [4.1: tenuto 4.0 - il BAKE 13790 gonfiava l'albero 2.5x]
-            printf("option name LMRStatScoreOffset type spin default -3093 min -4000 max 12000\n");     // [4.1: tenuto 4.0 - parte del bloat LMR revertito]
-            printf("option name LMRContHistDiv type spin default 10501 min 1000 max 40000\n");       // [3.7] ContHistLMR: divisore conthist
+            printf("option name LMRStatScoreDiv type spin default 5430 min 1000 max 30000\n");       // [4.1: tenuto 4.0 - il BAKE 13790 gonfiava l'albero 2.5x]
+            printf("option name LMRStatScoreOffset type spin default -2953 min -4000 max 12000\n");     // [4.1: tenuto 4.0 - parte del bloat LMR revertito]
+            printf("option name LMRContHistDiv type spin default 10942 min 1000 max 40000\n");       // [3.7] ContHistLMR: divisore conthist
             printf("option name CutNodeLMRExtra type spin default 1 min 0 max 3\n");                 // CutNodeLMR: ply extra
-            printf("option name NMPBase type spin default 3 min 1 max 10\n");   // max alzato 6->10: SF usa base 7 (co-tune toward SF)
-            printf("option name NMPDiv type spin default 2 min 2 max 8\n");
-            printf("option name LMREvalMargin type spin default 41 min 0 max 400\n");
+            printf("option name NMPBase type spin default 5 min 1 max 10\n");   // max alzato 6->10: SF usa base 7 (co-tune toward SF)
+            printf("option name NMPDiv type spin default 3 min 2 max 8\n");
+            printf("option name LMREvalMargin type spin default 43 min 0 max 400\n");
             printf("option name LMRTTDepth type spin default 1 min 0 max 3\n");
-            printf("option name LMRBase type spin default 21 min 0 max 200\n");   // [3.7]
-            printf("option name LMRDiv type spin default 430 min 100 max 500\n");   // [3.7]
-            printf("option name RFPMargin type spin default 64 min 20 max 200\n");        // bakato: 30->21
-            printf("option name RazorBase type spin default 295 min 100 max 600\n");
-            printf("option name RazorMult type spin default 80 min 20 max 250\n");       // bakato: 102->139
-            printf("option name FutilityBase type spin default 205 min 20 max 300\n");
-            printf("option name FutilityMult type spin default 62 min 20 max 200\n");   // [3.7]
-            printf("option name FutilityImproving type spin default 182 min 0 max 200\n"); // bakato: 60->93
-            printf("option name SingularDoubleMargin type spin default 57 min 0 max 200\n"); // bakato: 63->43
+            printf("option name LMRBase type spin default 22 min 0 max 200\n");   // [3.7]
+            printf("option name LMRDiv type spin default 447 min 100 max 500\n");   // [3.7]
+            printf("option name RFPMargin type spin default 62 min 20 max 200\n");        // bakato: 30->21
+            printf("option name RazorBase type spin default 293 min 100 max 600\n");
+            printf("option name RazorMult type spin default 77 min 20 max 250\n");       // bakato: 102->139
+            printf("option name FutilityBase type spin default 202 min 20 max 300\n");
+            printf("option name FutilityMult type spin default 61 min 20 max 200\n");   // [3.7]
+            printf("option name FutilityImproving type spin default 186 min 0 max 200\n"); // bakato: 60->93
+            printf("option name SingularDoubleMargin type spin default 59 min 0 max 200\n"); // bakato: 63->43
             // F-002/F-004/F-005 (audit 2026-07-02): ex-hardcoded promossi a tunable + LMR-catture.
             // Default = comportamento storico bit-identico; leve per SPSA (preset 5.1 in SPSA Lab).
-            printf("option name QSDeltaMargin type spin default 1528 min 200 max 4000\n");   // delta-pruning qsearch (unita'-eval)
-            printf("option name SingularMarginPD type spin default 2 min 1 max 10\n");        // margine singular per-depth
+            printf("option name QSDeltaMargin type spin default 1488 min 200 max 4000\n");   // delta-pruning qsearch (unita'-eval)
+            printf("option name SingularMarginPD type spin default 1 min 1 max 10\n");        // margine singular per-depth
             printf("option name TMDropThresh type spin default 6 min 1 max 100\n");           // soglia score-drop TM; BAKE 2026-07-03 TM post-F-003 8->6
             printf("option name TMDropCap type spin default 160 min 50 max 1000\n");          // cap score-drop TM; BAKE 2026-07-03 TM post-F-003 200->160
             printf("option name NodeTMBase type spin default 133 min 100 max 200\n");         // NodeTM: scale=(base-frac*100)/100; BAKE 2026-07-03 TM post-F-003 140->133
             printf("option name NodeTMMin type spin default 58 min 30 max 100\n");            // NodeTM: clamp inferiore %%; BAKE 2026-07-03 TM post-F-003 60->58
             printf("option name LMRMinDepth type spin default 3 min 2 max 6\n");              // gate depth LMR (SF=2)
-            printf("option name LMRMinMoves type spin default 2 min 1 max 8\n");              // gate move-count LMR (SF=2)
+            printf("option name LMRMinMoves type spin default 1 min 1 max 8\n");              // gate move-count LMR (SF=2)
             printf("option name LMRCaptures type check default true\n");                     // F-004: LMR sulle catture (OFF=byte-identico)
             printf("option name SeeGE type check default true\n");                            // F-008: SEE a soglia early-exit, +1.81%% NPS node-identico (ON 2026-07-02)
             printf("option name SeeGEVerify type check default false\n");                     // F-008: oracle cross-check dei due path SEE (diagnostica)
-            printf("option name LMRCapScale type spin default 50 min 10 max 150\n");          // %% lmr_table sulle catture
+            printf("option name LMRCapScale type spin default 52 min 10 max 150\n");          // %% lmr_table sulle catture
             // ==== F-018 (secondo audit 2026-07-03): micro-tecniche Obsidian/Berserk, default OFF/neutro ====
             printf("option name PostLMRHist type check default false\n");                     // conthist update post re-search LMR (SF mainline); test pulito neutro -> OFF, candidato tuning
-            printf("option name PostLMRHistScale type spin default 100 min 0 max 400\n");
+            printf("option name PostLMRHistScale type spin default 106 min 0 max 400\n");
             printf("option name TTCutRefine type check default true\n");                      // [BAKE 2026-07-03] cutoff TT: depth+1 sui fail-high, coerenza cutnode, fifty gate
             printf("option name TTResearch type check default false\n");                      // Q-14 (Ethereal): fail-low anticipato a depth-1 su entry UPPER
-            printf("option name TTResearchMargin type spin default 79 min 0 max 400\n");      // Q-14: margine (scala-56) sotto alpha per il fail-low a depth-1
-            printf("option name TTCutFifty type spin default 87 min 50 max 100\n");
+            printf("option name TTResearchMargin type spin default 74 min 0 max 400\n");      // Q-14: margine (scala-56) sotto alpha per il fail-low a depth-1
+            printf("option name TTCutFifty type spin default 89 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
-            printf("option name GoodCapHistDiv type spin default 0 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off; candidato co-tune post-v2, Obsidian 32)
+            printf("option name GoodCapHistDiv type spin default 18 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off; candidato co-tune post-v2, Obsidian 32)
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore. Bake revertito 2026-07-07 (rumore)
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
             printf("option name SingularDECap type spin default 1 min 0 max 16\n");           // #6b cap catena double-ext (0=off, Berserk 6)
             printf("option name SingularPlyGuard type check default false\n");                // #6c niente singular oltre ply >= 2*rootDepth
-            printf("option name NegExtAlpha type spin default 2 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1)
+            printf("option name NegExtAlpha type spin default 1 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1)
             printf("option name FailHighSmooth type check default true\n");                   // [BAKE 2026-07-03] return (score+beta)/2 su RFP/qsearch
             printf("option name NMPStaticMargin type check default false\n");                 // #8a NMP: static_eval >= beta - mult*depth + bias (SF)
-            printf("option name NMPStaticMult type spin default 21 min 0 max 100\n");
-            printf("option name NMPStaticBias type spin default 421 min 0 max 1200\n");
+            printf("option name NMPStaticMult type spin default 23 min 0 max 100\n");
+            printf("option name NMPStaticBias type spin default 414 min 0 max 1200\n");
             printf("option name NMPTTNoisy type check default false\n");                      // #8b R+1 se TT move cattura
             printf("option name AlphaDepthDec type check default true\n");                    // [BAKE 2026-07-03] depth-- per le mosse restanti quando alpha sale
-            printf("option name FHBoostMargin type spin default 0 min 0 max 500\n");          // #10a bonus a depth+1 se best > beta+margine. Bake revertito 2026-07-07 (rumore)
+            printf("option name FHBoostMargin type spin default 2 min 0 max 500\n");          // #10a bonus a depth+1 se best > beta+margine. Bake revertito 2026-07-07 (rumore)
             printf("option name HistTrivGuard type check default false\n");                   // #10b niente bonus su cutoff 'gratis'
-            printf("option name MalusPct type spin default 74 min 10 max 300\n");            // #10c malus = bonus*pct/100
+            printf("option name MalusPct type spin default 69 min 10 max 300\n");            // #10c malus = bonus*pct/100
             printf("option name EasyCapGate type check default false\n");                     // #11 niente NMP con pezzo in presa facile
-            printf("option name RFPHistThresh type spin default 0 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
+            printf("option name RFPHistThresh type spin default 64 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
             printf("option name KillerReset type check default false\n");                     // #13 azzera killer del ply figlio a ogni nodo
-            printf("option name QSMoveCap type spin default 0 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
+            printf("option name QSMoveCap type spin default 1 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
             printf("option name EPKeyFix type check default false\n");                        // F-017 niente phantom-ep nella hash key (bug-fix a toggle)
-            printf("option name HistReductionDiv type spin default 3357 min 500 max 8000\n"); // bakato: 3500->1041
+            printf("option name HistReductionDiv type spin default 3190 min 500 max 8000\n"); // bakato: 3500->1041
             printf("option name AspInitDelta type spin default 19 min 8 max 60\n");       // bakato: 25->31
             printf("option name AspGrow type spin default 34 min 30 max 200\n");          // bakato: 100->31
-            printf("option name AspScoreMult type spin default 0 min 0 max 2000\n");       // Q-28 (Stormphrax): finestra asp += |avgSq(score)|*mult>>20. 0=OFF
-            printf("option name CMHCScale type spin default 0 min 0 max 200\n");           // Q-12 (SF #6653): bonus conthist *= (100 + scale*consistenza)/100. 0=OFF
+            printf("option name AspScoreMult type spin default 38 min 0 max 2000\n");       // Q-28 (Stormphrax): finestra asp += |avgSq(score)|*mult>>20. 0=OFF
+            printf("option name CMHCScale type spin default 6 min 0 max 200\n");           // Q-12 (SF #6653): bonus conthist *= (100 + scale*consistenza)/100. 0=OFF
             printf("option name FollowPV type check default false\n");                     // Q-15 (SF #6656): niente IIR/futility/LMP sui nodi che riseguono la PV precedente
-            printf("option name RFPBadNode type spin default 0 min 0 max 200\n");          // Q-20a (Alexandria): rfp_margin -= questo se !tt_move. 0=OFF
+            printf("option name RFPBadNode type spin default 4 min 0 max 200\n");          // Q-20a (Alexandria): rfp_margin -= questo se !tt_move. 0=OFF
             printf("option name FutSpareQuiet type check default false\n");                // Q-20c (Caissa): la futility non pota mai la prima quiet del nodo
             printf("option name QSDeltaBestCase type check default false\n");              // Q-20d (Ethereal): delta-pruning qsearch col best-case reale (vittima max + promo)
-            printf("option name QSBCMargin type spin default 200 min 0 max 800\n");        // Q-20d: cuscino sopra il best-case
-            printf("option name ProbCutMargin type spin default 301 min 60 max 400\n");
-            printf("option name ProbCutImprove type spin default 0 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
-            printf("option name CorrCap type spin default 48 min 8 max 128\n");
-            printf("option name CorrLearnDiv type spin default 293 min 64 max 2048\n");
-            printf("option name CorrAsym type spin default 128 min 64 max 192\n");   // Tier-1: correzioni positive piu' lente (/128); 128=simmetrico
-            printf("option name ContHistDiv type spin default 3635 min 1000 max 12000\n");
+            printf("option name QSBCMargin type spin default 183 min 0 max 800\n");        // Q-20d: cuscino sopra il best-case
+            printf("option name ProbCutMargin type spin default 271 min 60 max 400\n");
+            printf("option name ProbCutImprove type spin default 4 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
+            printf("option name CorrCap type spin default 50 min 8 max 128\n");
+            printf("option name CorrLearnDiv type spin default 303 min 64 max 2048\n");
+            printf("option name CorrAsym type spin default 137 min 64 max 192\n");   // Tier-1: correzioni positive piu' lente (/128); 128=simmetrico
+            printf("option name ContHistDiv type spin default 3684 min 1000 max 12000\n");
             printf("option name LmrDepthPrune type spin default 1 min 0 max 1\n");  // SF: gating futility+conthist sulla depth ridotta-LMR (chiude gap-midgame). 0=off, 1=on
-            printf("option name LmrDepthHistDiv type spin default 4368 min 500 max 30000\n");  // PASSO1 SF: prune_depth += history/div (protezione-history). Solo con LmrDepthPrune ON
-            printf("option name ContHistPruneDepth type spin default 1 min 1 max 12\n");  // PASSO2 SF: gate conthist-prune (SF lmrDepth<6). Col blocco si alza
+            printf("option name LmrDepthHistDiv type spin default 4509 min 500 max 30000\n");  // PASSO1 SF: prune_depth += history/div (protezione-history). Solo con LmrDepthPrune ON
+            printf("option name ContHistPruneDepth type spin default 2 min 1 max 12\n");  // PASSO2 SF: gate conthist-prune (SF lmrDepth<6). Col blocco si alza
             printf("option name CutoffStats type spin default 0 min 0 max 1\n");    // diagnostica move-ordering: 1=stampa 'info string FMC ...' (first-move-cutoff rate) a fine ricerca
             printf("option name TTMoveKeep type spin default 1 min 0 max 1\n");      // SF: conserva la TT move sui fail-low senza mossa -> +ttrate ai cut-node. 0=off (byte-identico), 1=on
             printf("option name TTTwoLevel type spin default 1 min 0 max 1\n");       // 5.1 BAKE ON: TT a 2 livelli (depth-preferred + always-replace), ~-4%% nodi. 0=off (1-via), 1=on
             printf("option name LargePages type spin default 1 min 0 max 1\n");        // TT su large pages 2MB (come i pesi NNUE). 0=off (new[], baseline), 1=on. Richiede privilegio "Lock pages in memory"
             printf("option name EvalTTWrite type spin default 0 min 0 max 1\n");       // cache static eval su MISS (SF :830). PROVATO 1-via=albero x1.87 (roundtrip eval). Re-test con two-level. 0=off, 1=on
-            printf("option name HistPruneMargin type spin default 2240 min 200 max 4000\n");   // [3.7]
-            printf("option name SEECaptureMargin type spin default 80 min 20 max 300\n");
-            printf("option name SEEQuietMargin type spin default 103 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
+            printf("option name HistPruneMargin type spin default 2097 min 200 max 4000\n");   // [3.7]
+            printf("option name SEECaptureMargin type spin default 81 min 20 max 300\n");
+            printf("option name SEEQuietMargin type spin default 116 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
             // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
             printf("option name CaptureFutility type spin default 1 min 0 max 1\n");
-            printf("option name CapFutBase type spin default 154 min 0 max 500\n");
-            printf("option name CapFutMult type spin default 129 min 0 max 400\n");
-            printf("option name CapFutChist type spin default 214 min 0 max 400\n");   // [F-002 audit 2026-07-02] 125->123
+            printf("option name CapFutBase type spin default 155 min 0 max 500\n");
+            printf("option name CapFutMult type spin default 140 min 0 max 400\n");
+            printf("option name CapFutChist type spin default 205 min 0 max 400\n");   // [F-002 audit 2026-07-02] 125->123
             printf("option name CapFutDepth type spin default 8 min 1 max 12\n");
             // Ponte cp->unita'-eval del termine vittima, /10000 insieme a EvalScale (v. threads.cpp).
             // 392 = NORM_CP -> fattore 2.35 a EvalScale=60. ~167 riproduce il vecchio 1x (il bug).
             printf("option name CapFutVicScale type spin default 392 min 0 max 1000\n");
             // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
             printf("option name OppWorsening type spin default 1 min 0 max 1\n");
-            printf("option name OppWorseMargin type spin default 21 min 0 max 100\n");
+            printf("option name OppWorseMargin type spin default 23 min 0 max 100\n");
             printf("option name TripleExt type spin default 1 min 0 max 1\n");
-            printf("option name SingularTripleMargin type spin default 337 min 0 max 400\n");
+            printf("option name SingularTripleMargin type spin default 319 min 0 max 400\n");
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
-            printf("option name NegExtCut type spin default 2 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
+            printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
             printf("option name CorrValMargin type spin default 1 min 0 max 1\n");
-            printf("option name CorrValRFP type spin default 42 min 0 max 256\n");
+            printf("option name CorrValRFP type spin default 41 min 0 max 256\n");
             printf("option name CorrValExt type spin default 1 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
-            printf("option name CorrValFut type spin default 43 min 0 max 400\n");   // peso fold futility
+            printf("option name CorrValFut type spin default 38 min 0 max 400\n");   // peso fold futility
             printf("option name CorrValSee type spin default 27 min 0 max 400\n");   // peso fold SEE
-            printf("option name CorrValLmr type spin default 77 min 0 max 400\n");   // peso fold LMR
+            printf("option name CorrValLmr type spin default 83 min 0 max 400\n");   // peso fold LMR
             // Gate strutturali (interi delle decisioni di profondita', mai tunati: SPSA non li vede)
             printf("option name LMPCheckGuard type check default false\n");   // guard: la LMP non pota le quiet che danno scacco
             printf("option name IIRMinDepth type spin default 4 min 1 max 12\n");
@@ -659,60 +659,63 @@ void uci_loop()
             printf("option name SingularTTMargin type spin default 3 min 1 max 6\n");
             printf("option name SingularDepthDiv type spin default 2 min 1 max 4\n");
             printf("option name MalusScaled type spin default 1 min 0 max 1\n");     // 5.0-B: malus history scalato per move-order
-            printf("option name MalusScaleCoef type spin default 58 min 0 max 200\n");
+            printf("option name MalusScaleCoef type spin default 59 min 0 max 200\n");
             printf("option name MalusQuad type check default false\n");                  // decay malus quadratico invece che lineare
             printf("option name MalusQuadCoef type spin default 45 min 0 max 200\n");
+            printf("option name AspStableShrink type check default false\n");        // finestra aspiration piu' stretta se la ricerca e' stabile
+            printf("option name AspStableCap type spin default 4 min 0 max 15\n");
             printf("option name RazorTTQuiet type check default false\n");           // razora solo con TT move rumorosa
             printf("option name RazorTTLower type check default false\n");           // niente razoring se bound TT = LOWER
             printf("option name SingularExactMargin type check default true\n");     // BAKATA (+6.64, LOS 95.4%): margine singular dimezzato su bound EXACT
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
             printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
             printf("option name HindsightExt type spin default 1 min 0 max 1\n");    // 5.1 BAKE ON (Pawnocchio): ri-estendi nodi ridotti se l'eval e' girata male
-            printf("option name HindsightMargin type spin default 4 min 1 max 12\n");   // [F-006 audit 2026-07-02] 3->4
+            printf("option name HindsightMargin type spin default 3 min 1 max 12\n");   // [F-006 audit 2026-07-02] 3->4
             printf("option name HindsightRed type spin default 0 min 0 max 1\n");     // 5.1 (Stormphrax #300): riduci nodi ridotti se l'eval e' girata bene
             printf("option name HindsightRedMargin type spin default 2 min 1 max 12\n");
             printf("option name HindsightRedThresh type spin default 113 min 0 max 600\n");
-            printf("option name DoShallowerMargin type spin default 9 min 0 max 200\n");
+            printf("option name DoShallowerMargin type spin default 7 min 0 max 200\n");
             printf("option name BadNoisy type spin default 1 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
             printf("option name BadNoisyCount type spin default 7 min 1 max 32\n");
             printf("option name LMREnrich type spin default 1 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
             printf("option name LMREnrichAmount type spin default 2 min 0 max 4\n");
-            printf("option name RazorQuadCoef type spin default 90 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
-            printf("option name RFPDepth type spin default 6 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
+            printf("option name RazorQuadCoef type spin default 92 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
+            printf("option name RFPDepth type spin default 7 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
             printf("option name RazorDepth type spin default 6 min 0 max 18\n");    // 0=legacy cap; widen toward SF (uncapped)
             printf("option name IID type spin default 0 min 0 max 1\n");            // Internal Iterative Deepening (5.1): mini-ricerca per OTTENERE una hash move (ordinamento ~SF); 0=off,1=on (spin per il generic handler atoi)
             printf("option name IIDDepth type spin default 4 min 2 max 12\n");       // profondita' minima per attivare l'IID
             printf("option name IIDReduction type spin default 2 min 1 max 6\n");    // ply tolti alla mini-ricerca
             // ⭐ 5.1 riduzione LMR FINE ×1024 stile-SF (default OFF = byte-identico). Coeff in 1/1024 ply.
             printf("option name LMRFine type spin default 1 min 0 max 1\n");
-            printf("option name LMRFCut type spin default 3575 min 0 max 8000\n");      // cut-node forte
-            printf("option name LMRFCutNoTT type spin default 2491 min 0 max 4000\n");
-            printf("option name LMRFTTCap type spin default 187 min 0 max 4000\n");
-            printf("option name LMRFTTPv type spin default 671 min 0 max 8000\n");      // protezione ex-PV
-            printf("option name LMRFPv type spin default 521 min 0 max 4000\n");
-            printf("option name LMRFSS type spin default 682 min 0 max 2000\n");         // history continua
-            printf("option name LMRFCorr type spin default 867 min 0 max 2000\n");       // eval incerta
-            printf("option name LMRFAll type spin default 597 min 0 max 1200\n");        // scaling ALL-node
-            printf("option name LMRFImprov type spin default 474 min 0 max 3000\n");
-            printf("option name LMRFEvalCut type spin default 847 min 0 max 3000\n");
-            printf("option name LMRFCutoff type spin default 1402 min 0 max 4000\n");
+            printf("option name LMRFCut type spin default 3687 min 0 max 8000\n");      // cut-node forte
+            printf("option name LMRFCutNoTT type spin default 2397 min 0 max 4000\n");
+            printf("option name LMRFTTCap type spin default 200 min 0 max 4000\n");
+            printf("option name LMRFTTPv type spin default 617 min 0 max 8000\n");      // protezione ex-PV
+            printf("option name LMRFPv type spin default 437 min 0 max 4000\n");
+            printf("option name LMRFSS type spin default 664 min 0 max 2000\n");         // history continua
+            printf("option name LMRFCorr type spin default 866 min 0 max 2000\n");       // eval incerta
+            printf("option name LMRFAll type spin default 618 min 0 max 1200\n");        // scaling ALL-node
+            printf("option name LMRFImprov type spin default 489 min 0 max 3000\n");
+            printf("option name LMRFEvalCut type spin default 979 min 0 max 3000\n");
+            printf("option name LMRFCutoff type spin default 1520 min 0 max 4000\n");
+            printf("option name LMRExpect type spin default 0 min 0 max 2000\n");    // bonus riduzione ad ALL-node con cutoffCnt alto (0=off)
             // ⭐ 5.1 EVAL optimism (SF), default OFF = byte-identico
             printf("option name EvalOptimism type spin default 1 min 0 max 1\n");
-            printf("option name EvalOptStrength type spin default 153 min 0 max 600\n");
-            printf("option name EvalOptDiv type spin default 269 min 1 max 600\n");
+            printf("option name EvalOptStrength type spin default 170 min 0 max 600\n");
+            printf("option name EvalOptDiv type spin default 272 min 1 max 600\n");
             printf("option name FutilityDepth type spin default 7 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 3 min 1 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'. min 3->1 il 2026-07-10: il default era INCOLLATO al min dichiarato -> SPSA poteva solo salire (il clamp compilato e' gia' <1->1)
             printf("option name SEELmrDepth type check default false\n");            // S-05: gate/margine SEE su prune_depth (LMR-ridotta) invece che su depth piena
-            printf("option name SEELmrQuietMargin type spin default 185 min 0 max 600\n"); // margine quadratico dedicato al percorso SEELmrDepth (disaccoppiato da SEEQuietMargin), SPSA-tunabile
-            printf("option name SEELmrPruneCap type spin default 32 min 2 max 40\n");      // cap su prune_depth per il percorso SEELmrDepth (32=praticamente illimitato); abbassare = meno reach ma meno chiamate SEE
+            printf("option name SEELmrQuietMargin type spin default 193 min 0 max 600\n"); // margine quadratico dedicato al percorso SEELmrDepth (disaccoppiato da SEEQuietMargin), SPSA-tunabile
+            printf("option name SEELmrPruneCap type spin default 27 min 2 max 40\n");      // cap su prune_depth per il percorso SEELmrDepth (32=praticamente illimitato); abbassare = meno reach ma meno chiamate SEE
             printf("option name SEELmrLinear type check default false\n");                  // S-05 forma lineare: margine -coef*prune_depth invece di -coef*prune_depth^2 (attiva il path da solo)
-            printf("option name SEELmrLinearCoef type spin default 350 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
+            printf("option name SEELmrLinearCoef type spin default 368 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
             printf("option name TTPrefetch type check default true\n");        // Reckless #1085: prefetch bucket TT figlio in make (node-identical, +1.88% NPS confermato su VM N=100)
             printf("option name GoodCapTTQuiet type check default false\n");   // Reckless #1107: TT-move quiet -> catture "good" solo se SEE>=+1
-            printf("option name CorrUncert type check default false\n");       // P1a: disaccordo tavole corr = incertezza eval -> RFP/futility piu' larghi
-            printf("option name CorrUncertRFP type spin default 64 min 0 max 512\n");
-            printf("option name CorrUncertFut type spin default 64 min 0 max 512\n");
-            printf("option name CorrUncertCap type spin default 64 min 1 max 256\n");
+            printf("option name CorrUncert type check default true\n");       // P1a: disaccordo tavole corr = incertezza eval -> RFP/futility piu' larghi
+            printf("option name CorrUncertRFP type spin default 60 min 0 max 512\n");
+            printf("option name CorrUncertFut type spin default 71 min 0 max 512\n");
+            printf("option name CorrUncertCap type spin default 70 min 1 max 256\n");
             printf("option name TroubleMaking type check default false\n");    // P4: in pos. persa gioca la mossa piu' "fastidiosa" (verificata)
             printf("option name TroubleScore type spin default 150 min 0 max 1000\n");
             printf("option name TroubleEffort type spin default 60 min 1 max 200\n");
@@ -734,18 +737,18 @@ void uci_loop()
             printf("option name TBScoreTT type check default true\n");                        // S-10 (SF): scrivi il risultato TB in TT a depth+6 (niente ri-probe)  [BAKATA]
             printf("option name ProbCutImproving type check default true\n");                // Q-10 (Reckless+SF convergenti): verifica ProbCut a depth-1 quando improving
             printf("option name QSCaptHist type check default true\n");                      // Q-17 (Caissa): capture-history aggiornata ai beta-cutoff di qsearch
-            printf("option name QSCaptHistScale type spin default 98 min 0 max 400\n");      // Q-17: % del bonus/malus (leva SPSA dedicata)
+            printf("option name QSCaptHistScale type spin default 86 min 0 max 400\n");      // Q-17: % del bonus/malus (leva SPSA dedicata)
             printf("option name NodeCache type check default true\n");                       // Q-11 (Caissa): ordering quiet near-root pesato sui nodi spesi (cross-iterazione E cross-move)
-            printf("option name NodeCacheBonus type spin default 2081 min 0 max 16384\n");    // Q-11: bonus max (Caissa: 4096, range tune [1000,8000])
-            printf("option name NodeCacheMinSum type spin default 1126 min 0 max 8192\n");     // Q-11: nodes_sum minimo prima di applicare il bonus (Caissa: 256)
-            printf("option name HistBonusMoves type spin default 34 min 0 max 512\n");         // Q-18 (SF #6871): bonus best-move scalato sulle mosse cercate prima (0=piatto)
-            printf("option name HistAge type spin default 1008 min 512 max 1024\n");           // Q-25 (Stormphrax 750/1024, Pawnocchio 3/4, Caissa 7/8): decay history tra le mosse (1024=off)
-            printf("option name HistInitQuiet type spin default 33 min 0 max 2000\n");          // Q-26 (Caissa 802): prior positivo history quiet (0=zero-init)
-            printf("option name HistInitCapt type spin default 236 min 0 max 2000\n");           // Q-26 (Caissa 346): prior positivo capture-history
-            printf("option name LMRFPly type spin default 575 min 0 max 2048\n");                // Q-19a (Caissa 1024): LMRFine, riduci meno vicino alla radice (0=off)
-            printf("option name LMRFKiller type spin default 741 min 0 max 4000\n");             // Q-19b (Caissa): LMRFine, killer/counter ridotte molto meno (0=off)
+            printf("option name NodeCacheBonus type spin default 2080 min 0 max 16384\n");    // Q-11: bonus max (Caissa: 4096, range tune [1000,8000])
+            printf("option name NodeCacheMinSum type spin default 1066 min 0 max 8192\n");     // Q-11: nodes_sum minimo prima di applicare il bonus (Caissa: 256)
+            printf("option name HistBonusMoves type spin default 32 min 0 max 512\n");         // Q-18 (SF #6871): bonus best-move scalato sulle mosse cercate prima (0=piatto)
+            printf("option name HistAge type spin default 940 min 512 max 1024\n");           // Q-25 (Stormphrax 750/1024, Pawnocchio 3/4, Caissa 7/8): decay history tra le mosse (1024=off)
+            printf("option name HistInitQuiet type spin default 31 min 0 max 2000\n");          // Q-26 (Caissa 802): prior positivo history quiet (0=zero-init)
+            printf("option name HistInitCapt type spin default 249 min 0 max 2000\n");           // Q-26 (Caissa 346): prior positivo capture-history
+            printf("option name LMRFPly type spin default 524 min 0 max 2048\n");                // Q-19a (Caissa 1024): LMRFine, riduci meno vicino alla radice (0=off)
+            printf("option name LMRFKiller type spin default 797 min 0 max 4000\n");             // Q-19b (Caissa): LMRFine, killer/counter ridotte molto meno (0=off)
             printf("option name RecaptureExt type check default false\n");                    // Q-16 (Caissa): +1 ply alla ttMove ricattura ai nodi PV
-            printf("option name RecaptureTension type spin default 75 min 0 max 800\n");      // filtro tensione: estende solo se |SEE(ricattura)| <= questo (cp)
+            printf("option name RecaptureTension type spin default 70 min 0 max 800\n");      // filtro tensione: estende solo se |SEE(ricattura)| <= questo (cp)
             // ---- TM v2 (quarto audit Q-01..Q-08), tutto default-OFF ----
             printf("option name TMv2 type check default true\n");                            // Q-01 master: composizione moltiplicativa stateless (sostituisce instab+drop+NodeTM quando ON)
             printf("option name TMv2Stab0 type spin default 232 min 100 max 400\n");          // Q-02 (Alexandria 2.38): fattore con best APPENA cambiata
