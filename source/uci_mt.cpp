@@ -667,11 +667,13 @@ void uci_loop()
             printf("option name RazorTTQuiet type check default false\n");           // razora solo con TT move rumorosa
             printf("option name RazorTTLower type check default false\n");           // niente razoring se bound TT = LOWER
             printf("option name SingularExactMargin type check default true\n");     // BAKATA (+6.64, LOS 95.4%): margine singular dimezzato su bound EXACT
+            printf("option name SingularExactDecouple type check default false\n");  // doppia/tripla estensione ancorate al margine PIENO (anti-cascata a TC lungo)
+            printf("option name SingularExactMaxDepth type spin default 0 min 0 max 40\n");  // 0=nessun cap; sopra ~18 il dimezzamento esplode l'albero
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
             printf("option name DoDeeperBase type spin default 43 min 0 max 400\n");
             printf("option name HindsightExt type spin default 1 min 0 max 1\n");    // 5.1 BAKE ON (Pawnocchio): ri-estendi nodi ridotti se l'eval e' girata male
             printf("option name HindsightMargin type spin default 3 min 1 max 12\n");   // [F-006 audit 2026-07-02] 3->4
-            printf("option name HindsightRed type spin default 0 min 0 max 1\n");     // 5.1 (Stormphrax #300): riduci nodi ridotti se l'eval e' girata bene
+            printf("option name HindsightRed type check default false\n");     // 5.1 (Stormphrax #300): riduci nodi ridotti se l'eval e' girata bene
             printf("option name HindsightRedMargin type spin default 2 min 1 max 12\n");
             printf("option name HindsightRedThresh type spin default 113 min 0 max 600\n");
             printf("option name DoShallowerMargin type spin default 7 min 0 max 200\n");

@@ -67,6 +67,52 @@ class SqrClippedReLU {
         return h;
     }
 
+#if defined(USE_AVX2)
+    // Attivazione FUSA (port SF 1c384d3a alle nostre dimensioni): calcola in UNA passata sia la
+    // ReLU quadratica sia quella lineare dallo stesso input. Prima si leggeva e impacchettava
+    // due volte lo stesso `fc_0_out` (32 i32 = 128 byte) -- ora il pack i32->i16 si fa una volta
+    // sola e da quello escono entrambe le uscite.
+    // ⚠️ SF la abilita solo su AVX2-senza-VNNI/AVX512; da noi conviene anche sul flagship perche'
+    // col concat ristrutturato i due store sono allineati e si risparmia comunque l'intera
+    // seconda passata. Equivalenza col percorso separato: per la lineare `packs_epi32 + max(0)`
+    // da' gli stessi byte di `packus_epi32` (i negativi vanno a 0 in entrambi; sopra 32767 la
+    // successiva saturazione a i8 collassa comunque a 127) -> bench invariato = prova.
+    void propagate_pair(const InputType* input, OutputType* squared, OutputType* clipped) const {
+        static_assert(WeightScaleBitsLocal >= 5 && WeightScaleBitsLocal <= 8);
+        static_assert(InputDimensions % 32 == 0);
+        constexpr int SimdShiftAmount = WeightScaleBitsLocal * 2 + 7 - 16;
+        constexpr IndexType NumChunks = InputDimensions / 32;
+
+        const auto    in   = reinterpret_cast<const __m256i*>(input);
+        const auto    outS = reinterpret_cast<__m256i*>(squared);
+        const auto    outC = reinterpret_cast<__m256i*>(clipped);
+        const __m256i zero = _mm256_setzero_si256();
+
+        for (IndexType i = 0; i < NumChunks; ++i)
+        {
+            // pack i32 -> i16 UNA VOLTA (permute4x64 ricuce l'interleaving di corsia di AVX2)
+            const __m256i w0 = _mm256_permute4x64_epi64(
+              _mm256_packs_epi32(_mm256_load_si256(&in[i * 4 + 0]),
+                                 _mm256_load_si256(&in[i * 4 + 1])), 0xD8);
+            const __m256i w1 = _mm256_permute4x64_epi64(
+              _mm256_packs_epi32(_mm256_load_si256(&in[i * 4 + 2]),
+                                 _mm256_load_si256(&in[i * 4 + 3])), 0xD8);
+
+            const __m256i s0 = _mm256_srli_epi16(_mm256_mulhi_epi16(w0, w0), SimdShiftAmount);
+            const __m256i s1 = _mm256_srli_epi16(_mm256_mulhi_epi16(w1, w1), SimdShiftAmount);
+            _mm256_store_si256(&outS[i],
+                               _mm256_permute4x64_epi64(_mm256_packs_epi16(s0, s1), 0xD8));
+
+            const __m256i c0 =
+              _mm256_srli_epi16(_mm256_max_epi16(w0, zero), WeightScaleBitsLocal);
+            const __m256i c1 =
+              _mm256_srli_epi16(_mm256_max_epi16(w1, zero), WeightScaleBitsLocal);
+            _mm256_store_si256(&outC[i],
+                               _mm256_permute4x64_epi64(_mm256_packs_epi16(c0, c1), 0xD8));
+        }
+    }
+#endif
+
     // Forward propagation
     void propagate(const InputType* input, OutputType* output) const {
         static_assert(WeightScaleBitsLocal >= 5 && WeightScaleBitsLocal <= 8,
@@ -75,6 +121,15 @@ class SqrClippedReLU {
         // MulHi strips the lower 16 bits (i.e. shift by 16) so we need to shift out the remaining.
         [[maybe_unused]] constexpr int SimdShiftAmount = WeightScaleBitsLocal * 2 + 7 - 16;
 
+// ⛔ LEZIONE MISURATA (2026-07-19): sulle NOSTRE dimensioni i vettori LARGHI PERDONO.
+// InputDimensions = 32 (L2+1) => un ramo a 256/512 bit fa UNA sola iterazione, quindi conta la
+// LATENZA della catena, non la larghezza; il ramo SSE2 fa DUE iterazioni indipendenti che il core
+// sovrappone, e a 128 bit non esistono corsie da ricucire.
+//   * ramo AVX-512 (SF 4c78ba89, cvtsepi32_epi16 + inserti64x4): -2.84% (inconclusivo vs rumore)
+//   * attivazione FUSA propagate_pair (SF 1c384d3a, 4x permute4x64 di ricucitura): -2.09% e -1.45%
+//     su DUE giri a lati invertiti = segno coerente = REALE.
+// SF stessa abilita propagate_pair solo su AVX2-senza-VNNI/AVX512: sulle build larghe non conviene
+// nemmeno a loro. NON riprovare a queste dimensioni; riconsiderare solo se L2 crescesse molto.
 #if defined(USE_SSE2)
         constexpr IndexType NumChunks = InputDimensions / 16;
         const auto          in        = reinterpret_cast<const __m128i*>(input);

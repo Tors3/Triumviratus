@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <sstream>
 #include <iosfwd>
 
 #include "features/half_ka_v2_hm.h"
@@ -93,42 +94,85 @@ struct NetworkArchitecture {
         return hashValue;
     }
 
-    // Read network parameters
+    // --- Rimappa colonne fc_1 (2026-07-19, port dell'idea SF eca43a97 alle NOSTRE dimensioni) ---
+    // Il FILE (formato canonico, invariato) ha il concat [sqr 0..30 | lin 31..61 | pad 62..63]:
+    // con FC_0_OUTPUTS=31 l'offset 31 e' disallineato e propagate() pagava memset+memcpy+buffer
+    // extra A OGNI EVAL. In MEMORIA usiamo invece [sqr 0..31 | lin 32..63] dove le posizioni 31 e
+    // 63 (attivazioni del neurone forwarded) sono COLONNE MORTE a peso zero: ac_sqr_0/ac_0
+    // scrivono direttamente nel concat, allineati, senza copie. Semantica identica (colonna a
+    // zero x input qualunque = 0); il costo di fc_1 e' invariato (processava gia' 64 input paddati).
+    // La rimappa avviene QUI, al confine file<->memoria, in entrambe le direzioni: il formato su
+    // disco non cambia mai (stessi hash, stesse reti, stesso trainer).
+    static constexpr size_t FC1BiasBytes = FC_1_OUTPUTS * sizeof(i32);
+    static constexpr size_t FC1RowBytes  = 64;   // PaddedInputDimensions di fc_1 (= anche il file)
+    static constexpr size_t FC1BlockBytes = FC1BiasBytes + FC_1_OUTPUTS * FC1RowBytes;
+
     bool read_parameters(std::istream& stream) {
-        return fc_0.read_parameters(stream) && ac_0.read_parameters(stream)
-            && fc_1.read_parameters(stream) && ac_1.read_parameters(stream)
+        if (!(fc_0.read_parameters(stream) && ac_0.read_parameters(stream)))
+            return false;
+        char buf[FC1BlockBytes];
+        stream.read(buf, sizeof(buf));
+        if (stream.fail())
+            return false;
+        for (int r = 0; r < FC_1_OUTPUTS; ++r)
+        {
+            char* row = buf + FC1BiasBytes + r * FC1RowBytes;
+            char  tmp[FC1RowBytes];
+            std::memcpy(tmp, row, FC1RowBytes);
+            row[31] = 0;                                        // colonna morta: sqr(forwarded)
+            for (int c = 31; c <= 61; ++c) row[c + 1] = tmp[c]; // lin k: colonna 31+k -> 32+k
+            row[63] = 0;                                        // colonna morta: lin(forwarded)
+        }
+        std::stringstream remapped(std::string(buf, sizeof(buf)),
+                                   std::ios::in | std::ios::binary);
+        return fc_1.read_parameters(remapped) && ac_1.read_parameters(stream)
             && fc_2.read_parameters(stream);
     }
 
-    // Write network parameters
+    // Write network parameters (rimappa INVERSA: la memoria torna al formato-file canonico)
     bool write_parameters(std::ostream& stream) const {
-        return fc_0.write_parameters(stream) && ac_0.write_parameters(stream)
-            && fc_1.write_parameters(stream) && ac_1.write_parameters(stream)
-            && fc_2.write_parameters(stream);
+        if (!(fc_0.write_parameters(stream) && ac_0.write_parameters(stream)))
+            return false;
+        std::stringstream mem(std::ios::in | std::ios::out | std::ios::binary);
+        if (!fc_1.write_parameters(mem))
+            return false;
+        std::string blk = mem.str();
+        if (blk.size() != FC1BlockBytes)
+            return false;
+        for (int r = 0; r < FC_1_OUTPUTS; ++r)
+        {
+            char* row = &blk[0] + FC1BiasBytes + r * FC1RowBytes;
+            char  tmp[FC1RowBytes];
+            std::memcpy(tmp, row, FC1RowBytes);
+            for (int c = 31; c <= 61; ++c) row[c] = tmp[c + 1]; // 32+k -> 31+k
+            row[62] = 0;
+            row[63] = 0;
+        }
+        stream.write(blk.data(), blk.size());
+        return !stream.fail() && ac_1.write_parameters(stream) && fc_2.write_parameters(stream);
     }
 
     i32 propagate(const TransformedFeatureType* transformedFeatures,
                   const NNZInfo<L1>&            nnzInfo) const {
         struct alignas(CacheLineSize) Buffer {
             alignas(CacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
-            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType
-              ac_sqr_0_out[ceil_to_multiple<IndexType>(FC_0_OUTPUTS * 2, 32)];
-            alignas(CacheLineSize) typename decltype(ac_0)::OutputBuffer ac_0_out;
+            // Concat [sqr 0..31 | lin 32..63]: le posizioni 31 e 63 sono colonne morte a peso
+            // zero (vedi read_parameters) -> le due attivazioni scrivono DIRETTAMENTE qui,
+            // allineate. Niente memset, niente memcpy, niente ac_0_out (port idea SF eca43a97).
+            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[64];
             alignas(CacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
             alignas(CacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
             alignas(CacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
-
-            Buffer() { std::memset(ac_sqr_0_out, 0, sizeof(ac_sqr_0_out)); }
         };
 
         Buffer buffer;
 
         fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo);
-        ac_sqr_0.propagate(buffer.fc_0_out, buffer.ac_sqr_0_out);
-        ac_0.propagate(buffer.fc_0_out, buffer.ac_0_out);
-        std::memcpy(buffer.ac_sqr_0_out + FC_0_OUTPUTS, buffer.ac_0_out,
-                    FC_0_OUTPUTS * sizeof(typename decltype(ac_0)::OutputType));
-        fc_1.propagate(buffer.ac_sqr_0_out, buffer.fc_1_out);
+        // ⛔ propagate_pair (attivazione fusa) MISURATA PIU' LENTA e non usata: vedi il commento
+        // in layers/sqr_clipped_relu.h. Le due attivazioni separate restano la via veloce.
+        ac_sqr_0.propagate(buffer.fc_0_out, buffer.concat);
+        ac_0.propagate(buffer.fc_0_out, buffer.concat + 32);
+        fc_1.propagate(buffer.concat, buffer.fc_1_out);
         ac_1.propagate(buffer.fc_1_out, buffer.ac_1_out);
         fc_2.propagate(buffer.ac_1_out, buffer.fc_2_out);
 
@@ -155,24 +199,22 @@ struct NetworkArchitecture {
                         const NNZInfo<L1>& nnzInfo, i32* l2out, i32* l3out) const {
         struct alignas(CacheLineSize) Buffer {
             alignas(CacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
-            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType
-              ac_sqr_0_out[ceil_to_multiple<IndexType>(FC_0_OUTPUTS * 2, 32)];
-            alignas(CacheLineSize) typename decltype(ac_0)::OutputBuffer ac_0_out;
+            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[64];
             alignas(CacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
             alignas(CacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
             alignas(CacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
-            Buffer() { std::memset(ac_sqr_0_out, 0, sizeof(ac_sqr_0_out)); }
         };
         Buffer buffer;
         fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo);
-        ac_sqr_0.propagate(buffer.fc_0_out, buffer.ac_sqr_0_out);
-        ac_0.propagate(buffer.fc_0_out, buffer.ac_0_out);
-        std::memcpy(buffer.ac_sqr_0_out + FC_0_OUTPUTS, buffer.ac_0_out,
-                    FC_0_OUTPUTS * sizeof(typename decltype(ac_0)::OutputType));
-        fc_1.propagate(buffer.ac_sqr_0_out, buffer.fc_1_out);
+        // ⛔ propagate_pair (attivazione fusa) MISURATA PIU' LENTA e non usata: vedi il commento
+        // in layers/sqr_clipped_relu.h. Le due attivazioni separate restano la via veloce.
+        ac_sqr_0.propagate(buffer.fc_0_out, buffer.concat);
+        ac_0.propagate(buffer.fc_0_out, buffer.concat + 32);
+        fc_1.propagate(buffer.concat, buffer.fc_1_out);
         ac_1.propagate(buffer.fc_1_out, buffer.ac_1_out);
         fc_2.propagate(buffer.ac_1_out, buffer.fc_2_out);
-        for (int i = 0; i < FC_0_OUTPUTS; ++i) l2out[i] = i32(buffer.ac_0_out[i]);
+        // l2out: le attivazioni lineari ora vivono nel concat a partire da +32
+        for (int i = 0; i < FC_0_OUTPUTS; ++i) l2out[i] = i32(buffer.concat[32 + i]);
         for (int i = 0; i < FC_1_OUTPUTS; ++i) l3out[i] = i32(buffer.ac_1_out[i]);
         i32 fwdOut = buffer.fc_2_out[0] + buffer.fc_0_out[FC_0_OUTPUTS];
         constexpr i64 multiplier = 600 * OutputScale;

@@ -799,6 +799,9 @@ static bool g_razor_ttlower = false;
 //    Bench 592074 -> 548419: l'albero si STRINGE del 7.4% pur estendendo di piu' (estendere la
 //    mossa giusta arriva prima alla verita' -> ordinamento migliore a valle -> piu' tagli).
 static bool g_singular_exact_margin = true;
+// Vedi il commento al sito d'uso: ancora doppia/tripla estensione al margine PIENO.
+static bool g_singular_exact_decouple = false;
+int  g_singular_exact_maxdepth = 0;   // 0 = nessun cap. Vedi il sito d'uso: sopra ~18 il dimezzamento esplode.
 // DoDeeper/DoShallower (5.0-B, audit SF-master, default OFF): dopo che la re-search LMR a piena
 // profondita' fallisce alto, aggiusta la profondita' in base a QUANTO batte il best corrente
 // (molto sopra -> +1 ply; appena sopra -> -1 ply). OFF = full_depth invariato = byte-identico.
@@ -1288,6 +1291,8 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "RazorTTQuiet"))        { g_razor_ttquiet = value != 0; return true; }
     if (!strcmp(name, "RazorTTLower"))        { g_razor_ttlower = value != 0; return true; }
     if (!strcmp(name, "SingularExactMargin")) { g_singular_exact_margin = value != 0; return true; }
+    if (!strcmp(name, "SingularExactDecouple")) { g_singular_exact_decouple = value != 0; return true; }
+    if (!strcmp(name, "SingularExactMaxDepth")) { g_singular_exact_maxdepth = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "DoDeeper"))            { g_do_deeper = value != 0; return true; }
     if (!strcmp(name, "DoDeeperBase"))        { g_dodeeper_base = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "HindsightExt"))        { g_hindsight_ext = value != 0; return true; }
@@ -4647,9 +4652,29 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             tt_score > -mate_score && tt_score < mate_score) {
             // F-002: era hardcoded 2*depth. SingularExactMargin: bound EXACT -> margine dimezzato
             // (score fidato -> piu' facile dichiarare singolare -> piu' estensioni dove serve).
-            int singular_beta = tt_score - ((g_singular_exact_margin && tt_flag == hash_flag_exact)
-                                            ? g_singular_mpd * depth / 2
-                                            : g_singular_mpd * depth);
+            // Margine PIENO: resta l'ancora per doppia/tripla estensione (vedi sotto).
+            const int singular_margin_full = g_singular_mpd * depth;
+            // ⭐ SingularExactMaxDepth (0 = nessun cap = byte-identico): il dimezzamento su bound
+            // EXACT cambia NATURA con la profondita'. Albero vs baseline (bench VM, 19/07):
+            //   depth 13 -7.4% | depth 17 -11.1% | depth 20 **+42.7%**
+            // Sotto ~18 stringe (ed e' li' che a 10+0.1 valeva +8.60); sopra esplode, ed e' la
+            // spiegazione del -8.60 misurato a 20+0.2. Cap = tenere il beneficio e buttare il danno,
+            // stesso schema del TC-gate di TMv2.
+            const bool exact_halve =
+              g_singular_exact_margin && tt_flag == hash_flag_exact
+              && (g_singular_exact_maxdepth <= 0 || depth <= g_singular_exact_maxdepth);
+            int singular_beta = tt_score - (exact_halve ? singular_margin_full / 2
+                                                        : singular_margin_full);
+            // ⚠️ SingularExactDecouple (2026-07-19, default OFF = byte-identico).
+            // Il dimezzamento su bound EXACT alza singular_beta, e le soglie di doppia/tripla
+            // estensione sono misurate DA singular_beta -> si alzano anche loro. Effetto voluto:
+            // piu' facile essere SINGOLARE. Effetto NON voluto: piu' facile essere DOPPIO/TRIPLO.
+            // E poiche' il margine e' `mpd*depth`, lo scarto assoluto cresce con la profondita'
+            // (a d8 sono 4 unita', a d24 sono 12): a TC lungo la cascata di doppie/triple esplode.
+            // Sospetto per l'inversione di segno misurata: +8.60 @10+0.1 -> -8.60 @20+0.2.
+            // Con questo ON, doppia/tripla restano ancorate al margine PIENO.
+            const int de_beta = g_singular_exact_decouple ? (tt_score - singular_margin_full)
+                                                          : singular_beta;
             int singular_depth = (depth - 1) / g_singular_depth_div;
             int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth, is_cut_node, tt_move);
             if (s < singular_beta) {
@@ -4659,12 +4684,12 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // search blow-up that uncapped double extensions can cause.
                 // F-018.6b SingularDECap (0=off): limita la CATENA di double-extension sul
                 // path (Berserk ss->de <= 6) — senza cap le catene lunghe esplodono l'albero.
-                if (g_singular_ext && !pv_node && s < singular_beta - g_singular_dmargin
+                if (g_singular_ext && !pv_node && s < de_beta - g_singular_dmargin
                     && (!g_singular_de_cap || td.de_stack[td.ply] <= g_singular_de_cap)) {
                     extension = 2;
                     // Triple extension (SF :1244): beats alternatives by an even wider
                     // margin -> +3. tmargin > dmargin so this nests inside the double.
-                    if (g_triple_ext && s < singular_beta - g_singular_tmargin)
+                    if (g_triple_ext && s < de_beta - g_singular_tmargin)
                         extension = 3;
                 }
             }
