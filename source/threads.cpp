@@ -793,12 +793,23 @@ static bool g_razor_ttlower = false;
 // il margine singular oggi e' uguale per tutti i nodi. Reckless lo DIMEZZA quando il bound in TT
 // e' EXACT: score esatto = piu' affidabile = si puo' essere piu' generosi nel dichiarare singolare
 // una mossa (singular_beta piu' alto -> piu' estensioni proprio dove il valore e' fidato).
-// ✅ BAKATA ON 2026-07-18: +8.60 +/- 7.62 Elo (nElo +16.01), LOS 98.65%, 2304 partite @10+0.1
-//    (conc16, UHO_4060_v4, stesso binario A/B; Ptnml [11,257,563,306,15]). Da noi rende PIU' che da
-//    loro a STC (+2.58) e la loro misura LTC e' +4.94 -> attesa in crescita al TC di release.
-//    Bench 592074 -> 548419: l'albero si STRINGE del 7.4% pur estendendo di piu' (estendere la
-//    mossa giusta arriva prima alla verita' -> ordinamento migliore a valle -> piu' tagli).
-static bool g_singular_exact_margin = true;
+// ⛔ SBAKATA 2026-07-19 dopo essere stata bakata il 18/07. STORIA COMPLETA, da non ripetere:
+//    +8.60 +/- 7.62 (LOS 98.65%, 2304g @10+0.1)  ->  -8.60 +/- 10.54 (LOS 5.5%, 1010g @20+0.2)
+//    Le due misure NON erano in disaccordo: sono la stessa patch sui DUE LATI DI UN CROSSOVER.
+//    Bench a profondita' variabile (l'unico strumento che l'ha spiegato):
+//        depth 13: -7.4%   depth 17: -11.1%   depth 19: +15.6%   depth 20: +42.7%
+//    MECCANISMO: il margine e' `mpd*depth` con mpd=1, quindi dimezzarlo toglie depth/2 e
+//    l'aggressivita' SCALA con la profondita'. Peggio: le soglie di doppia/tripla estensione sono
+//    misurate DA singular_beta, quindi alzandolo diventa piu' facile anche il doppio e il triplo
+//    -> cascata che esplode in profondita'.
+//    TENTATIVI DI SALVATAGGIO, entrambi FALLITI in partita:
+//      * SingularExactDecouple (doppia/tripla ancorate al margine pieno): d20 da +42.7% a +8.5%
+//      * SingularExactMaxDepth=18 (cap): d20 a +0.006%, meccanicamente PERFETTO...
+//        ...ma SPRT CAP18 vs OFF @20+0.2 = -2.07 +/- 8.79, LOS 32%, 1508g -> nemmeno il cap paga.
+//    Conclusione: il beneficio a bassa profondita' non sopravvive quando la ricerca passa il grosso
+//    del tempo sopra il crossover. Codice e toggle TENUTI come documentazione della misura.
+//    LEZIONE: benchare a piu' profondita' PRIMA di bakare qualsiasi patch di estensioni/riduzioni.
+static bool g_singular_exact_margin = false;
 // Vedi il commento al sito d'uso: ancora doppia/tripla estensione al margine PIENO.
 static bool g_singular_exact_decouple = false;
 int  g_singular_exact_maxdepth = 0;   // 0 = nessun cap. Vedi il sito d'uso: sopra ~18 il dimezzamento esplode.

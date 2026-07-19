@@ -666,7 +666,7 @@ void uci_loop()
             printf("option name AspStableCap type spin default 4 min 0 max 15\n");
             printf("option name RazorTTQuiet type check default false\n");           // razora solo con TT move rumorosa
             printf("option name RazorTTLower type check default false\n");           // niente razoring se bound TT = LOWER
-            printf("option name SingularExactMargin type check default true\n");     // BAKATA (+6.64, LOS 95.4%): margine singular dimezzato su bound EXACT
+            printf("option name SingularExactMargin type check default false\n");    // SBAKATA 19/07: +8.60 a 10+0.1 ma -8.60 a 20+0.2 (crossover di profondita' ~18)
             printf("option name SingularExactDecouple type check default false\n");  // doppia/tripla estensione ancorate al margine PIENO (anti-cascata a TC lungo)
             printf("option name SingularExactMaxDepth type spin default 0 min 0 max 40\n");  // 0=nessun cap; sopra ~18 il dimezzamento esplode l'albero
             printf("option name DoDeeper type spin default 0 min 0 max 1\n");        // 5.0-B: doDeeper/doShallower nella re-search LMR
