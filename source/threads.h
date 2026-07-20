@@ -15,6 +15,7 @@
 struct ThreadData {
     int thread_id;
     int lmr_bias;    // DiverseSMP: per-thread LMR reduction offset (helpers only; 0 for main)
+    int lmr_bias_units; // DiverseSMPFine: stesso bias in 1/1024 di ply (= lmr_bias*1024 se fine=0)
 
     // Board state copy
     U64 bitboards[12];

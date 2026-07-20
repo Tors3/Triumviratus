@@ -368,6 +368,19 @@ void set_move_picker(bool v) { g_move_picker = v; }
 static bool g_diverse_smp = true;
 void set_diverse_smp(bool v) { g_diverse_smp = v; }
 static int g_diverse_smp_amount = 1;   // max |bias| in plies (SPSA-tunable: DiverseSMPAmount)
+// ⭐ DiverseSMPFine (2026-07-20, default 0 = comportamento storico, byte-identico): bias helper in
+// MILLESIMI di ply invece che in ply interi. Diagnosi del perche' DiverseSMP non ha mai reso: il
+// nostro bias minimo e' 1 ply = 1024 unita' LMRFine, mentre Reckless (fb19535) vince con 96/48
+// unita' (~0.05-0.1 ply) e BOCCIA gia' a 512/256. Il nostro "minimo" e' 2-4x la loro variante
+// fallita: non e' una perturbazione, e' un helper menomato. Con fine>0 il bias diventa
+// -mag*fine unita' (wider-only, stessa crescita per coppie di id, cap mag=8). Da testare a
+// Threads>=8; a 1 thread e' morto per costruzione (bias solo sugli helper).
+// ✅ BAKATO A 96 (2026-07-20): SPRT SMPFINE(96) vs BASE(legacy ply-intero) a Threads=8, 16+0.16,
+//    hash 256: +4.91 +/- 7.97 Elo (nElo +10.17), LOS 88.63%, 1700 partite, LLR non conclusivo ma
+//    lean stabilmente positivo (mai negativo lungo tutto il run). A 8 thread un SPRT locale non
+//    chiude in tempi ragionevoli -> bakato sul lean, non su una chiusura formale. A Threads=1 e'
+//    byte-identico (il bias vive solo sugli helper, id>0).
+int g_diverse_smp_fine = 96;
 
 // --- Search "bundle" #3 — OUTCOME (2026-06-03): tested all-ON (-58 Elo), then isolated.
 //  * MultiCut   — singular multi-cut, CONSERVATIVE gate (singular_beta >= beta): the only
@@ -379,6 +392,13 @@ static int g_diverse_smp_amount = 1;   // max |bias| in plies (SPSA-tunable: Div
 //  RIMOSSI nella pulizia 2026-06-11, vivono nella storia git.)
 static bool g_multicut = true;   // BAKED ON: conservative singular multi-cut (+10.4 Elo @1100)
 void set_multicut(bool v) { g_multicut = v; }
+// ⭐ MulticutTTMalus (2026-07-20, port SF a47a1c1804, verde a STC+LTC+VLTC-SMP — raro). Quando il
+// multicut scatta, la ricerca di esclusione (SENZA la ttMove) ha fallito alto DA SOLA: la posizione
+// e' vinta anche senza la mossa che la TT dichiarava migliore -> la ttMove non era poi cosi'
+// speciale. Malus alla sua history, cosi' le prossime iterazioni la estendono/ordinano meno in
+// alto. Default OFF = byte-identico (il ramo multicut gia' esistente e' invariato).
+static bool g_multicut_ttmalus = false;
+int  g_multicut_ttmalus_scale = 100;   // % di td_stat_bonus(depth), come le altre scale malus/bonus
 
 // ttPv (UCI spin "TTPvAmount", 0..2, default 0=OFF). SF: un bit della TT (bit 63 del
 // data, era libero) ricorda se un nodo è/è stato PV. I nodi non-PV che la TT marca come
@@ -1086,6 +1106,15 @@ int  g_malus_pct             = 69;    // #10c malus = bonus * pct/100 (costanti 
 static bool g_easycap_gate   = false;  // #11 niente NMP se abbiamo un pezzo in presa "facile" (Berserk)
 int  g_rfp_hist_thresh       = 64;      // #12 RFP solo se hash-move non-quiet o con history > soglia (0=off)
 static bool g_killer_reset   = false;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
+// ⭐ CounterMove (default ON = comportamento storico, byte-identico). Toggle di RIMOZIONE:
+// SF ha SEMPLIFICATO VIA la countermove heuristic (a45c2bc3, PR #5441, lug-2024) con un test
+// non-regressivo da **978.000 partite STC** + 81k LTC: da loro valeva ZERO. Il movepicker di SF
+// master non ha piu' lo stage refutation-countermove. Noi lo abbiamo ancora, di default.
+// ⚠️ NON confondere con `g_prior_bonus` (bonus history alla prior countermove sul fail-low): quello
+// SF lo TIENE e lo tuna ancora. Qui si spegne solo la TABELLA counter_moves e il suo stage.
+// Movente: 19/07 il pattern e' "togliere paga, aggiungere no" (10 patch, 9 bocciate; l'unica
+// vincente +7.98 toglieva la check-extension obsoleta).
+static bool g_countermove = true;
 int  g_qs_move_cap           = 1;      // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
 // ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
 static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) in qsearch. Bake 2026-07-07 REVERTITO: -10.73 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = NULLO. OFF, re-ispezione a TC lungo
@@ -1131,6 +1160,15 @@ int g_lmrf_all      = 618;    // [5.1 BAKE 272->723]   scaling ALL-node: r += r*
 int g_lmrf_improv   = 489;    // [5.1 BAKE 1024->411]  non-improving
 int g_lmrf_evalcut  = 979;   // [5.1 BAKE 1024->1517] eval+margin < alpha
 int g_lmrf_cutoff   = 1520;   // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
+// ⭐ ContHist4LMR (2026-07-20, spin, 0 = OFF byte-identico) — SEGNALE ORFANO, non feature nuova.
+// Il ramo LMR *legacy* (`if (!g_lmr_fine)`, :4878-4965, oggi irraggiungibile perche' LMRFine e'
+// bakato ON) consultava la continuation history a 1, 2 **e 4** ply indietro (:4937). Il port di
+// LMRFine da SF usa `2*main + cont1 + cont2` e la 4-ply e' rimasta fuori: non un bug, un port
+// fedele — ma da noi e' una PERDITA, perche' `cont_hist_4` continuiamo a MANTENERLA a ogni nodo
+// (update :3834) e a leggerla nell'ordinamento (:2852). Paghiamo il costo e la LMR la ignora.
+// Coefficiente SEPARATO (non dentro sscore) per due motivi: 0 resta byte-identico, e SPSA puo'
+// pesare la 4-ply senza dover muovere LMRFSS, che governa main+cont1+cont2.
+int g_lmrf_cont4    = 0;      // peso della conthist a 4 ply nella LMR fine (1/4096, come LMRFSS)
 int g_lmr_expect    = 0;      // LMRExpect (spin, 0=OFF byte-identico): bonus EXTRA al termine
                               // cutoffCnt quando il nodo e' ALL (ne' PV ne' cut) = "aspettativa
                               // rispettata". Reckless usa +256/+384 nelle stesse unita' (1/1024 ply).
@@ -1346,6 +1384,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRFImprov"))          { g_lmrf_improv = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRFEvalCut"))         { g_lmrf_evalcut = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRFCutoff"))          { g_lmrf_cutoff = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "LMRFCont4"))           { g_lmrf_cont4 = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "LMRExpect"))           { g_lmr_expect = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "EvalOptimism"))        { g_eval_optimism = value != 0; if (!g_eval_optimism) { g_optimism[0] = g_optimism[1] = 0; } return true; }
     if (!strcmp(name, "EvalOptStrength"))     { g_opt_strength = value < 0 ? 0 : value; return true; }
@@ -1473,6 +1512,7 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "EasyCapGate"))         { g_easycap_gate = value != 0; return true; }
     if (!strcmp(name, "RFPHistThresh"))       { g_rfp_hist_thresh = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "KillerReset"))         { g_killer_reset = value != 0; return true; }
+    if (!strcmp(name, "CounterMove"))         { g_countermove = value != 0; return true; }
     if (!strcmp(name, "QSMoveCap"))           { g_qs_move_cap = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "QSDrawCheck"))         { g_qs_draw_check = value != 0; return true; }
     if (!strcmp(name, "EPKeyFix"))            { g_ep_key_fix = value != 0; return true; }
@@ -1494,6 +1534,9 @@ bool set_search_param(const char* name, int value) {
     if (!strcmp(name, "LMRBase"))             { g_lmr_base_x100 = value; init_lmr_table(); return true; }
     if (!strcmp(name, "LMRDiv"))              { g_lmr_div_x100  = value; init_lmr_table(); return true; }
     if (!strcmp(name, "DiverseSMPAmount"))    { g_diverse_smp_amount = value; return true; }
+    if (!strcmp(name, "DiverseSMPFine"))      { g_diverse_smp_fine = value < 0 ? 0 : value; return true; }
+    if (!strcmp(name, "MulticutTTMalus"))     { g_multicut_ttmalus = value != 0; return true; }
+    if (!strcmp(name, "MulticutTTMalusScale")) { g_multicut_ttmalus_scale = value < 0 ? 0 : value; return true; }
     if (!strcmp(name, "NMPEvalDiv"))          { g_nmp_eval_div     = value; return true; }
     if (!strcmp(name, "QFutMargin"))          { g_qfut_margin      = value; return true; }
     if (!strcmp(name, "HistBonusMult"))       { g_hist_bonus_mult  = value; return true; }
@@ -2793,7 +2836,7 @@ static inline int td_score_move(ThreadData& td, int move, int tt_move) {
     if (td.killer_moves[1][td.ply] == move) return SCORE_KILLER1;
 
     int prev = td.move_stack[td.ply];
-    if (prev && td.counter_moves[get_move_piece(prev)][get_move_target(prev)] == move)
+    if (g_countermove && prev && td.counter_moves[get_move_piece(prev)][get_move_target(prev)] == move)
         return SCORE_COUNTER;
 
     // Butterfly history (MainHistWeight, default 1; SF=2) + continuation history
@@ -3096,7 +3139,10 @@ static inline void mp_init(MovePicker& mp, ThreadData& td, bool staged, int tt_m
         mp.killer0 = td.killer_moves[0][td.ply];
         mp.killer1 = td.killer_moves[1][td.ply];
         int prev   = td.move_stack[td.ply];
-        mp.counter = prev ? td.counter_moves[get_move_piece(prev)][get_move_target(prev)] : 0;
+        // counter=0 spegne di fatto TUTTO il meccanismo: lo stage refutation (:3175) e il dedup
+        // (:3189) sono gia' guardati da `mp.counter &&`.
+        mp.counter = (g_countermove && prev)
+                       ? td.counter_moves[get_move_piece(prev)][get_move_target(prev)] : 0;
     }
     else {
         mp.killer0 = mp.killer1 = mp.counter = 0;
@@ -4724,6 +4770,14 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
             // SF gate (s>=beta) over-pruned (-13 Elo). Non-PV only (unsound in PV). Safe to
             // return: no move has been made yet this iteration.
             else if (g_multicut && !pv_node && singular_beta >= beta) {
+                // MulticutTTMalus: la ricerca di esclusione ha fallito alto SENZA la ttMove ->
+                // la posizione vince comunque -> la ttMove non era la ragione del vantaggio.
+                // Malus alla sua history (solo se quiet: le catture hanno una tabella a parte).
+                if (g_multicut_ttmalus && !get_move_capture(tt_move) && !get_move_promoted(tt_move)) {
+                    int malus = td_stat_bonus(depth) * g_multicut_ttmalus_scale / 100;
+                    td_update_history(td.history_moves[td_hbucket(td, tt_move)]
+                                       [get_move_piece(tt_move)][get_move_target(tt_move)], -malus);
+                }
                 return singular_beta;
             }
             // Negative extensions as tunable amounts (0 = off). ttMove assumed to fail
@@ -4936,6 +4990,16 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                   if (td.ply >= 2) { int p2 = td.move_stack[td.ply - 2];
                     if (p2) sscore += td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)][get_move_piece(move)][get_move_target(move)]; } }
                 r -= (long long)sscore * g_lmrf_ss / 4096;
+                // ContHist4LMR: la conthist a 4 ply, che il ramo legacy usava e il port di
+                // LMRFine ha lasciato fuori (vedi il commento alla dichiarazione). Termine a
+                // se' stante: 0 = byte-identico. Stessa convenzione di indice del resto del
+                // blocco (td.ply e' gia' incrementato per il figlio).
+                if (g_lmrf_cont4 && td.ply >= 4) {
+                    int p4 = td.move_stack[td.ply - 4];
+                    if (p4) r -= (long long)td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)]
+                                                          [get_move_piece(move)][get_move_target(move)]
+                                 * g_lmrf_cont4 / 4096;
+                }
                 if (g_improving && !improving) r += g_lmrf_improv;
                 if (eval + g_lmr_eval_margin < alpha) r += g_lmrf_evalcut;
                 if (td.cutoff_cnt[td.ply] > 1) {
@@ -4957,7 +5021,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                 // Q-19b (Caissa): killer/counter ridotte sensibilmente meno (in millesimi,
                 // additivo all'intero `reduction--` di KillerLMRFix sotto). 0 = off.
                 if (g_lmrf_killer && is_killer) r -= g_lmrf_killer;
-                if (g_diverse_smp) r += (long long)td.lmr_bias * 1024;
+                if (g_diverse_smp) r += (long long)td.lmr_bias_units;   // = lmr_bias*1024 se DiverseSMPFine=0
                 reduction = (int)(r / 1024);
                 // protezioni intere mantenute (piccole)
                 if (g_killer_lmr_fix && is_killer) reduction--;
@@ -5104,7 +5168,7 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
                         int prev_cm = td.move_stack[td.ply];
                         int pcp = prev_cm ? get_move_piece(prev_cm) : 0;
                         int pct = prev_cm ? get_move_target(prev_cm) : 0;
-                        if (prev_cm)
+                        if (g_countermove && prev_cm)
                             td.counter_moves[pcp][pct] = move;
                         // F-018.10a FHBoostMargin (0=off): fail-high LARGO = segnale piu' forte
                         // -> bonus/malus calcolati a depth+1 (Obsidian +95, Berserk +75).
@@ -5430,10 +5494,19 @@ static void thread_search(int thread_id, int max_depth) {
     // LMR block only when g_diverse_smp is on (guarded there).
     if (thread_id == 0) {
         td.lmr_bias = 0;
+        td.lmr_bias_units = 0;
+    } else if (g_diverse_smp_fine > 0) {
+        // DiverseSMPFine: perturbazione FINE (millesimi di ply), wider-only come sopra.
+        // Stessa crescita per coppie di id, cap 8 (max ~0.75 ply con fine=96).
+        int mag = 1 + (thread_id - 1) / 2;
+        if (mag > 8) mag = 8;
+        td.lmr_bias = 0;                              // il path legacy (ply interi) resta spento
+        td.lmr_bias_units = -mag * g_diverse_smp_fine;
     } else {
         int mag = 1 + (thread_id - 1) / 2;
         if (mag > g_diverse_smp_amount) mag = g_diverse_smp_amount;
         td.lmr_bias = -mag;   // wider-only: helpers never search "deeper" -> no hijack
+        td.lmr_bias_units = td.lmr_bias * 1024;       // identico al vecchio lmr_bias*1024
     }
 
     for (int current_depth = start_depth; current_depth <= max_depth; current_depth++) {

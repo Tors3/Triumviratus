@@ -516,6 +516,9 @@ void uci_loop()
             printf("option name MovePicker type check default true\n");
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
             printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
+            printf("option name DiverseSMPFine type spin default 96 min 0 max 512\n");  // BAKATO: +4.91 Elo LOS 88.6% @16+0.16 Threads=8, 1700g. 0=legacy a ply interi
+            printf("option name MulticutTTMalus type check default false\n");           // port SF a47a1c1804: malus alla ttMove smascherata dal multicut
+            printf("option name MulticutTTMalusScale type spin default 100 min 0 max 300\n");
             printf("option name MultiCut type check default true\n");
             printf("option name TTPvAmount type spin default 1 min 0 max 2\n");   // ex-PV LMR reduction in ply (0=off); co-tunable
             printf("option name NMPEvalScale type check default false\n");
@@ -597,6 +600,7 @@ void uci_loop()
             printf("option name EasyCapGate type check default false\n");                     // #11 niente NMP con pezzo in presa facile
             printf("option name RFPHistThresh type spin default 64 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
             printf("option name KillerReset type check default false\n");                     // #13 azzera killer del ply figlio a ogni nodo
+            printf("option name CounterMove type check default true\n");                      // OFF = via la countermove heuristic (SF l'ha rimossa: PR #5441, 978k partite)
             printf("option name QSMoveCap type spin default 1 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
             printf("option name EPKeyFix type check default false\n");                        // F-017 niente phantom-ep nella hash key (bug-fix a toggle)
@@ -700,6 +704,7 @@ void uci_loop()
             printf("option name LMRFImprov type spin default 489 min 0 max 3000\n");
             printf("option name LMRFEvalCut type spin default 979 min 0 max 3000\n");
             printf("option name LMRFCutoff type spin default 1520 min 0 max 4000\n");
+            printf("option name LMRFCont4 type spin default 0 min 0 max 2000\n");        // conthist 4-ply nella LMR fine: segnale ORFANO perso nel port di LMRFine (0=off, byte-identico)
             printf("option name LMRExpect type spin default 0 min 0 max 2000\n");    // bonus riduzione ad ALL-node con cutoffCnt alto (0=off)
             // ⭐ 5.1 EVAL optimism (SF), default OFF = byte-identico
             printf("option name EvalOptimism type spin default 1 min 0 max 1\n");

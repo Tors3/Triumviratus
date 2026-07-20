@@ -78,6 +78,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 2 | TMv2 time management (gated ≥ 15 s) | 2026-07-13 | 20+0.2 | 380 | **+23.8 ± 18.2** | 99.5% |
 | 3 | v2 network + search re-tune + large-pages NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
 | 4 | Unconditional check extension removed ² | 2026-07-19 | 30+0.3 | 1654 | **+8.0 ± 8.1** | 97.3% |
+| 5 | Fine-grained SMP tree diversification ³ | 2026-07-20 | 16+0.16 | 1700 | **+4.91 ± 7.97** | 88.6% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
@@ -91,6 +92,18 @@ opening book used for gating — the tree shrinks by a more modest 11.5 % at dep
 are worse than either extreme: extending only below some depth leaves inconsistent depths across the
 tree and breaks transposition matches, so at a cap of 4 the tree nearly doubles. The choice is binary.
 The old behaviour is still reachable with `CheckExtDepth=30`.</sub>
+
+<sub>³ Each helper thread biases its own LMR reduction to diversify the tree it searches (standard
+Lazy-SMP practice). The old implementation only moved the bias in whole plies, and its smallest
+step was already 2–4× larger than the values that other engines settle on — there was no way to
+land near their optimum. This reworks the bias into the same 1/1024-ply units used elsewhere in the
+reduction code and bakes the granularity those engines converge to. Measured at 8 threads, 16+0.16,
+256 MB hash, since the effect is invisible below 2 threads and this time control is the fastest one
+where TMv2 stays active. The LLR never closed (988 games is nowhere near enough to resolve an
+8-thread SPRT on a single machine), but the lean was never negative across the run, and this
+n-thread regime cannot practically be closed with the hardware on hand — a bake made on that lean,
+not on a concluded bound. Thread count 1 is untouched (bias only applies to helper threads, id > 0),
+so the single-thread bench signature stays exactly **261932**.</sub>
 
 <sub>**A short-time-control mirage, recorded because the lesson cost a day.** A fourth row briefly
 lived here: halving the singular-extension margin on exact-bound transposition entries, measured at
