@@ -34,7 +34,7 @@
 | Rank | Version | Rating |
 |---|---|---|
 | #29 | Triumviratus 5.0 64-bit (4 CPU) | 3603 |
-| — | Triumviratus 5.0 64-bit (1 CPU) | 3570 |
+| #47 | Triumviratus 5.0 64-bit (1 CPU) | 3570 |
 
 <sub>5.1 and 6.0 are not yet CCRL-rated; this section will be updated when they are.</sub>
 
