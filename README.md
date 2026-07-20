@@ -146,17 +146,21 @@ own feature set, its own SPRT-confirmed gains, and its historical match results 
 [`HISTORY.md`](HISTORY.md) alongside 5.0 and 4.2; source is in [`source/`](source/) and build
 instructions are in [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md).
 
-#### 6.0 vs 5.1 — version-bump gate (2026-07-17)
+#### 6.0 vs 5.1 — version-bump gate (2026-07-16)
 
 > [!NOTE]
 > Release binary vs release binary (AVX-512), each loading **its own** network (6.0 → `rubicon-alea-v3`,
 > 5.1 → `rubicon-alea-v1`), 1 thread, 64 MB, UHO 2024 book.
 
-| Time control | Games | Score (6.0) | Elo (6.0) | LOS | SPRT |
-|---|---|---|---|---|---|
-| 20+0.2 | 1166 | 54.8% | **+33.18 ± 9.86** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
+| Date | Time control | Games | Score (6.0) | Elo (6.0) | LOS | SPRT |
+|---|---|---|---|---|---|---|
+| 2026-07-16 | 20+0.2 | 1166 | 54.8% | **+33.18 ± 9.86** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
+| 2026-07-20 | 16+0.16 | 518 (ongoing) | 57.1% | **+49.29 ± 15.33** | 100.00% | — |
 
 <sub>6.0: W 301 · L 190 · D 675. Pentanomial [0–2]: [3, 81, 306, 188, 5].</sub>
+
+<sub>The 16+0.16 row is a separate, still-running confirmation match on the current development
+build (post-`DiverseSMPFine`), stable around +48/+49 Elo since the start of the run.</sub>
 
 <sub>**Measured before the capture-futility scale fix** (see [Corrections](#corrections)). That fix
 measured **indistinguishable from zero** on its own — `−0.99 ± 8.88` over 1406 games at 20+0.2 — so
