@@ -21,9 +21,22 @@
 
 <div align="center">
 
-[6.0 (prerelease)](#triumviratus-60-prerelease) · [Triumviratus 5.1](#triumviratus-51) · [Results](#results) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [6.0 (prerelease)](#triumviratus-60-prerelease) · [Results](#results) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
+
+---
+
+## Rating
+
+**CCRL 40/15** (40 moves in 15 minutes + increment), list of 2026-07-16:
+
+| Rank | Version | Rating |
+|---|---|---|
+| #29 | Triumviratus 5.0 64-bit (4 CPU) | 3603 |
+| — | Triumviratus 5.0 64-bit (1 CPU) | 3570 |
+
+<sub>5.1 and 6.0 are not yet CCRL-rated; this section will be updated when they are.</sub>
 
 ---
 
@@ -33,7 +46,8 @@
 > **Prerelease available.** Version-bump gate against 5.1 **passed**: **+33.18 ± 9.86 Elo** at 20+0.2
 > (LOS 100%, SPRT `[0,5]` passed, 1166 games) — see [Results](#results).
 
-Three changes over 5.1:
+Three main architectural changes over 5.1 — plus a longer tail of smaller incremental
+refinements, tracked in the table below:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
   feature set with two input blocks of our own: **pawn-pair features** (4560 — phalanxes, chains,
@@ -83,49 +97,23 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
 
-<sub>² The search used to extend by one ply on **every** check, at any depth — a technique Stockfish
-dropped years ago and no longer has in any form (only singular extensions remain). Removing it cuts
-the benchmark tree by 55.8 % (bench 592074 → 261932). That figure flatters it, though: most of the
-saving comes from one pathological promotion endgame in the suite, where check chains multiply and
-our node count fell from 9.1 M to 1.1 M. On the positions the engine actually meets in games — the
-opening book used for gating — the tree shrinks by a more modest 11.5 % at depth 18. Partial settings
-are worse than either extreme: extending only below some depth leaves inconsistent depths across the
-tree and breaks transposition matches, so at a cap of 4 the tree nearly doubles. The choice is binary.
-The old behaviour is still reachable with `CheckExtDepth=30`.</sub>
+<sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
+so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
+against rows 1–2. Superseded by the final v2/v3 networks above and by the version-bump gate below.</sub>
 
-<sub>³ Each helper thread biases its own LMR reduction to diversify the tree it searches (standard
-Lazy-SMP practice). The old implementation only moved the bias in whole plies, and its smallest
-step was already 2–4× larger than the values that other engines settle on — there was no way to
-land near their optimum. This reworks the bias into the same 1/1024-ply units used elsewhere in the
-reduction code and bakes the granularity those engines converge to. Measured at 8 threads, 16+0.16,
-256 MB hash, since the effect is invisible below 2 threads and this time control is the fastest one
-where TMv2 stays active. The LLR never closed (988 games is nowhere near enough to resolve an
-8-thread SPRT on a single machine), but the lean was never negative across the run, and this
-n-thread regime cannot practically be closed with the hardware on hand — a bake made on that lean,
-not on a concluded bound. Thread count 1 is untouched (bias only applies to helper threads, id > 0),
-so the single-thread bench signature stays exactly **261932**.</sub>
+<sub>² The search used to extend by one ply on every check, at any depth — a technique Stockfish
+dropped years ago (only singular extensions remain). Removing it cuts the benchmark tree 55.8%
+(592074 → 261932), though most of that comes from one pathological endgame position; on the opening
+book used for gating, the tree shrinks a more modest 11.5% at depth 18. Partial settings (e.g. a
+depth cap of 4) are worse than either extreme, so the choice is binary — the old behaviour is still
+reachable via `CheckExtDepth=30`.</sub>
 
-<sub>**A short-time-control mirage, recorded because the lesson cost a day.** A fourth row briefly
-lived here: halving the singular-extension margin on exact-bound transposition entries, measured at
-**+8.6 ± 7.6 Elo over 2304 games at 10+0.1**. At the release time control the same patch measured
-**−8.6 ± 10.5 at 20+0.2**. The two results were not in conflict — they were the same patch on either
-side of a crossover. Benching at several depths showed the tree shrinking by 7.4 % at depth 13 and
-11.1 % at depth 17, then **growing by 42.7 % at depth 20**. The margin is `depth`-proportional, so
-halving it subtracts more the deeper the search goes; worse, the double- and triple-extension
-thresholds are measured *from* that margin, so raising it made those cascade too. Neither anchoring
-the double/triple thresholds to the full margin nor capping the halving above depth 18 (which
-restored the tree to baseline exactly) recovered the Elo. The patch is reverted; the bench signature
-is back to **592074**. The takeaway now applies to every extension or reduction patch: bench at
-multiple depths before baking, because a single depth is blind to a crossover.</sub>
-
-<sub>¹ Row 3 is a **cumulative development snapshot** measured against the state after rows 1–2 (mega
-co-tune + TMv2 on the graft-time, v1-identical network). It bundles four changes at once: the
-mid-training **`nn-rubicon-alea-v2`** network (checkpoint ep439 of ~800, so this *understates* the final
-net), an SPSA re-tune of the search on the new network, and the **large-pages / NPS** engine changes. (The
-**DoDeeper** LMR re-search extension was enabled here too but is TC-dependent — +12.95 at 15+0.15,
-neutral +0.9 at this 20+0.2 — so it contributes little to this row and is not baked.) It predates the
-final v2 network and the v3 network above; the definitive version-bump gate of the 6.0 prerelease
-against 5.1 at 20+0.2 is running.</sub>
+<sub>³ Each helper thread biases its own LMR reduction to diversify the tree it searches. The old
+bias only moved in whole plies — a step 2–4× coarser than what other engines converge to; this
+reworks it into fine-grained units. Measured at 8 threads (the effect is invisible below 2); the
+lean stayed positive throughout even though the LLR never closed — an 8-thread SPRT can't
+realistically resolve on a single machine, so this is baked on trend rather than a closed bound.
+Thread count 1 is untouched: bench stays exactly **261932**.</sub>
 
 #### Corrections
 
@@ -151,30 +139,12 @@ published binaries; they are recorded because the first changes what *earlier* p
   correctness fix — a per-victim scale error is not defensible whatever the scoreboard says — and it
   lets those margins be re-tuned in a coherent space.</sub>
 
-## Triumviratus 5.1
-
-Current release. Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13, threats-trained from
-scratch). Adds a recalibrated eval scale, two-level TT, hindsight extensions, faster SEE/AVX-512
-accumulators, and re-tuned time management. Two SPRT-confirmed gains (see [Results](#results)): a
-**second-audit patch** (**+26 Elo**: threat-indexed quiet history, refined TT-cutoff, aspiration/fail-high
-tweaks, an SPSA-tuned singular/extension vector) and an **NPS-optimization patch** (**+26 to +42 Elo** by
-time control): a lazy NNUE-mirror apply — the board mirror + threat computation is deferred until an eval
-actually needs it, not paid on every legal move — plus a `-mtune=native` PGO build.
-
-| | |
-|---|---|
-| **Evaluation** | NNUE, SFNNv13 — own-lineage `nn-rubicon-alea-v1`, loaded at runtime via `EvalFile` (not embedded) |
-| **Search** | PVS · LMR (incl. captures) / NMP / futility / razoring / SEE pruning · singular & multi-cut extensions · ProbCut · correction & continuation history · threat-aware ordering |
-| **Time management** | Re-tuned soft/hard budget, score-drop and node-based extensions |
-| **Parallel** | Lazy SMP (`Threads`) |
-| **Endgames** | Syzygy via Fathom (`SyzygyPath`) |
-
-Source in [`source/`](source/). Build: see [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md) (Linux `make`,
-MSVC `Triumviratus_5.0.vcxproj`, or clang-PGO).
-
-<sub>Earlier releases (**5.0**, **4.2**) and their match results: [`HISTORY.md`](HISTORY.md).</sub>
-
 ## Results
+
+Results below are **6.0** vs **5.1** (the current stable release) and **6.0** vs other engines. 5.1's
+own feature set, its own SPRT-confirmed gains, and its historical match results are archived in
+[`HISTORY.md`](HISTORY.md) alongside 5.0 and 4.2; source is in [`source/`](source/) and build
+instructions are in [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md).
 
 #### 6.0 vs 5.1 — version-bump gate (2026-07-17)
 
@@ -215,31 +185,8 @@ out: the direct gate moved from **+14.6** (before the network work) to **+33.2**
 | 2026-07-18 | 45+0.45 | 1000 | 56.0% | **+41.89 ± 11.08** | 100.00% |
 
 <sub>6.0: W 285 · L 165 · D 550. Pentanomial [0–2]: [3, 68, 241, 182, 6]. Where 5.1 was essentially
-even with Pawnocchio 1.9.1 (below), 6.0 clears it by a confirmed margin — consistent with the
-+33 gate over 5.1.</sub>
-
-Earlier, **5.1** vs Pawnocchio 1.9.1 (znver5 build), AVX512, 1 thread, 64 MB hash, no score-based
-adjudication, UHO 2024 book:
-
-| Date | Time control | Opening | Games | Score (v5.1) | Elo (v5.1) | LOS |
-|---|---|---|---|---|---|---|
-| 2026-07-08 | 60+0.6 | UHO_2024_8mvs_big_+080_+099.epd | 2000 | 50.4% | **+2.61 ± 7.48** | 75.26% |
-| 2026-07-08 | 20+0.2 | UHO_2024_8mvs_big_+080_+099.epd | 800 | 51.4% | **+9.56 ± 12.89** | 92.71% |
-| 2026-07-06 | 10+0.15 | UHO_2024_8mvs_big_+095_+114.epd | 612 | 51.1% | **+7.95 ± 12.35** | 85.78% |
-
-<sub>At long TC (60+0.6, 2000 games) Triumviratus 5.1 and Pawnocchio 1.9.1 were essentially even —
-the small edge (LOS 75%) within noise. 6.0 turns that into a clear +42.</sub>
-
-#### vs. external engines (2026-07-05)
-`v5.1` (1 thread), no score-based adjudication, UHO 2024 book.
-
-| Date | Opponent | Time control | Hash | Games | Score (v5.1) | Elo (v5.1) | LOS |
-|---|---|---|---|---|---|---|---|
-| 2026-07-05 | Pawnocchio 1.9.1 | 20+0.2 | 512 MB | 558 | 48.9% | **-7.5 ± 14.8** | 15.9% |
-| 2026-07-05 | Berserk 14 | 25+0.25 | 1024 MB | 322 | 46.3% | **-25.9 ± 18.1** | 0.24% |
-
-<sub>Balanced-book matches draw far more than the unbalanced UHO set — compare sign/LOS across rows, not
-the raw Elo number. Older gates (5.1 vs 5.0, 5.0 vs 4.2): [`HISTORY.md`](HISTORY.md).</sub>
+even with Pawnocchio 1.9.1, 6.0 clears it by a confirmed margin — consistent with the +33 gate over
+5.1. 5.1's own results against Pawnocchio and other external engines: [`HISTORY.md`](HISTORY.md).</sub>
 
 ## License
 
