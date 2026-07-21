@@ -623,7 +623,7 @@ int  g_tmv2_game_base_ms = -1;     // base-time catturata (-1 = non ancora vista
 // Giustificati su CORRETTEZZA (lettura + matetrack spot-check + non-regressione), NON su
 // Elo: sono fix di edge-case che scattano rarissimamente, effetto Elo atteso ~0 e sotto la
 // soglia di risoluzione dei nostri SPRT (vedi FOURTH_PASS_IMPL_LOG §"pattern negativo").
-// Bench di riferimento post-bake: 428140 (era 433521; solo S-11 tocca l'albero del bench).
+// Bench di riferimento: 271715 (2026-07-21, solo S-11 tocca l'albero del bench).
 // Q-29 (Reckless fec9098): a root, non sovrascrivere un matto gia' provato da una
 // iterazione completata con uno score piu' debole (TT collision / potatura).
 static bool g_root_mate_restore = true;
