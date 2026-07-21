@@ -603,7 +603,7 @@ void uci_loop()
             printf("option name CounterMove type check default true\n");                      // OFF = via la countermove heuristic (SF l'ha rimossa: PR #5441, 978k partite)
             printf("option name QSMoveCap type spin default 1 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
-            printf("option name EPKeyFix type check default false\n");                        // F-017 niente phantom-ep nella hash key (bug-fix a toggle)
+            printf("option name EPKeyFix type check default true\n");                         // F-017 niente phantom-ep nella hash key (fix correttezza, SPRT +4.31 Elo)
             printf("option name HistReductionDiv type spin default 3190 min 500 max 8000\n"); // bakato: 3500->1041
             printf("option name AspInitDelta type spin default 19 min 8 max 60\n");       // bakato: 25->31
             printf("option name AspGrow type spin default 34 min 30 max 200\n");          // bakato: 100->31

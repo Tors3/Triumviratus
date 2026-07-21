@@ -173,7 +173,7 @@ int make_move(int move, int move_flag)
 
         if (double_push)
         {
-            // F-017 EPKeyFix (default OFF, toggle in threads.cpp): ep nel board/key SOLO se
+            // F-017 EPKeyFix (default ON, toggle in threads.cpp): ep nel board/key SOLO se
             // un pedone nemico puo' catturarlo — DEVE restare identico al make del thread
             // (threads.cpp td_make_move) o le chiavi root-history/search divergono.
             extern bool g_ep_key_fix;

@@ -1118,9 +1118,9 @@ static bool g_countermove = true;
 int  g_qs_move_cap           = 1;      // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
 // ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
 static bool g_qs_draw_check  = false;  // F-015: draw-detection (ripetizione/50 mosse) in qsearch. Bake 2026-07-07 REVERTITO: -10.73 Elo era singolo draw + winner's curse; pacchetto cumulativo pulito = NULLO. OFF, re-ispezione a TC lungo
-bool g_ep_key_fix            = false;  // F-017: ep nella hash key SOLO se la cattura ep e' pseudo-legale (anche movegen.cpp)
-                                        // ⚠️ nps_ab_test.py 80pos/depth13: nodi +16%, NPS -7.5% (INATTESO, non e' un
-                                        // regalo NPS) — NON hardenare, resta OFF, da capire prima di ritentare.
+bool g_ep_key_fix            = true;   // F-017: ep nella hash key SOLO se la cattura ep e' pseudo-legale (anche movegen.cpp)
+                                        // SPRT 16+0.16 1t 128MB UHO_4060_v4: +4.31 ±4.37 Elo, LOS 97.35%, 6282g
+                                        // fix di correttezza → default ON (2026-07-21).
 // CutoffStats (diagnostica move-ordering, default OFF = byte-identico): se ON, conta sui
 // beta-cutoff il first-move-cutoff rate (fh_first/fh_nodes) + indice medio della mossa al
 // cutoff, e li stampa come "info string FMC ..." a fine ricerca. Il gap vs SF e' l'ordering
@@ -2012,7 +2012,7 @@ static inline int td_make_move(ThreadData& td, int move, UndoInfo& undo) {
 
     if (double_push) {
         int ep_sq = (td.side == white) ? target + 8 : target - 8;
-        // F-017 EPKeyFix (default OFF): ep nel board/key SOLO se un pedone nemico puo'
+        // F-017 EPKeyFix (default ON): ep nel board/key SOLO se un pedone nemico puo'
         // catturarlo (pseudo-legale, come SF). Niente "phantom ep" -> le trasposizioni
         // a2a3+a3a4 vs a2a4 hanno la stessa chiave = piu' TT-hit. Nessun effetto sul
         // movegen: senza capturer la casella ep era comunque inusabile.
