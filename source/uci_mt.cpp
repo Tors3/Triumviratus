@@ -599,7 +599,7 @@ void uci_loop()
             printf("option name MalusPct type spin default 69 min 10 max 300\n");            // #10c malus = bonus*pct/100
             printf("option name EasyCapGate type check default false\n");                     // #11 niente NMP con pezzo in presa facile
             printf("option name RFPHistThresh type spin default 64 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
-            printf("option name KillerReset type check default true\n");                     // #13 azzera killer del ply figlio a ogni nodo
+            printf("option name KillerReset type check default true\n");                     // #13 azzera killer del ply figlio a ogni nodo (+12.15 Elo)
             printf("option name CounterMove type check default true\n");                      // OFF = via la countermove heuristic (SF l'ha rimossa: PR #5441, 978k partite)
             printf("option name QSMoveCap type spin default 1 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
