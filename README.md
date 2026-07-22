@@ -93,6 +93,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 3 | v2 network + search re-tune + large-pages NPS ¹ | 2026-07-16 | 20+0.2 | 394 | **+38.1 ± 17.1** | 100% |
 | 4 | Unconditional check extension removed ² | 2026-07-19 | 30+0.3 | 1654 | **+8.0 ± 8.1** | 97.3% |
 | 5 | Fine-grained SMP tree diversification ³ | 2026-07-20 | 16+0.16 | 1700 | **+4.91 ± 7.97** | 88.6% |
+| 6 | Continuation History (CorrHistCont + MathFix) ⁴ | 2026-07-22 | 16+0.16 | 2862 | **+13.97 ± 6.43** | 100% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
@@ -114,6 +115,11 @@ reworks it into fine-grained units. Measured at 8 threads (the effect is invisib
 lean stayed positive throughout even though the LLR never closed — an 8-thread SPRT can't
 realistically resolve on a single machine, so this is baked on trend rather than a closed bound.
 Thread count 1 is untouched: bench stays exactly **261932**.</sub>
+
+<sub>⁴ The continuation history table tracks the path-dependent static evaluation error based on the last two moves.
+To make it work, the underlying math was completely replaced (from a buggy EMA that caused chronic under-correction
+to a Stockfish-style pure gravity update), the table's weight was lowered to 100, and a 2x learning rate
+multiplier was injected to combat its extreme sparsity.</sub>
 
 #### Corrections
 

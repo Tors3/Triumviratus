@@ -282,9 +282,10 @@ void set_corr_multi(bool v) { g_corr_multi = v; }
 // adds the SF continuation-correction term — keyed by the last two moves INTO the
 // node (path-dependent static-eval correction) — to the corr sum. Its contribution is
 // co-tunable via CorrContWeight (lets a co-tune balance cont vs pawn/minor/major).
-static bool g_corr_cont = false;
+// BAKED ON (2026-07-22): SPRT +13.97 Elo (MathFix + CorrHistCont + Turbo_x2)
+static bool g_corr_cont = true;
 void set_corr_cont(bool v) { g_corr_cont = v; }
-int g_corr_cont_weight = 270;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
+int g_corr_cont_weight = 100;   // /100 del contributo cont alla somma corr. Spin CorrContWeight.
 
 // Non-pawn correction history PER-LATO (port Pawnocchio/SF nonPawnCorrectionHistory,
 // 2026-07-03). Due tabelle extra, chiave = Zobrist dei NON-pedoni di UN SOLO colore
@@ -3822,7 +3823,9 @@ static inline void td_corr_update(ThreadData& td, int idx, int static_eval,
             // -> il clamp permetteva 32768, che castato a int16 INVERTE il segno della
             // correzione. Cappa lim al range int16 per QUESTA tabella (le altre sono int).
             int lim16 = lim < 32767 ? lim : 32767;
-            td_corr_bucket_update(cv, target, w, lim16);
+            // FIX 3: Sparsita' della Tabella.
+            int w_cont = w * 2;
+            td_corr_bucket_update(cv, target, w_cont, lim16);
             *cc = (int16_t)cv;
         }
     }
