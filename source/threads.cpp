@@ -1061,7 +1061,7 @@ int g_lowply_weight = 179;    // contributo ordering = g_lowply_weight * lowply 
 // prodotto uno swing di eval buono/cattivo. NUOVA feature aggiunta SOPRA il parco
 // mega-SPSA (gli altri ordering-weight restano tunati). Spin "StatEvalDiffMult":
 // 0 = OFF (byte-identico al 4.0), 14 = SF-esatto, >14 = piu' aggressivo di SF.
-int g_seo_mult = 8;  // [4.1 BAKE 14->6] (SEO neutro a ogni valore; 6 = valore del vettore confermato)
+int g_seo_mult = 14;  // [4.1 BAKE 14->6] (Ripristinato a 14 dopo fix SEO)
 // cutoffCnt (SF): contatore fail-high per-ply. In LMR riduce di piu' se il figlio ha
 // cuttato molto di recente. g_cutoffcnt_penalty: 0=off (default, byte-identico), 1=SF
 // (r+=1 se cutoff_cnt figlio > 3). Spin CutoffCntPenalty [0,3]. Co-tunabile.
@@ -4225,7 +4225,8 @@ int td_negamax(ThreadData& td, int alpha, int beta, int depth, bool is_cut_node,
         int prev_move = td.move_stack[td.ply];
         if (prev_move != 0 && td.captured_stack[td.ply] == -1
             && td.eval_stack[td.ply - 1] != EVAL_NONE) {
-            int bonus = -g_seo_mult * (td.eval_stack[td.ply - 1] + static_eval);
+            int unscaled_eval_sum = (td.eval_stack[td.ply - 1] + static_eval) * 100 / nn_get_eval_scale();
+            int bonus = -g_seo_mult * unscaled_eval_sum;
             if (bonus >  1455) bonus =  1455;          // clamp PRIMA del raddoppio (come SF)
             if (bonus < -1723) bonus = -1723;
             bonus = bonus > 0 ? 2 * bonus : bonus / 2;

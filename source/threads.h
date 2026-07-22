@@ -301,7 +301,12 @@ extern void set_evasion_gen(bool enabled);     // P2.3  generazione evasioni mas
 extern void set_thread_voting(bool enabled);   // P1.12 selezione SMP per voto pesato (default off)
 // ---- Toggle da co-tune (default OFF, si accendono nel mega-SPSA 4.0) ------------
 extern void set_qs_checks(bool enabled);       // P1.3 quiet check alla prima ply di qsearch
-extern void set_nmp_verif(bool enabled);       // P1.6 NMP verification + no doppia null (spin NMPVerifDepth)
+extern void set_nmp_verif(bool enabled);
+extern int g_nmp_verif_depth;
+extern bool g_nmp_improving;
+extern int g_nmp_improv_margin;
+extern int g_nmp_improv_verif;
+extern void set_nmp_improving(bool enabled);
 extern void set_lmp_improving(bool enabled);   // P1.7 LMP SF-style (spins LMPBase/LMPQuad), no cap d8
 extern void set_evalcache_undamp(bool enabled);// N1 eval-cache senza fifty in chiave (default ON)
 extern void set_probcut_tt(bool enabled);      // N2 probcut fail-high salvato in TT (default ON)
