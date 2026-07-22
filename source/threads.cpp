@@ -1106,7 +1106,7 @@ static bool g_hist_triv_guard = false; // #10b niente bonus al cutoff "gratis" (
 int  g_malus_pct             = 69;    // #10c malus = bonus * pct/100 (costanti malus separate dal bonus)
 static bool g_easycap_gate   = false;  // #11 niente NMP se abbiamo un pezzo in presa "facile" (Berserk)
 int  g_rfp_hist_thresh       = 64;      // #12 RFP solo se hash-move non-quiet o con history > soglia (0=off)
-static bool g_killer_reset   = false;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
+static bool g_killer_reset   = true;  // #13 azzera i killer del ply FIGLIO a ogni nodo (anti-stale)
 // ⭐ CounterMove (default ON = comportamento storico, byte-identico). Toggle di RIMOZIONE:
 // SF ha SEMPLIFICATO VIA la countermove heuristic (a45c2bc3, PR #5441, lug-2024) con un test
 // non-regressivo da **978.000 partite STC** + 81k LTC: da loro valeva ZERO. Il movepicker di SF

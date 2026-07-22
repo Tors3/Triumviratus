@@ -94,6 +94,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 4 | Unconditional check extension removed ² | 2026-07-19 | 30+0.3 | 1654 | **+8.0 ± 8.1** | 97.3% |
 | 5 | Fine-grained SMP tree diversification ³ | 2026-07-20 | 16+0.16 | 1700 | **+4.91 ± 7.97** | 88.6% |
 | 6 | Continuation History (CorrHistCont + MathFix) ⁴ | 2026-07-22 | 16+0.16 | 2862 | **+13.97 ± 6.43** | 100% |
+| 7 | KillerReset (anti-stale killer moves) ⁵ | 2026-07-22 | 16+0.16 | 3290 | **+12.15 ± 5.97** | 100% |
 
 <sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
 manager below 15 s.</sub>
@@ -108,6 +109,9 @@ dropped years ago (only singular extensions remain). Removing it cuts the benchm
 book used for gating, the tree shrinks a more modest 11.5% at depth 18. Partial settings (e.g. a
 depth cap of 4) are worse than either extreme, so the choice is binary — the old behaviour is still
 reachable via `CheckExtDepth=30`.</sub>
+
+<sub>⁵ Clears the Killer Moves for the child ply (`ply + 1`) at every node. Prevents stale killer
+moves inherited from sibling subtrees from polluting the search.</sub>
 
 <sub>³ Each helper thread biases its own LMR reduction to diversify the tree it searches. The old
 bias only moved in whole plies — a step 2–4× coarser than what other engines converge to; this
