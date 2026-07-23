@@ -35,6 +35,12 @@ void syzygy_free();
 // read) so callers can use it as the "enabled" check before counting pieces.
 unsigned syzygy_max_pieces();
 
+// UCI "Syzygy50MoveRule" (default false = respect the 50-move rule, engine
+// convention). When true, cursed-win/blessed-loss WDL results score as a real
+// win/loss instead of a draw (SF semantics: user is saying they don't care
+// about 50-move-rule draws for TB positions).
+void syzygy_set_ignore_50_move_rule(bool v);
+
 // In-search WDL probe for a ThreadData node. On a successful probe writes a
 // side-to-move-relative score (engine mate scale) into `score` and returns
 // true. The caller MUST have already ensured: ply > 0, td.castle == 0, and

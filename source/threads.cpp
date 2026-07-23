@@ -735,16 +735,18 @@ static bool g_tmv2_single_reply = true;
 static bool g_tmv2_mate_stop = true;
 int g_tmv2_mate_iters = 7;
 
-// ---- Gate per-TC del blocco TMv2 (2026-07-12)
-// ----------------------------------- Misure decisive: TMv2 = -22.94 Elo
-// @10+0.1 ma +23.81 @20+0.2 (segno opposto). Sotto soglia (o senza incremento)
-// l'intero blocco TMv2 RIPIEGA sul TM originale (instab/drop/NodeTM). La
-// base-time della PARTITA e' catturata al primo 'go' con orologio (reset su
-// ucinewgame): gate per-partita, NON sul tempo residuo (che flipperebbe a meta'
-// partita e divergerebbe dal regime di tuning 15+0.15).
-bool g_tmv2_tc_ok = true;       // ricalcolato ogni parse_go (in uci_mt.cpp)
-int g_tmv2_min_base_ms = 15000; // soglia base-time (UCI TMv2MinBaseMs)
-int g_tmv2_game_base_ms = -1;   // base-time catturata (-1 = non ancora vista)
+// ---- Gate per-TC del blocco TMv2 (2026-07-12, soglia base-time RIMOSSA 2026-07-24)
+// ----------------------------------- Misura originale: TMv2 = -22.94 Elo
+// @10+0.1 ma +23.81 @20+0.2 (segno opposto) -> nacque la soglia base-time
+// (TMv2MinBaseMs=15000, scelta a mano, mai misurata). Sweep 24/07 su VM
+// (screening 8s/12s/15s + conferma dedicata a piena concorrenza @8+0.08,
+// nElo +31.10 +/-18.37, LOS 99.95%, LLR 54.3% verso [0,5]): NESSUNA
+// regressione a nessun TC testato -> il vecchio cliff non si riproduce col
+// codice attuale (probabilmente reso obsoleto dai bake successivi:
+// ContHist/EPKeyFix/ecc.). Soglia base-time ELIMINATA; resta solo il gate
+// sull'incremento (mai testato separatamente, prudenza invariata: TMv2 usa
+// formule pool-increment che presuppongono un inc>0).
+bool g_tmv2_tc_ok = true; // ricalcolato ogni parse_go (in uci_mt.cpp)
 
 // ---- Quarto audit, correttezza §D — BAKATI default-ON 2026-07-10
 // ---------------- Giustificati su CORRETTEZZA (lettura + matetrack spot-check
@@ -1511,6 +1513,25 @@ bool g_ep_key_fix = true; // F-017: ep nella hash key SOLO se la cattura ep e'
                           // pseudo-legale (anche movegen.cpp) SPRT 16+0.16 1t
                           // 128MB UHO_4060_v4: +4.31 ±4.37 Elo, LOS 97.35%,
                           // 6282g fix di correttezza → default ON (2026-07-21).
+// QsStalemateCheck (SF d2d046c-style, default OFF, mai testato 2026-07-24):
+// qsearch genera SOLO catture (+ eventuali check) quando non e' sotto scacco,
+// quindi non puo' MAI accorgersi che una posizione e' stallo (zero mosse
+// legali, tranquille comprese) — la restituisce come un eval normale. Il buco
+// e' concreto nei finali K+P (trucchi di stallo comuni). Gated alla sola
+// transizione rara "questa cattura ha appena tolto l'ultima Torre/Donna dalla
+// scacchiera" (vedi td_has_any_legal_move): un probe di legalita' a
+// movegen-completo li' e' economico (il caso vero-stallo che deve scandire
+// TUTTA la lista e' proprio quello raro che vogliamo scovare).
+static bool g_qs_stalemate_check = false;
+// Syzygy{ProbeDepth,ProbeLimit,50MoveRule} (2026-07-24): 3 opzioni UCI
+// advertised (uci_mt.cpp) fin dalla release ma MAI wired — bug scoperto in
+// audit (FASE C hygiene, PIANO_MASTER §5): una GUI che le settasse non
+// avrebbe avuto alcun effetto. Default = comportamento storico ESATTO (depth
+// gate sempre soddisfatto perche' qui depth>=1 gia' garantito dal caller;
+// limit 7 = TB_LARGEST massimo di Syzygy, mai piu' stretto; 50MoveRule=true =
+// cursed/blessed restano 0 come sempre) -> nessuna regressione col default.
+int g_syzygy_probe_depth = 1;
+int g_syzygy_probe_limit = 7;
 // CutoffStats (diagnostica move-ordering, default OFF = byte-identico): se ON,
 // conta sui beta-cutoff il first-move-cutoff rate (fh_first/fh_nodes) + indice
 // medio della mossa al cutoff, e li stampa come "info string FMC ..." a fine
@@ -1769,6 +1790,22 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "GoodCapTTQuiet")) {
     g_goodcap_ttquiet = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "QsStalemateCheck")) {
+    g_qs_stalemate_check = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "SyzygyProbeDepth")) {
+    g_syzygy_probe_depth = value < 1 ? 1 : value;
+    return true;
+  }
+  if (!strcmp(name, "SyzygyProbeLimit")) {
+    g_syzygy_probe_limit = value < 0 ? 0 : (value > 7 ? 7 : value);
+    return true;
+  }
+  if (!strcmp(name, "Syzygy50MoveRule")) {
+    syzygy_set_ignore_50_move_rule(value == 0); // UCI true = rispetta (default) -> ignore=false
     return true;
   }
   if (!strcmp(name, "CorrUncert")) {
@@ -2390,10 +2427,6 @@ bool set_search_param(const char *name, int value) {
   // ---- TM v2 (quarto audit Q-01..Q-08) ----
   if (!strcmp(name, "TMv2")) {
     g_tmv2 = value != 0;
-    return true;
-  }
-  if (!strcmp(name, "TMv2MinBaseMs")) {
-    g_tmv2_min_base_ms = value < 0 ? 0 : value;
     return true;
   }
   if (!strcmp(name, "TMv2Stab0")) {
@@ -5126,6 +5159,29 @@ static inline int td_is_repetition(ThreadData &td) {
 // QUIESCENCE SEARCH
 // ============================================================================
 
+// QsStalemateCheck support: movegen COMPLETO (catture + quiete), si ferma
+// alla prima mossa legale trovata. Costo O(1) nel caso comune (un finale K+P
+// ha quasi sempre una mossa di pedone/re); la scansione dell'intera lista
+// avviene solo nel vero stallo, che e' esattamente il caso raro che questo
+// probe deve scovare. Chiamata SOLO dal trigger gated in td_quiescence.
+static bool td_has_any_legal_move(ThreadData &td) {
+  moves ml[1];
+  td_generate_moves(td, ml, false);
+  for (int i = 0; i < ml->count; i++) {
+    UndoInfo undo;
+    td.ply++;
+    td.repetition_table[++td.repetition_index] = td.hash_key;
+    bool legal = td_make_move(td, ml->moves[i], undo) != 0;
+    if (legal)
+      td_unmake_move(td, ml->moves[i], undo);
+    td.ply--;
+    td.repetition_index--;
+    if (legal)
+      return true;
+  }
+  return false;
+}
+
 // qs_depth: 0 alla prima ply di qsearch (chiamate dal negamax), decresce nelle
 // ricorsioni. Serve solo a P1.3 QSChecks (quiet check tenuti SOLO a qs_depth
 // 0).
@@ -5381,6 +5437,21 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
       }
     }
 
+    // QsStalemateCheck: la cattura toglie l'ultima Torre/Donna dalla
+    // scacchiera (materiale pre-mossa mascherato sulla casa target)? Calcolato
+    // PRIMA di muovere (serve il pezzo-vittima). Vedi definizione toggle sopra
+    // e td_has_any_legal_move.
+    bool cap_last_major = false;
+    if (g_qs_stalemate_check && get_move_capture(move)) {
+      int vic = td_captured_piece(td, get_move_target(move));
+      if (vic == R || vic == Q || vic == r || vic == q) {
+        U64 remaining_majors = (td.bitboards[R] | td.bitboards[Q] |
+                                 td.bitboards[r] | td.bitboards[q]) &
+                                ~(1ULL << get_move_target(move));
+        cap_last_major = (remaining_majors == 0);
+      }
+    }
+
     UndoInfo undo;
     td.ply++;
     td.repetition_table[++td.repetition_index] = td.hash_key;
@@ -5397,7 +5468,19 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     if (nq_caps < 8 && get_move_capture(move))
       q_searched_caps[nq_caps++] = move; // Q-17
 
-    int score = -td_quiescence(td, -beta, -alpha, qs_depth - 1);
+    int score;
+    if (cap_last_major) {
+      int child_king_sq =
+          get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+      bool child_in_check = td_is_square_attacked(td, child_king_sq, td.side ^ 1);
+      score = (!child_in_check && !td_has_any_legal_move(td))
+                  ? 0 // stallo: pareggio morto, ne' catture ne' scacchi ne'
+                      // mosse tranquille — qsearch normale non lo avrebbe MAI
+                      // visto (genera solo catture)
+                  : -td_quiescence(td, -beta, -alpha, qs_depth - 1);
+    } else {
+      score = -td_quiescence(td, -beta, -alpha, qs_depth - 1);
+    }
 
     td_unmake_move(td, move, undo);
     td.ply--;
@@ -6006,10 +6089,14 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // only when tablebases are loaded (syzygy_max_pieces() > 0).
   {
     unsigned tb_men = syzygy_max_pieces();
+    // SyzygyProbeLimit: clamp opzionale sotto TB_LARGEST (default 7 = no-op).
+    if (g_syzygy_probe_limit >= 0 && (unsigned)g_syzygy_probe_limit < tb_men)
+      tb_men = (unsigned)g_syzygy_probe_limit;
     // S-10 guard fifty==0 (2026-07-09): fathom (tbprobe.h:223) fallisce SEMPRE
     // con rule50!=0 ma pagavamo comunque il marshalling to_fathom -> no-op
     // comportamentale.
     if (tb_men && td.ply && !excluded_move && td.castle == 0 && td.fifty == 0 &&
+        depth >= g_syzygy_probe_depth &&
         (unsigned)count_bits(td.occupancies[both]) <= tb_men) {
       int tb_score;
       if (syzygy_probe_wdl(td, td.ply, tb_score)) {

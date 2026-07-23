@@ -69,6 +69,13 @@ unsigned syzygy_max_pieces()
     return g_tb_initialized ? TB_LARGEST : 0u;
 }
 
+static bool g_ignore_50_move_rule = false;
+
+void syzygy_set_ignore_50_move_rule(bool v)
+{
+    g_ignore_50_move_rule = v;
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -105,7 +112,12 @@ static inline int wdl_to_score(unsigned wdl, int ply)
     switch (wdl) {
         case TB_WIN:  return  TB_VALUE_WIN - ply;
         case TB_LOSS: return -(TB_VALUE_WIN - ply);
-        default:      return 0;   // TB_DRAW, TB_CURSED_WIN, TB_BLESSED_LOSS
+        case TB_CURSED_WIN:
+            // 50-move-rule draw by default; Syzygy50MoveRule=true -> real win.
+            return g_ignore_50_move_rule ? (TB_VALUE_WIN - ply) : 0;
+        case TB_BLESSED_LOSS:
+            return g_ignore_50_move_rule ? -(TB_VALUE_WIN - ply) : 0;
+        default:      return 0;   // TB_DRAW
     }
 }
 

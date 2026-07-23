@@ -227,13 +227,11 @@ void parse_go(char* command)
 
     starttime = get_time_ms();
 
-    // Gate per-TC del blocco TMv2: cattura la base-time della PARTITA al primo 'go'
-    // con orologio (reset su ucinewgame) e decide se usare TMv2 o il TM originale.
-    // Per-partita (non sul residuo): il regime di tuning era 15+0.15, gatare sul
-    // residuo lo farebbe divergere a meta' partita. Sotto soglia o senza inc -> TM v1.
-    if (time_uci > 0 && movetime == -1 && g_tmv2_game_base_ms < 0)
-        g_tmv2_game_base_ms = time_uci;
-    g_tmv2_tc_ok = (inc > 0) && (g_tmv2_game_base_ms >= g_tmv2_min_base_ms);
+    // Gate TMv2: soglia base-time ELIMINATA 2026-07-24 (sweep VM 8s/12s/15s, nessuna
+    // regressione a nessun TC -> il vecchio cliff -22.94 Elo @10+0.1 non si riproduce
+    // col codice attuale). Resta solo il gate sull'incremento (mai testato, prudenza
+    // invariata: TMv2 usa formule pool-increment che presuppongono inc>0).
+    g_tmv2_tc_ok = (inc > 0);
 
     if (time_uci != -1)
     {
@@ -721,6 +719,7 @@ void uci_loop()
             printf("option name SEELmrLinearCoef type spin default 368 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
             printf("option name TTPrefetch type check default true\n");        // Reckless #1085: prefetch bucket TT figlio in make (node-identical, +1.88% NPS confermato su VM N=100)
             printf("option name GoodCapTTQuiet type check default false\n");   // Reckless #1107: TT-move quiet -> catture "good" solo se SEE>=+1
+            printf("option name QsStalemateCheck type check default false\n"); // SF d2d046c-style: probe stallo a movegen-completo quando una cattura toglie l'ultima Torre/Donna (qsearch normale non vede mai lo stallo, genera solo catture)
             printf("option name CorrUncert type check default true\n");       // P1a: disaccordo tavole corr = incertezza eval -> RFP/futility piu' larghi
             printf("option name CorrUncertRFP type spin default 60 min 0 max 512\n");
             printf("option name CorrUncertFut type spin default 71 min 0 max 512\n");
@@ -796,7 +795,6 @@ void uci_loop()
             printf("option name TMv2SingleReply type check default true\n");                 // Q-08a (Caissa): unica legale a root -> stop alla prima iterazione completata
             printf("option name TMv2MateStop type check default true\n");                    // Q-08b (Caissa): N iterazioni consecutive di score-matto -> stop
             printf("option name TMv2MateIters type spin default 7 min 1 max 30\n");           // Q-08b: quante conferme del matto servono
-            printf("option name TMv2MinBaseMs type spin default 15000 min 0 max 600000\n");   // gate per-TC: base-time partita < questo (o inc==0) -> TM originale (TMv2 vale solo a TC medio-lungo)
 #endif
             // (SyzygyPath spostata in cima alla lista, subito dopo EvalFile — vedi sopra:
             //  evita il troncamento delle liste lunghe nelle GUI ChessBase/Fritz.)
@@ -945,7 +943,6 @@ void uci_loop()
             wait_for_search_done();
             parse_fen(start_position);
             clear_hash_table();
-            g_tmv2_game_base_ms = -1;   // nuova partita -> ricattura la base-time per il gate TMv2
             
             // FIX DEFINITIVO: Cancella il passato tra partite diverse
             for (int i = 0; i < num_threads; i++) {
