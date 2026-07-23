@@ -174,6 +174,7 @@ struct ThreadData {
     // [side][minor-piece key] and [side][major-piece key]. Same size as corr_hist.
     int corr_hist_minor[2][1 << 14];
     int corr_hist_major[2][1 << 14];
+    int corr_hist_material[2][1 << 14]; // SF #5556: keyed by material key (piece counts)
 
     // Non-pawn correction PER-LATO (CorrNonPawn, default OFF — port Pawnocchio/SF
     // nonPawnCorrectionHistory): [colore-della-chiave][side-to-move][bucket], chiave

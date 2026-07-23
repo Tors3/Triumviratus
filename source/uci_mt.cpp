@@ -492,6 +492,8 @@ void uci_loop()
             printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
+            printf("option name CorrMaterial type check default false\n");     // SF #5556: corrhist per MATERIAL-KEY (conteggi pezzi) -> eval finali/fortezze; mira al buco promozioni
+            printf("option name CorrMaterialWeight type spin default 100 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
@@ -527,7 +529,7 @@ void uci_loop()
             printf("option name QFutility type check default false\n");
             printf("option name HistBonusSF type check default true\n");   // BAKED ON: +24 LOS99.99% @810
             printf("option name CaptureHist type check default true\n");   // baked ON, div16+malus-fix (era -21 a div1)
-            printf("option name CaptureHistDiv type spin default 21 min 1 max 64\n");   // bakato SPSA 16->14
+            printf("option name CaptureHistDiv type spin default 21 min 1 max 64\n");   // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
             printf("option name NMPEvalDiv type spin default 100 min 50 max 1000\n");
             printf("option name QFutMargin type spin default 199 min 0 max 500\n");
             printf("option name HistBonusMult type spin default 490 min 1 max 600\n");   // [4.1 BAKE 282->326]
@@ -571,7 +573,7 @@ void uci_loop()
             printf("option name LMRCaptures type check default true\n");                     // F-004: LMR sulle catture (OFF=byte-identico)
             printf("option name SeeGE type check default true\n");                            // F-008: SEE a soglia early-exit, +1.81%% NPS node-identico (ON 2026-07-02)
             printf("option name SeeGEVerify type check default false\n");                     // F-008: oracle cross-check dei due path SEE (diagnostica)
-            printf("option name LMRCapScale type spin default 52 min 10 max 150\n");          // %% lmr_table sulle catture
+            printf("option name LMRCapScale type spin default 52 min 10 max 150\n");          // REVERT 2026-07-23 (SPSA B1 evaporato); %% lmr_table sulle catture
             // ==== F-018 (secondo audit 2026-07-03): micro-tecniche Obsidian/Berserk, default OFF/neutro ====
             printf("option name PostLMRHist type check default false\n");                     // conthist update post re-search LMR (SF mainline); test pulito neutro -> OFF, candidato tuning
             printf("option name PostLMRHistScale type spin default 106 min 0 max 400\n");
@@ -581,7 +583,7 @@ void uci_loop()
             printf("option name TTCutFifty type spin default 89 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
-            printf("option name GoodCapHistDiv type spin default 18 min 0 max 256\n");         // #4 split good/bad a soglia -(mvv+caphist)/div (0=off; candidato co-tune post-v2, Obsidian 32)
+            printf("option name GoodCapHistDiv type spin default 18 min 0 max 256\n");         // REVERT 2026-07-23 (SPSA B1 evaporato); #4 split good/bad a soglia -(mvv+caphist)/div
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore. Bake revertito 2026-07-07 (rumore)
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
@@ -629,14 +631,14 @@ void uci_loop()
             printf("option name LargePages type spin default 1 min 0 max 1\n");        // TT su large pages 2MB (come i pesi NNUE). 0=off (new[], baseline), 1=on. Richiede privilegio "Lock pages in memory"
             printf("option name EvalTTWrite type spin default 0 min 0 max 1\n");       // cache static eval su MISS (SF :830). PROVATO 1-via=albero x1.87 (roundtrip eval). Re-test con two-level. 0=off, 1=on
             printf("option name HistPruneMargin type spin default 2097 min 200 max 4000\n");   // [3.7]
-            printf("option name SEECaptureMargin type spin default 81 min 20 max 300\n");
+            printf("option name SEECaptureMargin type spin default 81 min 20 max 300\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
             printf("option name SEEQuietMargin type spin default 116 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
             // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
             printf("option name CaptureFutility type spin default 1 min 0 max 1\n");
-            printf("option name CapFutBase type spin default 155 min 0 max 500\n");
-            printf("option name CapFutMult type spin default 140 min 0 max 400\n");
-            printf("option name CapFutChist type spin default 205 min 0 max 400\n");   // [F-002 audit 2026-07-02] 125->123
-            printf("option name CapFutDepth type spin default 8 min 1 max 12\n");
+            printf("option name CapFutBase type spin default 155 min 0 max 500\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
+            printf("option name CapFutMult type spin default 140 min 0 max 400\n");    // REVERT 2026-07-23 (SPSA B1 evaporato)
+            printf("option name CapFutChist type spin default 205 min 0 max 400\n");   // REVERT 2026-07-23 (SPSA B1 evaporato); [F-002 audit 2026-07-02] 125->123
+            printf("option name CapFutDepth type spin default 8 min 1 max 12\n");    // REVERT 2026-07-23 (SPSA B1 evaporato)
             // Ponte cp->unita'-eval del termine vittima, /10000 insieme a EvalScale (v. threads.cpp).
             // 392 = NORM_CP -> fattore 2.35 a EvalScale=60. ~167 riproduce il vecchio 1x (il bug).
             printf("option name CapFutVicScale type spin default 392 min 0 max 1000\n");
@@ -682,7 +684,7 @@ void uci_loop()
             printf("option name HindsightRedThresh type spin default 113 min 0 max 600\n");
             printf("option name DoShallowerMargin type spin default 7 min 0 max 200\n");
             printf("option name BadNoisy type spin default 1 min 0 max 1\n");        // 5.0-B: qsearch move-count pruning catture tardive
-            printf("option name BadNoisyCount type spin default 7 min 1 max 32\n");
+            printf("option name BadNoisyCount type spin default 7 min 1 max 32\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
             printf("option name LMREnrich type spin default 1 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
             printf("option name LMREnrichAmount type spin default 2 min 0 max 4\n");
             printf("option name RazorQuadCoef type spin default 92 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
@@ -727,6 +729,10 @@ void uci_loop()
             printf("option name TroubleScore type spin default 150 min 0 max 1000\n");
             printf("option name TroubleEffort type spin default 60 min 1 max 200\n");
             printf("option name TroubleMargin type spin default 40 min 0 max 400\n");
+            printf("option name BrilliantSac type check default false\n");         // REVERT 2026-07-23 (SPSA B1 evaporato @4452g); v1: estende catture SEE<0 con caphist alta
+            printf("option name BrilliantSacMargin type spin default 5000 min 0 max 7000\n");  // REVERT 2026-07-23 (SPSA B1 evaporato); caphist soglia; max = HISTORY_MAX
+            printf("option name BrilliantSacLMR type check default false\n");       // REVERT 2026-07-23 (SPSA B1 evaporato); B: reduce-less LMR sullo stesso sac
+            printf("option name BrilliantSacLMRAmt type spin default 2 min 0 max 4\n");         // plies di riduzione risparmiati
             printf("option name TMMovesToGo type spin default 27 min 12 max 60\n");        // time mgmt: quota base = remaining/questo; BAKE 2026-07-03 TM post-F-003 24->27
             printf("option name TMIncFrac type spin default 94 min 0 max 100\n");           // % incremento; BAKE 2026-07-03 TM post-F-003: invariato
             printf("option name TMMaxMult type spin default 614 min 150 max 800\n");        // burst maximum = optimum*questo/100; BAKE 2026-07-03 TM post-F-003 592->614
@@ -884,6 +890,7 @@ void uci_loop()
                     memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
                     memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                     memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+                    memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
                     apply_history_priors(thread_data[i]);   // Q-26: il bench azzera a mano -> riapplica il prior
                 }
                 reset_time_control();
@@ -959,6 +966,7 @@ void uci_loop()
                 memset(thread_data[i].corr_hist, 0, sizeof(thread_data[i].corr_hist));
                 memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                 memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
+                memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
                 // Q-11 NodeCache: le entry sopravvivono cross-MOVE (voluto) ma non
                 // cross-PARTITA. La chiave piena renderebbe innocuo un residuo, ma i
                 // conteggi di un'altra partita sono comunque rumore per l'ordering.
