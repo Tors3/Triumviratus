@@ -61,10 +61,11 @@ refinements, tracked in the table below:
 - **SPSA mega co-tune** of the search parameters, co-tuned as a block and baked into the compiled
   defaults.
 - **TMv2 time management** — a multiplicative-stateless time manager (stability, eval-trend, node and
-  predicted-move factors), SPSA-tuned. It is **time-control gated**: measured **+23.8 Elo at 20+0.2** but
-  **−22.9 at 10+0.1**, so it activates only when the game's base time ≥ 15 s and there's an increment
-  (`TMv2MinBaseMs`); below that it falls back to the original time manager. Captures the long-TC gain
-  without the short-TC regression.
+  predicted-move factors), SPSA-tuned. Measured **+23.8 Elo at 20+0.2**. It shipped **time-control
+  gated** — a 2026-07-13 measurement found −22.9 Elo at 10+0.1, so it fell back to the original time
+  manager below a 15 s base-time threshold (`TMv2MinBaseMs`). A 2026-07-24 re-measurement (see
+  [Corrections](#corrections)) found that cliff no longer reproduces at any tested TC, and the gate
+  was removed: TMv2 now runs unconditionally whenever the game has an increment.
 
 #### Network gains (net-isolated)
 
@@ -96,9 +97,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 6 | EPKeyFix (En Passant hash correction) | 2026-07-21 | 16+0.16 | - | **~ +4.5** | lean |
 | 7 | Continuation History (CorrHistCont + MathFix) ⁴ | 2026-07-22 | 16+0.16 | 2862 | **+13.97 ± 6.43** | 100% |
 | 8 | KillerReset (anti-stale killer moves) ⁵ | 2026-07-22 | 16+0.16 | 3290 | **+12.15 ± 5.97** | 100% |
-
-<sub>TMv2 is TC-gated: the −22.9 Elo it costs at 10+0.1 is why it falls back to the original time
-manager below 15 s.</sub>
+| 9 | Correction-history + move-ordering bundle ⁶ | 2026-07-24 | 10+0.1 | 4130 | **+10.43 ± 5.57** | 99.99% |
 
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
@@ -126,10 +125,19 @@ To make it work, the underlying math was completely replaced (from a buggy EMA t
 to a Stockfish-style pure gravity update), the table's weight was lowered to 100, and a 2x learning rate
 multiplier was injected to combat its extreme sparsity.</sub>
 
+<sub>⁶ Three features — a material-key correction-history table (endgame/fortress eval bias), a
+softer good/bad capture-ordering threshold, and a quiescence-search stalemate probe (qsearch only
+generates captures, so it could never detect stalemate; this catches the specific case where a
+capture removes the board's last rook or queen) — each tested alone landed **below the
+measurement floor** (flat-to-small leans, none individually conclusive). Bundled into one SPRT they
+passed cleanly: LLR reached the upper bound at 4130 games. A same-settings confirmation at 20+0.2
+is running; the first 582 games are positive and consistent (+3.58 ± 15.44, not yet conclusive).</sub>
+
 #### Corrections
 
-Two bugs found while preparing the prerelease. Both are fixed in the current source and in the
-published binaries; they are recorded because the first changes what *earlier* prerelease builds were.
+Bugs and stale design decisions found during and after prerelease prep. All are fixed in the
+current source and in the published binaries; they are recorded because the first one changes what
+*earlier* prerelease builds were, and the others are the kind of thing worth being honest about.
 
 - **The Windows binaries embedded the wrong network.** The single source of truth for the default
   net name was updated in the code but not in the Windows resource file, so the embedded blob was
@@ -149,6 +157,20 @@ published binaries; they are recorded because the first changes what *earlier* p
   most of the error, which is the likeliest reason correcting it changes so little. It ships as a
   correctness fix — a per-victim scale error is not defensible whatever the scoreboard says — and it
   lets those margins be re-tuned in a coherent space.</sub>
+- **Three Syzygy UCI options were advertised but never wired to a handler.** `SyzygyProbeDepth`,
+  `SyzygyProbeLimit`, and `Syzygy50MoveRule` showed up in `uci` output and could be set from any
+  GUI, but nothing read the values back — a silent no-op for anyone who tuned them expecting an
+  effect. Wired into the in-search WDL probe gate and the score conversion; defaults reproduce the
+  exact prior behavior (bench unchanged).
+- **The TMv2 time-control gate (`TMv2MinBaseMs`) no longer reflects reality and was removed.** It
+  shipped because a 2026-07-13 measurement found TMv2 lost −22.9 Elo at 10+0.1 despite winning
+  +23.8 at 20+0.2 — a genuine sign flip at the time. A 2026-07-24 sweep (8+0.08 / 12+0.12 / 15+0.15,
+  then a dedicated full-concurrency confirmation at 8+0.08: `+31.10 ± 18.37` nElo, LOS 99.95%) found
+  **no regression at any tested time control** — the short-TC cliff does not reproduce on current
+  code, most likely superseded by later search changes (continuation history, the En Passant hash
+  fix) that shifted the same time budget. TMv2 now runs unconditionally whenever the game has an
+  increment; the 15000ms threshold and its supporting state were deleted rather than left at zero,
+  since a dead UCI option is its own bug (see the Syzygy item above).</sub>
 
 ## Results
 
