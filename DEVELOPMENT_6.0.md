@@ -50,10 +50,12 @@ Three main architectural changes over 5.1 — plus a longer tail of smaller incr
 refinements, tracked in the table below:
 
 - **New network architecture — `TRANN1` (Triumviratus Rubicon Alea NNUE 1).** Extends the SFNNv13
-  feature set with two input blocks of our own: **pawn-pair features** (4560 — phalanxes, chains,
-  doubled/isolated pawns: pawn-structure geometry the threat features alone don't capture) and
-  **passed-pawn features** (96 — one per passed pawn: a relational property `HalfKAv2_hm` cannot
-  express directly). Both are grafted with zero-initialised columns onto the previous net —
+  feature set with two extra input blocks: **pawn-pair features** (4560 — phalanxes, chains,
+  doubled/isolated pawns: pawn-structure geometry the threat features alone don't capture; a
+  pairwise pawn-square co-occurrence feature **shared with Stormphrax, Viridithas and Pawnocchio** —
+  not our idea, credited in [Credits](#credits)) and **passed-pawn features** (96 — one per passed
+  pawn: a relational property `HalfKAv2_hm` cannot express directly; **an original feature of this
+  project**). Both are grafted with zero-initialised columns onto the previous net —
   bit-identical at graft time — then fine-tuned; both fold into the existing threat accumulator, so
   no new SIMD path is added. Shipped in **`nn-rubicon-alea-v3`**, whose net format is consequently
   **not** SFNNv13 (the reader still loads v2-format nets, zero-filling the passed-pawn segment, so a
@@ -254,7 +256,7 @@ even with Pawnocchio 1.9.1, 6.0 clears it by a confirmed margin — consistent w
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
 
 > [!IMPORTANT]
-> **GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13 evaluation machinery in `nnue/`, GPLv3); the search, the rest of the engine, the two extra feature blocks (`PawnPair`, `PassedPawns`) and the shipped network are the project's own (see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates that GPL code, **the whole project is distributed under GPLv3**, with Stockfish's copyright notices preserved.
+> **GPLv3** — see [`COPYING`](COPYING). Only the **NNUE inference code** is derived from **Stockfish** (the SFNNv13 evaluation machinery in `nnue/`, GPLv3); the search and the rest of the engine are the project's own. Of the two extra NNUE input blocks: **`PassedPawns` is an original feature of this project**, whereas **`PawnPair` implements a pawn-pair input feature shared across several open-source engines** (Stormphrax, Viridithas, Pawnocchio — see [Credits](#credits)); its C++ implementation and trained weights are the project's own, but the feature *design* is not. The shipped network was trained by the project (see [`NETWORKS.md`](NETWORKS.md)). Because the engine incorporates Stockfish's GPL code, **the whole project is distributed under GPLv3**, with Stockfish's copyright notices preserved.
 
 ## Credits
 
@@ -282,8 +284,10 @@ engines. Credit and thanks to all of them:
 - **[Reckless](https://github.com/codedeliveryservice/Reckless)** — quiet move-ordering (offense-square and king-shield-pawn terms), TT prefetch, capture-ordering ideas.
 - **[Caissa](https://github.com/Witek902/Caissa)** — node-count move cache, quiescence capture history, moves-left time curve.
 - **[Alexandria](https://github.com/PGG106/Alexandria)** — the multiplicative, stateless time-management factors.
-- **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)** — inspiration for the *PawnPair* network features.
-- **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**, **[Ethereal](https://github.com/AndyGrant/Ethereal)** and **[Stormphrax](https://github.com/Ciekce/Stormphrax)** — assorted search, pruning and ordering refinements.
+- **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, **[Viridithas](https://github.com/cosmobobak/viridithas)** — the **`PawnPair` NNUE input feature** (see below).
+- **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**, **[Ethereal](https://github.com/AndyGrant/Ethereal)** and **[Stormphrax](https://github.com/Ciekce/Stormphrax)** — assorted search, pruning and ordering refinements (Stormphrax also originated the `PawnPair` feature design).
+
+**NNUE input features — attribution.** The **`PawnPair`** block (a pairwise pawn-square co-occurrence feature, `96·95/2 = 4560` inputs) is **not an original idea of this project**: it is a design shared by **Stormphrax**, **Viridithas** and **Pawnocchio**. Our C++ implementation (`nnue/features/pawn_pair.*`) and the trained network weights are our own, but the feature itself belongs to those engines and is credited to them explicitly. The **`PassedPawns`** block (one input per passed pawn, 96 slots) is, by contrast, **an original feature of this project** — designed, implemented and trained here, and not drawn from another engine.
 
 The open-source computer-chess community is what makes a project like this possible.
 
