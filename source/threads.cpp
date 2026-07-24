@@ -520,6 +520,14 @@ void set_razor_depth4(bool v) { g_razor_depth4 = v; }
 static bool g_qfutility = false;
 void set_qfutility(bool v) { g_qfutility = v; }
 int g_qfut_margin = 199;
+// QFutVicScale (2026-07-24): ponte cp->eval-net del termine-vittima, /10000
+// INSIEME a EvalScale — gemello di g_capfut_vic_scale. Sostituisce il vecchio
+// magic-number "* 3" hardcoded (tarato a EvalScale=56, mai ri-seguito): 500 a
+// EvalScale=60 = 500*60/10000 = ESATTAMENTE 3.0 (byte-identico oggi) ma
+// auto-ricalibrante ai bake futuri della rete. Deliberatamente > del capfut
+// (2.35): qfut sovrastima per potare MENO le catture grosse (errore sicuro).
+// Spin co-tunabile: entra nel co-tune B1-catture insieme a CapFutVicScale.
+int g_qfut_vic_scale = 500;
 
 // (5) HistBonusSF: bonus history lineare-clampato min(mult*d - sub, max) invece
 //     di depth*depth. Cambia solo la MAGNITUDINE di bonus/malus della history.
@@ -2021,6 +2029,10 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "CapFutVicScale")) {
     g_capfut_vic_scale = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "QFutVicScale")) {
+    g_qfut_vic_scale = value < 0 ? 0 : value;
     return true;
   }
   if (!strcmp(name, "OppWorsening")) {
@@ -5550,10 +5562,14 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
         //     FIX SCALA (2026-06-24): best_score/alpha sono eval-NET (~3x la
         //     scala-100; pedone marginale misurato ~190-500cp via `eval`),
         //     mentre see_piece_values e' scala-100 -> il termine vittima va
-        //     scalato x3, altrimenti la qsearch sovra-pota (era -126 Elo). x3
-        //     SOVRASTIMA i pezzi grossi (l'eval-net satura) = errore nella
-        //     direzione SICURA (pota MENO le catture grosse). QFutMargin
-        //     (eval-scale) tara il residuo.
+        //     scalato, altrimenti la qsearch sovra-pota (era -126 Elo). La
+        //     sovrastima (fattore ~3 > del capfut 2.35) e' voluta: pota MENO le
+        //     catture grosse = errore nella direzione SICURA (l'eval-net satura).
+        //     QFutMargin tara il residuo.
+        //     FIX DRIFT (2026-07-24): il fattore era hardcoded "* 3" (tarato a
+        //     EvalScale=56, mai ri-seguito) -> ora g_qfut_vic_scale *
+        //     nn_get_eval_scale() / 10000, come il gemello capfut: byte-identico
+        //     oggi (500*60/10000=3.0) ma auto-ricalibrante ai bake della rete.
         if (g_qfutility && !get_move_promoted(move) &&
             !get_move_enpassant(move)) {
           int vic = td_captured_piece(td, get_move_target(move));
@@ -5563,7 +5579,10 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
           int prev_mv = td.move_stack[td.ply];
           int prev_sq = prev_mv ? get_move_target(prev_mv) : -1;
           if (vic >= 0 && vic < 12 && get_move_target(move) != prev_sq) {
-            int fv = best_score + see_piece_values[vic] * 3 + g_qfut_margin;
+            int fv = best_score +
+                     (int)((long long)see_piece_values[vic] * g_qfut_vic_scale *
+                           nn_get_eval_scale() / 10000) +
+                     g_qfut_margin;
             if (fv <= alpha) {
               if (fv > best_score)
                 best_score = fv; // SF fail-soft: bestValue = max(bestValue, fv)

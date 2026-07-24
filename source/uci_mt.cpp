@@ -643,6 +643,7 @@ void uci_loop()
             // Ponte cp->unita'-eval del termine vittima, /10000 insieme a EvalScale (v. threads.cpp).
             // 392 = NORM_CP -> fattore 2.35 a EvalScale=60. ~167 riproduce il vecchio 1x (il bug).
             printf("option name CapFutVicScale type spin default 392 min 0 max 1000\n");
+            printf("option name QFutVicScale type spin default 500 min 0 max 2000\n");   // ponte cp->eval qfut (500*EvalScale/10000; =x3.0 a EvalScale=60, byte-identico al vecchio hardcoded x3)
             // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
             printf("option name OppWorsening type spin default 1 min 0 max 1\n");
             printf("option name OppWorseMargin type spin default 23 min 0 max 100\n");
