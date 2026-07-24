@@ -213,6 +213,16 @@ struct ThreadData {
     U64 check_key   = 0;
     U64 check_sq[6] = { 0, 0, 0, 0, 0, 0 };   // index by piece type 0=P 1=N 2=B 3=R 4=Q 5=K
 
+    // Offense-ordering cache (QuietOffense, default OFF; port Reckless movepick
+    // score_quiet). offense_sq[pt] = SAFE squares from which a piece of type pt would
+    // attack a vulnerable enemy piece (pawn->any, knight->safe-bishop/rook/queen,
+    // bishop->rook, rook->enemy-king-file, queen->orth-bishop/diag-rook). wall_pawns =
+    // our own king-shield pawns (moving one is penalized). Keyed by hash_key; untouched
+    // when the toggle is off.
+    U64 offense_key   = 0;
+    U64 offense_sq[6] = { 0, 0, 0, 0, 0, 0 };  // index by piece type 0=P 1=N 2=B 3=R 4=Q 5=K
+    U64 wall_pawns    = 0;
+
     // Low-ply history (#5, LowPlyHistory, default OFF): [ply][piece][target], used only
     // in the first LOW_PLY_MAX plies for quiet ordering near the root. Cleared per-search
     // when the toggle is on (ply-indexed => transient, must NOT persist across moves).

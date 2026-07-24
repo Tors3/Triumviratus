@@ -490,7 +490,7 @@ void uci_loop()
             printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
-            printf("option name CorrMaterial type check default false\n");     // SF #5556: corrhist per MATERIAL-KEY (conteggi pezzi) -> eval finali/fortezze; mira al buco promozioni
+            printf("option name CorrMaterial type check default true\n");      // BAKED 2026-07-24 (bundle lean SPRT +10.43); SF #5556 corrhist per MATERIAL-KEY -> eval finali/fortezze
             printf("option name CorrMaterialWeight type spin default 100 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
@@ -500,6 +500,9 @@ void uci_loop()
             printf("option name ThreatHistWeight type spin default 130 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75->60, ultimo step LOS82.13% @296g + SPSA concorde]
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
+            printf("option name QuietOffense type check default false\n");   // port Reckless: bonus quiet che entra in casa-offense + malus mossa pedone-scudo re
+            printf("option name OffenseBonus type spin default 4300 min 0 max 30000\n");     // magnitudine bonus offense-square (SPSA; 0 = isola il wall-pawn)
+            printf("option name WallPawnPenalty type spin default 5600 min 0 max 30000\n");  // magnitudine malus mossa pedone-scudo re (SPSA; 0 = isola l'offense)
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
             printf("option name ContHist36Weight type spin default 37 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
             printf("option name PriorBonus type check default true\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)
@@ -581,7 +584,7 @@ void uci_loop()
             printf("option name TTCutFifty type spin default 89 min 50 max 100\n");
             printf("option name TTCutMalus type check default false\n");                     // #3d malus quiet avversaria su TT-cut (duale TTCutBonus). Bake revertito 2026-07-06, vedi threads.cpp
             printf("option name TTCutMalusSeen type spin default 3 min 0 max 16\n");
-            printf("option name GoodCapHistDiv type spin default 18 min 0 max 256\n");         // REVERT 2026-07-23 (SPSA B1 evaporato); #4 split good/bad a soglia -(mvv+caphist)/div
+            printf("option name GoodCapHistDiv type spin default 32 min 0 max 256\n");         // BAKED 2026-07-24 (bundle lean SPRT +10.43; era 18); #4 split good/bad a soglia -(mvv+caphist)/div
             printf("option name AspAvg type check default false\n");                          // #5a aspiration centrata su averageScore. Bake revertito 2026-07-07 (rumore)
             printf("option name AspFHRed type check default true\n");                         // [BAKE 2026-07-03] depth-1 per fail-high consecutivi alla root
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
@@ -719,7 +722,7 @@ void uci_loop()
             printf("option name SEELmrLinearCoef type spin default 368 min 1 max 1200\n");  // coefficiente della forma lineare; alto=pota meno (albero piu' grande)
             printf("option name TTPrefetch type check default true\n");        // Reckless #1085: prefetch bucket TT figlio in make (node-identical, +1.88% NPS confermato su VM N=100)
             printf("option name GoodCapTTQuiet type check default false\n");   // Reckless #1107: TT-move quiet -> catture "good" solo se SEE>=+1
-            printf("option name QsStalemateCheck type check default false\n"); // SF d2d046c-style: probe stallo a movegen-completo quando una cattura toglie l'ultima Torre/Donna (qsearch normale non vede mai lo stallo, genera solo catture)
+            printf("option name QsStalemateCheck type check default true\n");  // BAKED 2026-07-24 (bundle lean SPRT +10.43); SF d2d046c-style: probe stallo a movegen-completo quando una cattura toglie l'ultima Torre/Donna
             printf("option name CorrUncert type check default true\n");       // P1a: disaccordo tavole corr = incertezza eval -> RFP/futility piu' larghi
             printf("option name CorrUncertRFP type spin default 60 min 0 max 512\n");
             printf("option name CorrUncertFut type spin default 71 min 0 max 512\n");

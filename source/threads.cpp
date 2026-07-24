@@ -344,7 +344,7 @@ int g_corr_np_weight = 100; // /100 sul contributo delle due tabelle non-pawn
 // pawn/minor/major/nonpawn (che sono keyed per POSIZIONE): l'errore di eval nei
 // finali/fortezze e' caratteristico del MATERIALE. SF: +Elo STC e LTC (bench
 // 1460966). Mira dritto al nostro buco promozioni-endgame (38x nodi vs SF).
-static bool g_corr_material = false;
+static bool g_corr_material = true; // BAKED 2026-07-24 (bundle lean SPRT +10.43 Elo)
 int g_corr_material_weight = 100; // /100 sul contributo della tabella material
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di
@@ -1361,6 +1361,19 @@ static bool g_check_ordering = true; // BAKED FULL 2026-06-07
 void set_check_ordering(bool v) { g_check_ordering = v; }
 int g_check_bonus = 13357; // bonus ordering per quiet che da scacco diretto
                            // (SF=16384). Spin CheckBonus (SPSA).
+// ---- Offense-ordering (port Reckless movepick score_quiet, 2026-07-24) -------
+// Reckless ordina i quiet premiando le mosse che portano un pezzo su una casa
+// SICURA da cui ATTACCA un pezzo nemico vulnerabile (offense[pt]), e penalizzando
+// lo spostamento di un pedone-scudo del proprio re (wall_pawns). ThreatOrdering
+// (escape/entra-in-minaccia) e CheckOrdering (scacco diretto) li abbiamo GIA';
+// questi due termini sono l'unica parte NUOVA del loro rework. Le case-offense
+// sono calcolate 1x/nodo (cache offense_key). Default OFF = byte-identico. Le due
+// magnitudini sono spin SPSA separate: OffenseBonus=0 isola il wall-pawn e
+// viceversa. Costanti iniziali riportate sulla NOSTRA scala history dal rapporto
+// col nostro g_check_bonus (Reckless: offense 3446 / check 10723; wall 4494).
+static bool g_quiet_offense = false;
+int g_offense_bonus = 4300;    // bonus per quiet che entra in una casa-offense
+int g_wallpawn_penalty = 5600; // malus per mossa di un pedone-scudo del re
 // ---- ContHist 3/6-ply (#4 SF, 2026-06-07) -----------------------------------
 // SF somma la continuation-history a 1/2/3/4/6 ply; noi avevamo 1/2/4. #4
 // aggiunge 3-ply (move_stack[ply-2]) e 6-ply (move_stack[ply-5]) all'ordering
@@ -1440,7 +1453,7 @@ int g_ttcut_malus_seen = 3; //    solo se il padre aveva visto <= N mosse
 // l'albero (bench 377398→487874) e COMPRIME il segnale dei gate-rete durante
 // il training v2 (serie epoca-vs-epoca non piu' comparabile). Resta candidato
 // del MEGA CO-TUNE post-v2 (li' i margini si ri-coordinano attorno allo split).
-int g_goodcap_hist_div = 18; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
+int g_goodcap_hist_div = 32; // BAKED 2026-07-24 (bundle lean SPRT +10.43 Elo; era 18)
 static bool g_asp_avg =
     false; // #5a aspiration centrata sulla MEDIA degli score. Bake 2026-07-07
            // REVERTITO: -9.04 Elo era singolo draw + winner's curse; pacchetto
@@ -1522,7 +1535,7 @@ bool g_ep_key_fix = true; // F-017: ep nella hash key SOLO se la cattura ep e'
 // scacchiera" (vedi td_has_any_legal_move): un probe di legalita' a
 // movegen-completo li' e' economico (il caso vero-stallo che deve scandire
 // TUTTA la lista e' proprio quello raro che vogliamo scovare).
-static bool g_qs_stalemate_check = false;
+static bool g_qs_stalemate_check = true; // BAKED 2026-07-24 (bundle lean SPRT +10.43 Elo)
 // Syzygy{ProbeDepth,ProbeLimit,50MoveRule} (2026-07-24): 3 opzioni UCI
 // advertised (uci_mt.cpp) fin dalla release ma MAI wired — bug scoperto in
 // audit (FASE C hygiene, PIANO_MASTER §5): una GUI che le settasse non
@@ -2613,6 +2626,18 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "CheckBonus")) {
     g_check_bonus = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "QuietOffense")) {
+    g_quiet_offense = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "OffenseBonus")) {
+    g_offense_bonus = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "WallPawnPenalty")) {
+    g_wallpawn_penalty = value < 0 ? 0 : value;
     return true;
   }
   if (!strcmp(name, "ContHist36Weight")) {
@@ -4312,6 +4337,98 @@ static inline void td_compute_checks(ThreadData &td) {
   td.check_key = td.hash_key;
 }
 
+// Offense-ordering helper (QuietOffense, port Reckless movepick score_quiet).
+// Fills td.offense_sq[pt] = SAFE squares (not attacked by any enemy piece) from
+// which a piece of type pt would attack a VULNERABLE enemy piece, and
+// td.wall_pawns = our king-shield pawns. Computed once per node (caller checks
+// td.offense_key == td.hash_key). Only reached when the toggle is on. Uses OUR
+// attack tables per-piece (coordinate-safe), NOT Reckless' setwise fills.
+// ⚠️ Le locali sono off_* e MAI p/n/b/r/q: quelli sono gli ENUM dei pezzi neri
+// (6..11) e una locale che li ombreggia trasforma td.bitboards[p] in una read
+// OOB selvaggia (stessa trappola documentata in syzygy.cpp::to_fathom; costato
+// un crash 0xC0000005 posizione-dipendente il 2026-07-24).
+static inline void td_compute_offense(ThreadData &td) {
+  if (td.threat_key != td.hash_key)
+    td_compute_threats(td); // need threat_all / threat_by_pawn
+  const int side = td.side;
+  const int them = side ^ 1;
+  const int bt = them * 6;    // enemy pieces P..K at bt..bt+5
+  const int bu = side * 6;    // our pieces
+  const U64 occ = td.occupancies[both];
+  const U64 threats = td.threat_all;
+  const U64 safe = ~threats;
+
+  const U64 eB = td.bitboards[bt + B];
+  const U64 eR = td.bitboards[bt + R];
+  const U64 eQ = td.bitboards[bt + Q];
+  U64 bb;
+
+  // non_pawn_threats = enemy knight|bishop|rook|queen|king attacks (per la lever)
+  U64 nonpawn = 0;
+  bb = td.bitboards[bt + N];
+  while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); nonpawn |= knight_attacks[s]; }
+  bb = eB;
+  while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); nonpawn |= get_bishop_attacks(s, occ); }
+  bb = eR;
+  while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); nonpawn |= get_rook_attacks(s, occ); }
+  bb = eQ;
+  while (bb) { int s = get_ls1b_index(bb); pop_bit(bb, s); nonpawn |= get_queen_attacks(s, occ); }
+  nonpawn |= king_attacks[get_ls1b_index(td.bitboards[bt + K])];
+
+  // --- pawn offense: case sicure da cui un nostro pedone attacca un pezzo nemico
+  //     + attacchi di pedone avanzato (lever ranks, difesi solo da pedone) ---
+  U64 off_p = 0;
+  bb = td.occupancies[them];
+  while (bb) { int e = get_ls1b_index(bb); pop_bit(bb, e); off_p |= pawn_attacks[them][e]; }
+  off_p &= safe;
+  // lever ranks in coord a8=0: bianco = rank 5-6 (sq 16..31), nero = rank 3-4 (sq 32..47)
+  const U64 lever = (side == white) ? 0x00000000FFFF0000ULL : 0x0000FFFF00000000ULL;
+  off_p |= td.threat_by_pawn & lever & ~nonpawn;
+
+  // --- knight offense: attacca alfiere-sicuro / torre / donna nemici ---
+  U64 knight_vuln = (eB & safe) | eR | eQ;
+  U64 off_n = 0;
+  bb = knight_vuln;
+  while (bb) { int e = get_ls1b_index(bb); pop_bit(bb, e); off_n |= knight_attacks[e]; }
+  off_n &= safe;
+
+  // --- bishop offense: attacca una torre nemica ---
+  U64 off_b = 0;
+  bb = eR;
+  while (bb) { int e = get_ls1b_index(bb); pop_bit(bb, e); off_b |= get_bishop_attacks(e, occ); }
+  off_b &= safe;
+
+  // --- rook offense: colonna del re nemico (case sicure) ---
+  int ek = get_ls1b_index(td.bitboards[bt + K]);
+  U64 off_r = (0x0101010101010101ULL << (ek & 7)) & safe;
+
+  // --- queen offense: attacca ortogonalmente un alfiere / diagonalmente una torre ---
+  U64 off_q = 0;
+  bb = eB & safe;
+  while (bb) { int e = get_ls1b_index(bb); pop_bit(bb, e); off_q |= get_rook_attacks(e, occ); }
+  bb = eR & safe;
+  while (bb) { int e = get_ls1b_index(bb); pop_bit(bb, e); off_q |= get_bishop_attacks(e, occ); }
+  off_q &= safe;
+
+  td.offense_sq[0] = off_p;
+  td.offense_sq[1] = off_n;
+  td.offense_sq[2] = off_b;
+  td.offense_sq[3] = off_r;
+  td.offense_sq[4] = off_q;
+  td.offense_sq[5] = 0;
+
+  // wall pawns: se il re e' sulla propria traversa di casa, i pedoni adiacenti
+  // sono lo scudo -> penalizza spostarli. home row: bianco rank1 (sq 56..63),
+  // nero rank8 (sq 0..7).
+  int myk = get_ls1b_index(td.bitboards[bu + K]);
+  const U64 home = (side == white) ? 0xFF00000000000000ULL : 0x00000000000000FFULL;
+  td.wall_pawns = get_bit(home, myk)
+                      ? (king_attacks[myk] & (td.bitboards[P] | td.bitboards[p]))
+                      : 0;
+
+  td.offense_key = td.hash_key;
+}
+
 // ---- Q-11 NodeCache (port Caissa NodeCache.cpp) -----------------------------
 // Rimpiazzo age-based: una entry di una search PRECEDENTE (gen != corrente)
 // puo' essere rubata; una della STESSA search no (Caissa: "allocation failed"
@@ -4553,6 +4670,18 @@ static inline int td_score_move(ThreadData &td, int move, int tt_move) {
     if (get_bit(td.check_sq[piece % 6], target) &&
         td_see_at_least(td, move, -75))
       h += g_check_bonus;
+  }
+  // Offense-ordering (QuietOffense, default OFF -> byte-identico; port Reckless):
+  // +bonus se la quiet porta il pezzo su una casa-offense (attacca sicuro un
+  // pezzo nemico vulnerabile), -malus se muove un pedone-scudo del re. offense_sq
+  // e wall_pawns calcolate 1x/nodo (cache offense_key).
+  if (g_quiet_offense) {
+    if (td.offense_key != td.hash_key)
+      td_compute_offense(td);
+    if (get_bit(td.offense_sq[piece % 6], target))
+      h += g_offense_bonus;
+    if (get_bit(td.wall_pawns, get_move_source(move)))
+      h -= g_wallpawn_penalty;
   }
   // Low-ply history (#5, default OFF -> byte-identico): segnale per-ply
   // near-root, peso che decade con la profondita' (1+2*ply), come SF.
