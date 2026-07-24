@@ -1367,13 +1367,23 @@ int g_check_bonus = 13357; // bonus ordering per quiet che da scacco diretto
 // lo spostamento di un pedone-scudo del proprio re (wall_pawns). ThreatOrdering
 // (escape/entra-in-minaccia) e CheckOrdering (scacco diretto) li abbiamo GIA';
 // questi due termini sono l'unica parte NUOVA del loro rework. Le case-offense
-// sono calcolate 1x/nodo (cache offense_key). Default OFF = byte-identico. Le due
-// magnitudini sono spin SPSA separate: OffenseBonus=0 isola il wall-pawn e
-// viceversa. Costanti iniziali riportate sulla NOSTRA scala history dal rapporto
-// col nostro g_check_bonus (Reckless: offense 3446 / check 10723; wall 4494).
-static bool g_quiet_offense = false;
-int g_offense_bonus = 4300;    // bonus per quiet che entra in una casa-offense
-int g_wallpawn_penalty = 5600; // malus per mossa di un pedone-scudo del re
+// sono calcolate 1x/nodo (cache offense_key). Le due magnitudini sono spin SPSA
+// separate (isolabili: l'uno a 0 isola l'altro). Costanti iniziali riportate sulla
+// NOSTRA scala history dal rapporto col nostro g_check_bonus (Reckless: offense
+// 3446 / check 10723; wall 4494) — poi RI-MISURATE separatamente:
+// - OffenseBonus: isolato a 4300 = NEGATIVO e stabile (-9.70 +/- 10.41 Elo,
+//   LOS 3.38% @1290g, 12+0.12) -> spento (0) in attesa di un peso "molto grosso"
+//   da ri-testare con WallPawnPenalty gia' attivo (prossimo esperimento).
+// - WallPawnPenalty: la magnitudine conta. 1x(5600)=+3.24 nElo LOS85% @12778g
+//   (mai chiuso, ma affidabile); 2x(11200)=identico (+3.25 @1426g, non sensibile
+//   in questo range); 3x(16800)=**+8.43 +/- 6.93 nElo, LOS 99.14%, LLR 80.5%
+//   verso [0,5] @9652g (12+0.12)** — segnale nettamente piu' forte. BAKATO
+//   2026-07-24 sul trend (LOS>99%, mai chiuso ma non evapora, l'opposto del
+//   pattern B1) in attesa di chiusura SPRT formale e di un mega co-tune finale
+//   di 6.0 per la magnitudine esatta.
+static bool g_quiet_offense = true; // BAKED 2026-07-24 (solo wall-pawn; offense-squares spento)
+int g_offense_bonus = 0;       // spento: isolato NEGATIVO, vedi nota sopra
+int g_wallpawn_penalty = 16800; // BAKED 2026-07-24 (3x, vedi nota sopra); era 5600
 // ---- ContHist 3/6-ply (#4 SF, 2026-06-07) -----------------------------------
 // SF somma la continuation-history a 1/2/3/4/6 ply; noi avevamo 1/2/4. #4
 // aggiunge 3-ply (move_stack[ply-2]) e 6-ply (move_stack[ply-5]) all'ordering

@@ -500,9 +500,9 @@ void uci_loop()
             printf("option name ThreatHistWeight type spin default 130 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75->60, ultimo step LOS82.13% @296g + SPSA concorde]
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
-            printf("option name QuietOffense type check default false\n");   // port Reckless: bonus quiet che entra in casa-offense + malus mossa pedone-scudo re
-            printf("option name OffenseBonus type spin default 4300 min 0 max 30000\n");     // magnitudine bonus offense-square (SPSA; 0 = isola il wall-pawn)
-            printf("option name WallPawnPenalty type spin default 5600 min 0 max 30000\n");  // magnitudine malus mossa pedone-scudo re (SPSA; 0 = isola l'offense)
+            printf("option name QuietOffense type check default true\n");    // BAKED 2026-07-24 (solo wall-pawn, vedi WallPawnPenalty); port Reckless move-ordering
+            printf("option name OffenseBonus type spin default 0 min 0 max 40000\n");        // spento: isolato NEGATIVO (-9.70 LOS 3.38% @1290g) -> in attesa di ri-test a peso grosso
+            printf("option name WallPawnPenalty type spin default 16800 min 0 max 40000\n"); // BAKED 2026-07-24 (3x: +8.43 nElo LOS 99.14% @9652g, 12+0.12); era 5600
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
             printf("option name ContHist36Weight type spin default 37 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
             printf("option name PriorBonus type check default true\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)

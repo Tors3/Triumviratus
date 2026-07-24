@@ -98,6 +98,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 7 | Continuation History (CorrHistCont + MathFix) ⁴ | 2026-07-22 | 16+0.16 | 2862 | **+13.97 ± 6.43** | 100% |
 | 8 | KillerReset (anti-stale killer moves) ⁵ | 2026-07-22 | 16+0.16 | 3290 | **+12.15 ± 5.97** | 100% |
 | 9 | Correction-history + move-ordering bundle ⁶ | 2026-07-24 | 10+0.1 | 4130 | **+10.43 ± 5.57** | 99.99% |
+| 10 | King-shield-pawn ordering malus ⁷ | 2026-07-24 | 12+0.12 | 10k+ | **+3.53 ± 3.42** | 97.85% |
 
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
@@ -132,6 +133,19 @@ capture removes the board's last rook or queen) — each tested alone landed **b
 measurement floor** (flat-to-small leans, none individually conclusive). Bundled into one SPRT they
 passed cleanly: LLR reached the upper bound at 4130 games. A same-settings confirmation at 20+0.2
 is running; the first 582 games are positive and consistent (+3.58 ± 15.44, not yet conclusive).</sub>
+
+<sub>⁷ Part of the same Reckless move-ordering port as row 9's stalemate probe, but split out: a
+malus for moving a pawn that shields your own king, tested independently from the port's other new
+term (a bonus for quiets landing on a square that attacks a vulnerable enemy piece). That other
+term measured **cleanly negative in isolation** (`−9.70 ± 10.41`, LOS 3.38% @1290 games) and ships
+disabled (`OffenseBonus=0`). The shield-pawn malus needed its magnitude found empirically — the
+value converted by ratio from Reckless's own scale (5600) gave a barely-there lean (`+3.24 nElo`,
+LOS 85%, never resolving even past ~12,700 games); tripling it (16800) produced the qualitatively
+stronger, still-running result in the table — the point estimate has moved around checkpoint to
+checkpoint (as expected with a match still in progress) but has stayed positive with LOS in the
+high-90s throughout, not decaying toward zero the way the B1 SPSA bake did. Baked on that trend
+rather than a closed SPRT bound; the exact magnitude is a candidate for the final pre-release mega
+co-tune.</sub>
 
 #### Corrections
 
