@@ -7185,8 +7185,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       is_brilliant = td.capture_history[get_move_piece(move)][tgt][vic] >=
                      g_brilliant_sac_margin;
     }
-    // v1: estende (+1) il sac. L'extension si applica SOLO a moves_searched==0 in
-    // questo motore -> tocca il sac solo se ordinato 1o (raro). Complementata da B.
+    // v1: estende (+1) il sac. NB: questo ramo tocca solo moves_searched==0 (sac
+    // ordinato 1o = rarissimo); il caso VERO (sac in fondo) e' gestito da sac_ext
+    // nel ramo moves_searched>0 (v1 FIX 2026-07-25). Qui resta per completezza.
     if (g_brilliant_sac && extension == 0 && is_brilliant)
       extension = 1;
 
@@ -7554,8 +7555,14 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           reduction = 0;
       }
 
+      // v1 FIX (2026-07-25): un sac (SEE<0) e' ordinato in fondo -> NON e' mai
+      // moves_searched==0, quindi l'`extension=1` di v1 (consumata solo nel ramo
+      // della 1a mossa) era codice MORTO sul suo bersaglio. Qui, nel ramo
+      // moves_searched>0 dove il sac arriva davvero, applichiamo il +1 alle
+      // profondita' LMR/re-search: ora v1 estende sul serio. Default OFF -> 0.
+      int sac_ext = (g_brilliant_sac && is_brilliant) ? 1 : 0;
       // Reduced-depth zero-window search (LMR). reduced_depth = depth-1-r.
-      int reduced_depth = depth - 1 - reduction;
+      int reduced_depth = depth - 1 - reduction + sac_ext;
       td.reduction_stack[td.ply] =
           reduction; // HindsightExt: il figlio sa di essere stato ridotto di
                      // `reduction` plies
@@ -7563,7 +7570,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
                           child_follow);
 
       // Full-depth re-search when the reduced search fails high.
-      int full_depth = depth - 1;
+      int full_depth = depth - 1 + sac_ext;
       if (score > alpha && reduction > 0) {
         td.reduction_stack[td.ply] =
             0; // HindsightExt: la re-search e' a profondita' PIENA ->

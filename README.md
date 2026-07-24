@@ -55,11 +55,33 @@
 
 ## Credits
 
-- **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation.
-- **[BBC](https://github.com/maksimKorzh/chess_programming)** by Maksim Korzh ("Code Monkey King") — original bitboard/magic-number move generator; the project's earliest (2024) foundation for `attacks.cpp`/`magic.cpp`/`movegen.cpp` and the original search, both since substantially rewritten and extended.
+### Testing & tuning
+
+**Maurizio Platino** is the project's tester and search-tuner throughout its development. Beyond the
+SPSA search-parameter tuning, he probes the engine's real playing strength by running it against
+curated **hard positions at long time controls** — the kind of qualitative strength testing that fast
+automated match-play cannot reach, and the project's only systematic testing of that sort — and has
+generously contributed his hardware for the long tuning and testing runs. Triumviratus would be
+materially weaker without his work.
+
+### Derived code
+
+- **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3) — SFNNv13 NNUE evaluation (the `nnue/` inference machinery).
+- **[BBC](https://github.com/maksimKorzh/chess_programming)** by Maksim Korzh ("Code Monkey King") — the original bitboard/magic-number move generator; the project's earliest (2024) foundation for `attacks.cpp`/`magic.cpp`/`movegen.cpp` and the first search, both since substantially rewritten and extended.
 - **[Fathom](https://github.com/jdart1/Fathom)** (MIT) — Syzygy tablebase probing.
-- **[Berserk](https://github.com/jhonnold/berserk)** and **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)** — studied for search/move-ordering ideas informing some of the engine's own implementations. The *PawnPair* network features introduced in Triumviratus 6.0 were also inspired by Pawnocchio.
-- Thanks to **Maurizio Platino** for the SPSA search-tuning and for extensive testing throughout the project,
-  generously contributing his hardware.
+
+### Open-source engines studied
+
+Ideas for search, move-ordering, time management and pruning were studied from — and in several cases
+ported and then **re-tuned against the project's own data and network** — a number of open-source
+engines. Credit and thanks to all of them:
+
+- **[Reckless](https://github.com/codedeliveryservice/Reckless)** — quiet move-ordering (offense-square and king-shield-pawn terms), TT prefetch, capture-ordering ideas.
+- **[Caissa](https://github.com/Witek902/Caissa)** — node-count move cache, quiescence capture history, moves-left time curve.
+- **[Alexandria](https://github.com/PGG106/Alexandria)** — the multiplicative, stateless time-management factors.
+- **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)** — inspiration for the *PawnPair* network features.
+- **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**, **[Ethereal](https://github.com/AndyGrant/Ethereal)** and **[Stormphrax](https://github.com/Ciekce/Stormphrax)** — assorted search, pruning and ordering refinements.
+
+The open-source computer-chess community is what makes a project like this possible.
 
 <sub>Developed openly and with significant AI assistance.</sub>
