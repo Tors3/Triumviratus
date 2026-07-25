@@ -344,7 +344,16 @@ int g_corr_np_weight = 100; // /100 sul contributo delle due tabelle non-pawn
 // pawn/minor/major/nonpawn (che sono keyed per POSIZIONE): l'errore di eval nei
 // finali/fortezze e' caratteristico del MATERIALE. SF: +Elo STC e LTC (bench
 // 1460966). Mira dritto al nostro buco promozioni-endgame (38x nodi vs SF).
-static bool g_corr_material = true; // BAKED 2026-07-24 (bundle lean SPRT +10.43 Elo)
+// SBAKATA 2026-07-25. Era stata bakata il 24/07 dentro il bundle lean (+10.43
+// Elo) misurato a **10+0.1**, con la conferma a TC lungo segnata "in corso" e mai
+// registrata. Rifatta a **20+0.2**: il bundle intero misura **-6.89 +/- 9.01,
+// LOS 6.70%, 1514 partite** = segno ROVESCIATO. Stesso profilo di MalusQuad
+// (+10.31 @10+0.1 -> -4.74 @20+0.2, famiglia poi chiusa): a TC corto questa
+// classe di patch e' inflazionata. Fra i tre membri del bundle e' il piu' debole
+// in isolamento (piatta @1290g, poi -3.17 LOS 30%) ed e' anche quello con il
+// movente peggiore: la correzione da materiale e' informazione che la RETE ha
+// gia'. Gli altri due restano ON (GoodCapHistDiv=32, QsStalemateCheck).
+static bool g_corr_material = false;
 int g_corr_material_weight = 100; // /100 sul contributo della tabella material
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di

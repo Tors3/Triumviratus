@@ -490,7 +490,7 @@ void uci_loop()
             printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
-            printf("option name CorrMaterial type check default true\n");      // BAKED 2026-07-24 (bundle lean SPRT +10.43); SF #5556 corrhist per MATERIAL-KEY -> eval finali/fortezze
+            printf("option name CorrMaterial type check default false\n");     // SBAKATA 2026-07-25: il bundle lean che l'aveva portata dentro misura -6.89 +/- 9.01 a 20+0.2 (era +10.43 a 10+0.1). SF #5556 corrhist per MATERIAL-KEY
             printf("option name CorrMaterialWeight type spin default 100 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
