@@ -88,6 +88,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 8 | KillerReset (anti-stale killer moves) ⁵ | 2026-07-22 | 16+0.16 | 3290 | **+12.15 ± 5.97** | 100% |
 | 9 | Correction-history + move-ordering bundle ⁶ | 2026-07-24 | 10+0.1 | 4130 | **+10.43 ± 5.57** | 99.99% |
 | 10 | King-shield-pawn ordering malus ⁷ | 2026-07-24 | 12+0.12 | 10k+ | **+3.53 ± 3.42** | 97.85% |
+| 11 | Seven latent-defect fixes from the final audit ⁸ | 2026-07-25 | 8+0.08 | 3190 | **+2.18 ± 6.31** | 75.1% |
 
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
@@ -135,6 +136,26 @@ checkpoint (as expected with a match still in progress) but has stayed positive 
 high-90s throughout, not decaying toward zero the way the B1 SPSA bake did. Baked on that trend
 rather than a closed SPRT bound; the exact magnitude is a candidate for the final pre-release mega
 co-tune.</sub>
+
+<sub>⁸ Not a feature: seven latent defects found by a systematic audit of the whole engine run before
+closing 6.0 (search compared mechanism by mechanism against Stockfish master, Reckless, Stormphrax
+and Integral; SPSA tooling; NPS; network permutation). The one with real consequences is that the
+ProbCut child node initialised only one of five per-ply stacks, so `seen`, `de`, `hbucket` and
+`captured` kept whatever the *previous sibling* left at that depth — and the child reads them: a
+stale `captured` of −1 made the static-eval-difference ordering write quiet-history bonuses for a
+capture, the history bucket credited the wrong victim in capture history, and a dirty double-extension
+counter let one subtree enable double and triple extensions inherited from another. The other six are
+a stale advertised UCI default (8 while the live value is 14 — a tuner echoing the advertised defaults
+back would switch off 15.4% of the search tree), missing FEN validation (out-of-range writes on
+illegal positions, plus a phantom en-passant square that gave one position two different Zobrist
+keys), `go movetime` being scaled by the time-management factors, a hard timeout that could fire
+before any root move existed (so the anti-forfeit fallback emitted the first legal move), a
+correction-history table never cleared between games, and a UCI maximum that overflowed the history
+gravity ceiling. Only the ProbCut fix changes the tree (bench 275063 → 283729, +3.15%); disabling
+that one alone returns the benchmark to exactly 275063, which is how the other six were confirmed
+byte-identical. The gate above was run as a **non-regression** check (bound `[−5, 0]`), so the
+positive point estimate is not a significant gain — it is evidence the fixes cost nothing, which was
+the requirement. Full audit report kept out of tree.</sub>
 
 #### Corrections
 

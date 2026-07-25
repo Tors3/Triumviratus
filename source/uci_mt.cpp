@@ -497,6 +497,7 @@ void uci_loop()
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
             printf("option name ThreatScale type spin default 4212 min 0 max 8000\n");  // contributo = scale/100 * pieceValue * (from-to minacciato); co-tunabile
             printf("option name ThreatHist type check default true\n");                   // [BAKE 2026-07-03] history quiet condizionata dalle minacce (from/to attaccata)
+            printf("option name CapHistThreat type check default false\n");               // l'analogo sulla CAPTURE history (casa d'arrivo difesa). Reckless/Stormphrax, SF non ce l'ha. OFF = byte-identico
             printf("option name ThreatHistWeight type spin default 130 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75->60, ultimo step LOS82.13% @296g + SPSA concorde]
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
@@ -1485,6 +1486,12 @@ void uci_loop()
         {
             const char* v = input + 32;
             set_threat_hist(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        // CapHistThreat: A/B toggle (capture history threat-indicizzata sulla casa d'arrivo).
+        else if (strncmp(input, "setoption name CapHistThreat value ", 35) == 0)
+        {
+            const char* v = input + 35;
+            set_caphist_threat(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         // CheckOrdering (#3 SF): A/B toggle. Lo spin "CheckBonus" cade nel gestore generico.
         else if (strncmp(input, "setoption name CheckOrdering value ", 35) == 0)

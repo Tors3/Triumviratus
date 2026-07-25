@@ -1343,6 +1343,16 @@ static bool g_threat_hist =
     true; // [BAKE 2026-07-03 secondo audit: combo ThreatHist+flow, -30.48 base
           // LOS0.06% @320g 12+0.12]
 void set_threat_hist(bool v) { g_threat_hist = v; }
+// CapHistThreat (UCI "CapHistThreat", default OFF): l'analogo di ThreatHist sulla
+// CAPTURE history. La nostra capture_history era [pezzo][arrivo][vittima] senza
+// nessuna dimensione di minaccia, mentre Reckless (history.rs:40-56) e Stormphrax
+// (history.h:217) la indicizzano anche sulla casa d'arrivo difesa: la stessa
+// cattura vale in modo diverso se il pezzo che arriva puo' essere ripreso.
+// ⚠️ Idea genuinamente NON-SF (SF non ce l'ha) — il prior forte e' interno: e'
+// l'analogo esatto di ThreatHist sulle quiet, che da noi e' bakata ON.
+// OFF = byte-identico (td_cbucket ritorna 0 -> solo il piano [..][0]).
+static bool g_caphist_threat = false;
+void set_caphist_threat(bool v) { g_caphist_threat = v; }
 // ThreatHistWeight (2026-07-04 CABLATO): scala EXTRA sul contributo della
 // threat-history nell'ordering (td_score_move), applicata SOPRA MainHistWeight.
 // 100 = identita' (byte-identico al release SPRT +30 combo). Cablato e
@@ -3069,8 +3079,9 @@ void apply_history_priors(ThreadData &td) {
   if (g_hist_init_capt) {
     for (auto &piece : td.capture_history)
       for (auto &sq : piece)
-        for (int &v : sq)
-          v = g_hist_init_capt;
+        for (auto &vic : sq) // CapHistThreat: livello bucket-minaccia
+          for (int &v : vic)
+            v = g_hist_init_capt;
   }
 }
 
@@ -3089,8 +3100,9 @@ static void age_histories(ThreadData &td) {
         v = (int)((long long)v * g_hist_age / 1024);
   for (auto &piece : td.capture_history)
     for (auto &sq : piece)
-      for (int &v : sq)
-        v = (int)((long long)v * g_hist_age / 1024);
+      for (auto &vic : sq) // CapHistThreat: livello bucket-minaccia
+        for (int &v : vic)
+          v = (int)((long long)v * g_hist_age / 1024);
 }
 
 void init_threads(int thread_count) {
@@ -4342,6 +4354,19 @@ static inline int td_hbucket(ThreadData &td, int move) {
   return td_sq_tier(td, get_move_source(move)) * 3 +
          td_sq_tier(td, get_move_target(move));
 }
+// CapHistThreat: bucket della capture history = 1 se la casa di ARRIVO e'
+// attaccata dal nemico (il pezzo che cattura puo' essere ripreso), 0 altrimenti.
+// Binario e non tiered come td_hbucket: qui conta "mi riprendono si/no", non da
+// quale pezzo — il "da quale pezzo" e' gia' nello split SEE good/bad capture.
+// Ritorna 0 quando il toggle e' OFF -> tabella piatta = byte-identico.
+// Da chiamare col board del nodo dove la cattura viene fatta.
+static inline int td_cbucket(ThreadData &td, int target) {
+  if (!g_caphist_threat)
+    return 0;
+  if (td.threat_key != td.hash_key)
+    td_compute_threats(td);
+  return get_bit(td.threat_all, target) ? 1 : 0;
+}
 
 // F-018.11 (EasyCapGate): vero se un NOSTRO pezzo e' attaccato da un pezzo
 // nemico di valore INFERIORE (presa "facile": N/B/R/Q da pedone, R/Q da minore,
@@ -4562,9 +4587,11 @@ static inline int td_score_move(ThreadData &td, int move, int tt_move) {
       }
     }
 
-    int caphist = g_capture_hist ? td.capture_history[piece][target][victim] /
-                                       g_caphist_div // qui era diviso 16
-                                 : 0;
+    int caphist = g_capture_hist
+                      ? td.capture_history[piece][target][victim]
+                                          [td_cbucket(td, target)] /
+                            g_caphist_div // qui era diviso 16
+                      : 0;
 
     // GoodCapTTQuiet (Reckless #1107, default OFF): TT-move quiet = la mossa
     // migliore nota NON e' una cattura -> le catture per essere "good" devono
@@ -5691,9 +5718,11 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     int qb = td_stat_bonus(1) * g_qs_capthist_scale / 100;
     int bvic = td_captured_piece(td, get_move_target(best_move));
     if (bvic >= 0 && bvic < 12)
-      td_update_history(td.capture_history[get_move_piece(best_move)]
-                                          [get_move_target(best_move)][bvic],
-                        qb);
+      td_update_history(
+          td.capture_history[get_move_piece(best_move)]
+                            [get_move_target(best_move)][bvic]
+                            [td_cbucket(td, get_move_target(best_move))],
+          qb);
     int qmal = qb * g_malus_pct / 100;
     for (int c = 0; c < nq_caps; c++) {
       int cm = q_searched_caps[c];
@@ -5702,7 +5731,8 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
       int cvic = td_captured_piece(td, get_move_target(cm));
       if (cvic >= 0 && cvic < 12)
         td_update_history(
-            td.capture_history[get_move_piece(cm)][get_move_target(cm)][cvic],
+            td.capture_history[get_move_piece(cm)][get_move_target(cm)][cvic]
+                              [td_cbucket(td, get_move_target(cm))],
             -qmal);
     }
   }
@@ -6992,7 +7022,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             vic = pc;
             break;
           }
-        int ch = td.capture_history[get_move_piece(move)][tgt][vic];
+        int ch = td.capture_history[get_move_piece(move)][tgt][vic]
+                                   [td_cbucket(td, tgt)];
         int vic_ev = (int)((long long)see_piece_values[vic] *
                            g_capfut_vic_scale * nn_get_eval_scale() / 10000);
         int fut = eval + g_capfut_base + g_capfut_mult * cap_lmr_depth +
@@ -7226,8 +7257,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           vic = pc;
           break;
         }
-      is_brilliant = td.capture_history[get_move_piece(move)][tgt][vic] >=
-                     g_brilliant_sac_margin;
+      is_brilliant =
+          td.capture_history[get_move_piece(move)][tgt][vic]
+                            [td_cbucket(td, tgt)] >= g_brilliant_sac_margin;
     }
     // v1: estende (+1) il sac. NB: questo ramo tocca solo moves_searched==0 (sac
     // ordinato 1o = rarissimo); il caso VERO (sac in fondo) e' gestito da sac_ext
@@ -7837,9 +7869,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             int bonus = td_hist_bonus_moves(td_stat_bonus(depth),
                                             moves_searched); // Q-18
             int vic = td_captured_piece(td, get_move_target(move));
-            td_update_history(td.capture_history[get_move_piece(move)]
-                                                [get_move_target(move)][vic],
-                              bonus);
+            td_update_history(
+                td.capture_history[get_move_piece(move)][get_move_target(move)]
+                                  [vic][td_cbucket(td, get_move_target(move))],
+                bonus);
           }
 
           // SF-faithful: il MALUS alle catture provate-e-fallite si applica
@@ -7857,9 +7890,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
               if (cm == move)
                 continue; // la cattura-cutoff ha gia' il bonus
               int cvic = td_captured_piece(td, get_move_target(cm));
-              td_update_history(td.capture_history[get_move_piece(cm)]
-                                                  [get_move_target(cm)][cvic],
-                                -cap_malus);
+              td_update_history(
+                  td.capture_history[get_move_piece(cm)][get_move_target(cm)]
+                                    [cvic][td_cbucket(td, get_move_target(cm))],
+                  -cap_malus);
             }
           }
 
@@ -7898,8 +7932,13 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         }
       } else if (g_capture_hist) {
         int vic = td.captured_stack[td.ply];
+        // CapHistThreat: bucket 0 FISSO qui. Questo e' il PriorBonus, che premia
+        // la cattura del nodo PADRE: le minacce andrebbero lette sulla board del
+        // padre, non su questa. ponytail: se la feature paga, la strada e' un
+        // cbucket_stack come l'hbucket_stack che il lato quiet usa per lo stesso
+        // motivo — non vale scriverlo prima di sapere se serve.
         if (vic >= 0)
-          td_update_history(td.capture_history[p1][t1][vic], pbonus);
+          td_update_history(td.capture_history[p1][t1][vic][0], pbonus);
       }
     }
   }
