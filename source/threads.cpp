@@ -185,7 +185,19 @@ void set_thread_voting(bool v) { g_thread_voting = v; }
 // P1.3 (UCI "QSChecks"): alla PRIMA ply di qsearch tieni anche i QUIET CHECK
 // diretti (check_sq + filtro SEE>=-75 anti-blunder). Tattica forzante vista
 // prima, meno mate-blindness (SF: DEPTH_QS_CHECKS).
-static bool g_qs_checks = true;
+// QSChecks: scacchi QUIETI generati alla prima ply di qsearch.
+// BAKED OFF 2026-07-25: **+9.71 +/- 5.99 Elo, nElo +19.25, LOS 99.93%, LLR 2.96
+// (bound raggiunto), 3294 partite @20+0.2** spegnendoli. SF li ha rimossi nel
+// lug-2024 (PR #5498, STC 199k/LTC 120k) e da noi la rimozione paga ANCHE di
+// piu' di quanto valga per loro.
+// ⚠️ Nota metodologica: la misura precedente diceva il CONTRARIO ("da noi
+// tagliano: l'albero sul libro CRESCE del 19.2% se li togli") ed era stata fatta
+// con QSMoveCap=1, quando la qsearch esaminava UNA sola mossa per nodo: gli
+// scacchi quieti competevano con le catture per l'unico slot e potevano evincere
+// la miglior cattura. Rimosso quel vincolo (QSMoveCap 1->3, bakato lo stesso
+// giorno) il segno si e' ribaltato. Una misura vale solo nel regime in cui e'
+// stata fatta.
+static bool g_qs_checks = false;
 void set_qs_checks(bool v) { g_qs_checks = v; }
 
 // P1.6 (UCI "NMPVerif"): robustezza null-move — (a) niente due null
@@ -4426,12 +4438,42 @@ static inline void td_compute_checks(ThreadData &td) {
 // OOB selvaggia (stessa trappola documentata in syzygy.cpp::to_fathom; costato
 // un crash 0xC0000005 posizione-dipendente il 2026-07-24).
 static inline void td_compute_offense(ThreadData &td) {
-  if (td.threat_key != td.hash_key)
-    td_compute_threats(td); // need threat_all / threat_by_pawn
   const int side = td.side;
   const int them = side ^ 1;
   const int bt = them * 6;    // enemy pieces P..K at bt..bt+5
   const int bu = side * 6;    // our pieces
+
+  // wall pawns: se il re e' sulla propria traversa di casa, i pedoni adiacenti
+  // sono lo scudo -> penalizza spostarli. home row: bianco rank1 (sq 56..63),
+  // nero rank8 (sq 0..7). ⬆ SPOSTATI IN CIMA 2026-07-25: sono l'unico termine
+  // vivo di questa funzione e non dipendono dalle minacce.
+  int myk = get_ls1b_index(td.bitboards[bu + K]);
+  const U64 home = (side == white) ? 0xFF00000000000000ULL : 0x00000000000000FFULL;
+  td.wall_pawns = get_bit(home, myk)
+                      ? (king_attacks[myk] & (td.bitboards[P] | td.bitboards[p]))
+                      : 0;
+  td.offense_key = td.hash_key;
+
+  // NPS 2026-07-25: le offense_sq costano ~10 loop di attacchi scorrevoli PER
+  // NODO, e il loro UNICO consumatore e' `h += g_offense_bonus` (:4762). Con
+  // g_offense_bonus = 0 — che e' il default, perche' il termine offense-squares
+  // e' risultato NEGATIVO in isolamento (−9.70 ± 10.41, LOS 3.38% @1290g) —
+  // era lavoro interamente buttato a ogni nodo, incluso il td_compute_threats
+  // che serviva solo a loro.
+  // Azzerare le maschere e' BYTE-IDENTICO: get_bit(0, target) = 0, quindi
+  // `h += 0`, che e' esattamente cio' che accadeva prima con bonus = 0.
+  // Rimettendo OffenseBonus != 0 si ritorna al percorso completo.
+  // Gate 2026-07-25: con questo early-return disattivato il bench resta
+  // 205566, identico -> byte-identita' provata empiricamente, non solo per
+  // costruzione.
+  if (!g_offense_bonus) {
+    for (int i = 0; i < 6; i++)
+      td.offense_sq[i] = 0;
+    return;
+  }
+
+  if (td.threat_key != td.hash_key)
+    td_compute_threats(td); // need threat_all / threat_by_pawn
   const U64 occ = td.occupancies[both];
   const U64 threats = td.threat_all;
   const U64 safe = ~threats;
@@ -4494,17 +4536,7 @@ static inline void td_compute_offense(ThreadData &td) {
   td.offense_sq[3] = off_r;
   td.offense_sq[4] = off_q;
   td.offense_sq[5] = 0;
-
-  // wall pawns: se il re e' sulla propria traversa di casa, i pedoni adiacenti
-  // sono lo scudo -> penalizza spostarli. home row: bianco rank1 (sq 56..63),
-  // nero rank8 (sq 0..7).
-  int myk = get_ls1b_index(td.bitboards[bu + K]);
-  const U64 home = (side == white) ? 0xFF00000000000000ULL : 0x00000000000000FFULL;
-  td.wall_pawns = get_bit(home, myk)
-                      ? (king_attacks[myk] & (td.bitboards[P] | td.bitboards[p]))
-                      : 0;
-
-  td.offense_key = td.hash_key;
+  // wall_pawns e offense_key sono gia' stati impostati in cima alla funzione.
 }
 
 // ---- Q-11 NodeCache (port Caissa NodeCache.cpp) -----------------------------

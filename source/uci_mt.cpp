@@ -439,7 +439,7 @@ void uci_loop()
             printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
             printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
-            printf("option name QSChecks type check default true\n");          // P1.3 quiet check alla prima ply di qsearch
+            printf("option name QSChecks type check default false\n");         // P1.3 scacchi quieti alla prima ply di qsearch. BAKED OFF 2026-07-25: spegnerli vale +9.71 +/- 5.99 Elo, LOS 99.93%, LLR 2.96 @3294g 20+0.2 (SF li ha rimossi, PR #5498)
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
             printf("option name NMPVerifDepth type spin default 1 min 1 max 64\n");
             printf("option name LMPImproving type check default true\n");      // P1.7 LMP SF-style senza cap d8

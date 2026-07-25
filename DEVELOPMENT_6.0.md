@@ -90,6 +90,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 10 | King-shield-pawn ordering malus ⁷ | 2026-07-24 | 12+0.12 | 10k+ | **+3.53 ± 3.42** | 97.85% |
 | 11 | Seven latent-defect fixes from the final audit ⁸ | 2026-07-25 | 8+0.08 | 3190 | **+2.18 ± 6.31** | 75.1% |
 | 12 | QSMoveCap 1 → 3 (quiescence searched one move per node) ⁹ | 2026-07-25 | 15+0.15 | 2868 | **+5.21 ± 6.47** | 94.3% |
+| 13 | Quiet checks removed from quiescence (`QSChecks=false`) ¹⁰ | 2026-07-25 | 20+0.2 | 3294 | **+9.71 ± 5.99** | 99.93% |
 
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
@@ -169,6 +170,28 @@ short time controls that have misled this project before. Bench 283729 → 30647
 worth re-testing: the standing note that quiet checks in quiescence looked nearly inert was measured
 under the one-move cap, where they competed with captures for the only slot available — that
 constraint is now gone.</sub>
+
+<sub>¹⁰ The consequence anticipated in note ⁹, and the clearest single result of the audit: with the
+one-move cap gone, **removing quiet checks from the quiescence search gains 9.71 Elo** — an SPRT that
+closed its bound (LLR 2.96) over 3294 games at 20+0.2, the longest time control used for any decision
+in this release. Stockfish removed the same mechanism in July 2024 (PR #5498) as a non-regressive
+simplification; here it is worth considerably more than that. The measurement matters as much as the
+result: a standing audit note had concluded the *opposite* — that quiet checks were doing useful
+pruning, because switching them off made the tree on the gating book grow 19.2%. That measurement was
+taken while `QSMoveCap` was 1, when the quiescence search examined a single move per node and a quiet
+check could evict the best capture from the only slot available. Lifting the cap reversed the sign. A
+measurement is only valid in the regime it was taken in, and this release contains two cases of it
+(see also the retracted bundle under Corrections). Bench 262238 → 205566; the old behaviour returns
+with `QSChecks=true`.</sub>
+
+<sub>**Free NPS, same release.** With `OffenseBonus` at 0 — the offense-square ordering term measured
+negative in isolation and ships disabled, see note ⁷ — the ordering code still computed the full set
+of offense masks on every node: roughly ten sliding-attack loops, plus a threat computation that only
+they needed, all multiplied by zero. Skipping that work when the bonus is zero is byte-identical:
+node counts match to the node over 48 million nodes, and the benchmark is unchanged at 205566.
+Measured **+2.6% NPS**, paired, at identical node counts, and confirmed in both run orders (+3.0% with
+the patched build first, +2.2% with it second, so the sign survives thermal drift on the measurement
+machine). The king-shield-pawn term, which is the part that actually pays, is still computed.</sub>
 
 #### Corrections
 
