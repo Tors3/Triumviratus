@@ -1,4 +1,5 @@
 #include "defs.h"
+#include "attacks.h" // A3: pawn_attacks, per il filtro e.p. fantasma
 #include "io.h"
 #include "movegen.h"
 #include <cstdio>
@@ -244,6 +245,35 @@ void parse_fen(const char* fen)
 
     occupancies[both] |= occupancies[white];
     occupancies[both] |= occupancies[black];
+
+    // A3 FIX 2026-07-25: la FEN e' un confine di fiducia (arriva dalla GUI, dai
+    // libri, dagli script di datagen) e non era validata affatto. Una FEN
+    // illegale non e' solo "sbagliata", corrompe memoria:
+    //   - >32 pezzi -> nn_build_piece_list scrive oltre pieces[33]/squares[33]
+    //     (threads.cpp:4069) e lo stesso loop non limitato in debug_eval_position
+    //     (:4094) e' raggiungibile dal comando "eval";
+    //   - re mancante -> get_ls1b_index(0) = -1 usato come indice di casa
+    //     (es. threads.cpp:7253, misc.cpp:89).
+    // Qui si rifiuta e si torna alla posizione iniziale: la ricorsione termina
+    // subito perche' start_position e' valida per costruzione.
+    if (count_bits(bitboards[K]) != 1 || count_bits(bitboards[k]) != 1 ||
+        count_bits(occupancies[both]) > 32)
+    {
+        printf("info string FEN rifiutata (re mancante/duplicato o piu' di 32 pezzi): uso la posizione iniziale\n");
+        fflush(stdout);
+        parse_fen(start_position);
+        return;
+    }
+
+    // E.p. fantasma: se nessun pedone del lato al tratto puo' realmente catturare
+    // sulla casa dichiarata, quella casa cambia la chiave Zobrist senza cambiare
+    // la posizione -> la stessa posizione prende due chiavi e la TT non si
+    // riconosce (misurato: 22566 vs 21406 nodi a TT calda). SF filtra allo stesso
+    // modo in position.cpp. pawn_attacks[side^1][ep] = da dove un pedone del lato
+    // al tratto arriverebbe a catturare in ep.
+    if (enpassant != no_sq &&
+        !(pawn_attacks[side ^ 1][enpassant] & bitboards[side == white ? P : p]))
+        enpassant = no_sq;
 
     // Generate hash key
     hash_key = generate_hash_key();

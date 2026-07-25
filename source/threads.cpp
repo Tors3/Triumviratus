@@ -2959,6 +2959,24 @@ extern U64 nodes;
 std::vector<std::thread> search_threads;
 std::vector<ThreadData> thread_data;
 std::atomic<bool> stop_threads(false);
+
+// A5 FIX 2026-07-25 — pavimento anti-forfeit del taglio DURO.
+// Il taglio su `stoptime` puo' scattare prima che il thread 0 abbia UNA mossa di
+// radice (optimum puo' valere pochi ms: tempo residuo minimo, Move Overhead che
+// mangia tutto, o il confronto sul tempo che sbaglia nella finestra di overflow
+// int32 di GetTickCount, ogni 49.7 giorni di uptime). In quel caso la ricerca si
+// smonta con best_move = 0 e il rescue di last-resort emette la PRIMA MOSSA
+// LEGALE, cioe' una mossa a caso: si perde la posizione invece del tempo.
+// Rimandiamo il taglio duro finche' non esiste una mossa vera. La finestra e'
+// limitata a UNA mossa di radice a depth 1 (start_depth = 1 per il thread 0),
+// quindi non puo' causare un forfeit. Stessa scelta di Reckless (time.rs:81-84).
+// Costo: ZERO nel path caldo — grazie allo short-circuit questa funzione viene
+// valutata solo DOPO che `get_time_ms() > stoptime` e' gia' vero, cioe' una volta
+// per ricerca. Il taglio da comando `stop` e da g_node_limit non passa da qui.
+static inline bool td_root_move_ready() {
+  return !thread_data.empty() && (thread_data[0].best_move != 0 ||
+                                  thread_data[0].pv_table[0][0] != 0);
+}
 U64 g_node_limit =
     0; // "go nodes N" budget (0 = off); checked per-node in (q)search.
 // searchmoves (analisi, UCI "go searchmoves m1 m2 ..."): whitelist di mosse di
@@ -5362,7 +5380,9 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   if ((td.nodes & 4095) == 0) {
     if (stop_threads.load(std::memory_order_relaxed))
       return 0;
-    if (timeset && get_time_ms() > stoptime) {
+    // A5: `td_root_move_ready()` = pavimento anti-forfeit, vedi la definizione.
+    // Short-circuit: non viene mai valutata finche' il tempo non e' scaduto.
+    if (timeset && get_time_ms() > stoptime && td_root_move_ready()) {
       stop_threads.store(true, std::memory_order_relaxed);
       return 0;
     }
@@ -6215,7 +6235,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   if ((td.nodes & 4095) == 0) {
     if (stop_threads.load(std::memory_order_relaxed))
       return 0;
-    if (timeset && get_time_ms() > stoptime) {
+    // A5: `td_root_move_ready()` = pavimento anti-forfeit, vedi la definizione.
+    // Short-circuit: non viene mai valutata finche' il tempo non e' scaduto.
+    if (timeset && get_time_ms() > stoptime && td_root_move_ready()) {
       stop_threads.store(true, std::memory_order_relaxed);
       return 0;
     }
@@ -6687,9 +6709,29 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           continue;
 
         UndoInfo undo;
+        // A1 FIX 2026-07-25: il figlio probcut inizializzava SOLO reduction_stack.
+        // seen/de/hbucket/captured restavano quelli lasciati a questo ply dal
+        // fratello precedente, e il figlio li LEGGE: move_stack != 0 (riga sotto)
+        // apre i blocchi SEO (:6441) e TTCutMalus (:6173), che con un
+        // captured_stack stale a -1 scrivono bonus/malus nella history QUIET per
+        // una CATTURA, premiano la vittima sbagliata in capture_history via
+        // hbucket_stack, e con un de_stack sporco abilitano doppia/tripla
+        // estensione ereditata da un sottoalbero fratello (:7101).
+        // Che fosse una dimenticanza lo prova reduction_stack, che c'era.
+        // ponytail: terzo sito che spinge un ply figlio (main loop :7213,
+        // null-move :6550, questo) con la stessa lista a mano. Se ne nasce un
+        // quarto, estrarre un td_push_child() invece di ricopiarla.
+        // Gate 2026-07-25: con questi 4 assegnamenti disattivati il bench torna
+        // esattamente a 275063 (= la release pre-fix), quindi il delta e' TUTTO
+        // di A1: 275063 -> 283729, +3.15% di albero.
+        int pc_hbucket = td_hbucket(td, move); // pre-make: legge la board del padre
+        td.seen_stack[td.ply] =
+            count; // mosse viste a QUESTO nodo (il figlio le legge su TT-cut)
         td.ply++;
         td.reduction_stack[td.ply] =
             0; // HindsightExt: probcut child non e' "ridotto-LMR"
+        td.de_stack[td.ply] =
+            td.de_stack[td.ply - 1]; // il probcut non estende: la catena passa
         td.repetition_table[++td.repetition_index] = td.hash_key;
         if (!td_make_move(td, move, undo)) {
           td.ply--;
@@ -6697,6 +6739,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           continue;
         }
         td.move_stack[td.ply] = move;
+        td.hbucket_stack[td.ply] = pc_hbucket;
+        td.captured_stack[td.ply] = undo.captured_piece;
 
         // Cheap qsearch screen first; only if it clears probcut_beta do we
         // pay for the reduced-depth (depth-4) confirmation search.
@@ -8531,6 +8575,14 @@ static void thread_search(int thread_id, int max_depth) {
         }
 
       } // fine path TM v1 (additivo)
+
+      // A4 FIX 2026-07-25: "go movetime N" e' un tempo FISSO ordinato dalla GUI,
+      // non una stima da correggere. I fattori qui sopra lo accorciavano (il
+      // NodeTM e' reduce-only e scende fino a g_nodetm_min/100 = 58%): analisi e
+      // GUI a tempo fisso ricevevano il 58% del tempo chiesto. Nessun effetto sui
+      // gate ne' sul gioco a tempo+incremento, dove movetime == -1.
+      if (movetime != -1)
+        soft = soft_time_limit;
 
       if (soft > stoptime)
         soft = stoptime; // never exceed the hard cap

@@ -509,7 +509,7 @@ void uci_loop()
             printf("option name PriorBonusScale type spin default 189 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
             printf("option name LowPlyHistory type check default true\n");    // #5: history per-ply near-root nell'ordering quiet
             printf("option name LowPlyWeight type spin default 179 min 0 max 200\n");  // contributo lowply; co-tunabile
-            printf("option name StatEvalDiffMult type spin default 8 min 0 max 60\n");  // [4.1 BAKE 14->6] SF static-eval-diff ordering (neutro a ogni valore)
+            printf("option name StatEvalDiffMult type spin default 14 min 0 max 60\n");  // SF static-eval-diff ordering. A2 FIX 2026-07-25: annunciava 8 mentre il valore vivo e' 14 (threads.cpp:1431, ripristinato dopo il fix SEO) -> una GUI/tuner che rimanda i default espliciti spegneva il 15.4% dell'albero (bench 275063 -> 232681)
             printf("option name CutoffCntPenalty type spin default 2 min 0 max 3\n");        // SF cutoffCnt-LMR: 0=off, 1=SF (riduzione +1 se figlio cutoffCnt>3)
             printf("option name ProbCutInCheckMargin type spin default 335 min 0 max 800\n");  // [4.1 BAKE 0->523] SF probcut-sotto-scacco
             printf("option name MainHistWeight type spin default 93 min 50 max 400\n");    // [4.1 BAKE 122->168]
@@ -535,7 +535,7 @@ void uci_loop()
             printf("option name QFutMargin type spin default 199 min 0 max 500\n");
             printf("option name HistBonusMult type spin default 490 min 1 max 600\n");   // [4.1 BAKE 282->326]
             printf("option name HistBonusSub type spin default 299 min 0 max 400\n");      // [4.1 BAKE 59->35]
-            printf("option name HistBonusMax type spin default 2946 min 200 max 8000\n"); // [4.1 BAKE 1247->2439; max 4000->8000 il 2026-07-10: il default era INCOLLATO al max dichiarato -> SPSA poteva solo scendere. Nessun clamp compilato, allargare e' sicuro]
+            printf("option name HistBonusMax type spin default 2946 min 200 max 7000\n"); // [4.1 BAKE 1247->2439; max 4000->8000 il 2026-07-10 perche' il default era INCOLLATO al max -> SPSA poteva solo scendere]. A7 FIX 2026-07-25: il max era 8000 e la nota "nessun clamp compilato, allargare e' sicuro" era FALSA -> HISTORY_MAX (threads.cpp:4190) e' 7000 ed e' il tetto di gravita': con un bonus sopra 7000 il termine di richiamo supera l'entry e un solo update la inchioda al massimo (la tabella esce dal range voluto). Tetto riportato a 7000 = trappola SPSA disinnescata
             printf("option name LazyEval type check default true\n");
             printf("option name TimeMgmt type check default true\n");
             printf("option name AggrLMR type check default false\n");
@@ -893,6 +893,7 @@ void uci_loop()
                     memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                     memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
                     memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
+                    memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));   // A6 FIX 2026-07-25: mancava (unico azzeramento in init_threads, threads.cpp:3140) -> era l'unica corr-table a sopravvivere fra le 8 posizioni del bench
                     apply_history_priors(thread_data[i]);   // Q-26: il bench azzera a mano -> riapplica il prior
                 }
                 reset_time_control();
@@ -968,6 +969,7 @@ void uci_loop()
                 memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                 memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
                 memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
+                memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));   // A6 FIX 2026-07-25: mancava -> era l'unica corr-table a trascinarsi fra PARTITE (stessa classe di contaminazione del FIX P0.5)
                 // Q-11 NodeCache: le entry sopravvivono cross-MOVE (voluto) ma non
                 // cross-PARTITA. La chiave piena renderebbe innocuo un residuo, ma i
                 // conteggi di un'altra partita sono comunque rumore per l'ordering.
