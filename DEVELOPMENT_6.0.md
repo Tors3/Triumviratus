@@ -89,6 +89,7 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 9 | Correction-history + move-ordering bundle ⁶ | 2026-07-24 | 10+0.1 | 4130 | **+10.43 ± 5.57** | 99.99% |
 | 10 | King-shield-pawn ordering malus ⁷ | 2026-07-24 | 12+0.12 | 10k+ | **+3.53 ± 3.42** | 97.85% |
 | 11 | Seven latent-defect fixes from the final audit ⁸ | 2026-07-25 | 8+0.08 | 3190 | **+2.18 ± 6.31** | 75.1% |
+| 12 | QSMoveCap 1 → 3 (quiescence searched one move per node) ⁹ | 2026-07-25 | 15+0.15 | 2868 | **+5.21 ± 6.47** | 94.3% |
 
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
@@ -156,6 +157,18 @@ that one alone returns the benchmark to exactly 275063, which is how the other s
 byte-identical. The gate above was run as a **non-regression** check (bound `[−5, 0]`), so the
 positive point estimate is not a significant gain — it is evidence the fixes cost nothing, which was
 the requirement. Full audit report kept out of tree.</sub>
+
+<sub>⁹ The same audit's largest structural finding, and it was a default, not a bug: `QSMoveCap` was 1
+with the break at the top of the move loop, so outside of check the quiescence search examined
+**exactly one move per node** — a chain rather than a tree. Nothing was wrong with the code; the
+value had simply never been revisited after the surrounding qsearch pruning was tuned, and it
+quietly capped what several of those mechanisms could ever do. Raised to 3, Obsidian's value.
+Baked on LOS (94.3%) rather than a closed SPRT bound, on a 15+0.15 measurement rather than the
+short time controls that have misled this project before. Bench 283729 → 306473 (+8.0%);
+`QSMoveCap=1` reproduces 283729 exactly, so the old behaviour is one option away. One consequence
+worth re-testing: the standing note that quiet checks in quiescence looked nearly inert was measured
+under the one-move cap, where they competed with captures for the only slot available — that
+constraint is now gone.</sub>
 
 #### Corrections
 

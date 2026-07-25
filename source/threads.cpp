@@ -1543,7 +1543,11 @@ static bool g_killer_reset =
 // check-extension obsoleta).
 static bool g_countermove = true;
 int g_qs_move_cap =
-    1; // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3)
+    3; // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3).
+       // BAKED 2026-07-25: era 1, cioe' la qsearch cercava UNA sola mossa per
+       // nodo (una CATENA, non un albero) — reperto dell'audit finale 6.0.
+       // Portato a 3 (il valore di Obsidian): **+5.21 +/- 6.47 Elo, LOS 94.28%,
+       // 2868 partite @15+0.15**. Bakato su LOS, non su bound SPRT chiuso.
 // ==== Bug-fix a toggle (cambiano i node-count -> SPRT prima di bakare ON) ====
 static bool g_qs_draw_check =
     false; // F-015: draw-detection (ripetizione/50 mosse) in qsearch. Bake

@@ -605,7 +605,7 @@ void uci_loop()
             printf("option name RFPHistThresh type spin default 64 min 0 max 7000\n");         // #12 RFP gated su history della hash move quiet (0=off)
             printf("option name KillerReset type check default true\n");                     // #13 azzera killer del ply figlio a ogni nodo (+12.15 Elo)
             printf("option name CounterMove type check default true\n");                      // OFF = via la countermove heuristic (SF l'ha rimossa: PR #5441, 978k partite)
-            printf("option name QSMoveCap type spin default 1 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3)
+            printf("option name QSMoveCap type spin default 3 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3). BAKED 2026-07-25: era 1 (= qsearch a UNA mossa per nodo), +5.21 +/- 6.47 LOS 94.28% @2868g 15+0.15
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
             printf("option name EPKeyFix type check default true\n");                         // F-017 niente phantom-ep nella hash key (fix correttezza, SPRT +4.31 Elo)
             printf("option name HistReductionDiv type spin default 3190 min 500 max 8000\n"); // bakato: 3500->1041
