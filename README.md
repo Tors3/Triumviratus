@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [6.0 (prerelease)](#triumviratus-60-prerelease) · [Results](#results) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [Development](DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -40,10 +40,30 @@
 
 ---
 
-## Triumviratus 6.0 (prerelease)
+## Triumviratus 6.0 — current release
+
+> [!IMPORTANT]
+> **+52.98 ± 12.25 Elo over 5.1** — 40+0.4, 760 games, LOS 100%, nElo +108.57, SPRT `[0,5]` passed
+> (LLR 2.95). Release binary vs release binary (AVX-512), each loading its own network
+> (6.0 → `rubicon-alea-v3`, 5.1 → `rubicon-alea-v1`), 1 thread, 256 MB, UHO 2024 book.
+
+Three architectural changes carry most of it — a new network **architecture** (`TRANN1`: the SFNNv13
+feature set plus two extra input blocks, pawn-pair and passed-pawn), the own-lineage network
+**`nn-rubicon-alea-v3`** trained for it, and **TMv2** time management — followed by a long tail of
+search work: an unconditional check extension removed, a quiescence search that turned out to be
+examining a single move per node, quiet checks removed from quiescence, continuation-history and
+killer-move fixes, and a pre-release audit that found seven latent defects.
+
+<sub>An earlier gate measured **+33.18 ± 9.86** at 20+0.2 on 2026-07-16. It predates eight further
+changes and is superseded by the figure above, not contradicted by it — the two are separate
+measurements at different time controls and hash sizes, and the incremental gains listed in
+[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md) are **not additive** (each is measured against the state
+immediately before it, and they overlap).</sub>
 
 > [!NOTE]
-> All details regarding the 6.0 prerelease (including new networks, SPSA tunes, time management, incremental gains, and SPRT results) have been moved to **[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md)** to keep this page clean.
+> Networks, SPSA tunes, time management, the full incremental table, the corrections and the
+> retractions are all in **[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md)**, to keep this page short.
+> How each network was trained: **[`NETWORKS.md`](NETWORKS.md)**.
 
 
 ## License

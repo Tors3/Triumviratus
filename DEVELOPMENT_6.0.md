@@ -247,8 +247,16 @@ instructions are in [`source/BUILD_NOTES.md`](source/BUILD_NOTES.md).
 
 | Date | Time control | Games | Score (6.0) | Elo (6.0) | LOS | SPRT |
 |---|---|---|---|---|---|---|
+| **2026-07-25** | **40+0.4** | **760** | **57.6%** | **+52.98 ± 12.25** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
 | 2026-07-16 | 20+0.2 | 1166 | 54.8% | **+33.18 ± 9.86** | 100.00% | `[0,5]` **passed** (LLR 2.95) |
 | 2026-07-20 | 16+0.16 | 518 | 57.1% | **+49.29 ± 15.33** | 100.00% | — |
+
+<sub>The **40+0.4 row is the final, definitive gate** and the figure quoted in the README: it is the
+only one measured on the shipped binaries, at the longest time control used anywhere in this release,
+and it includes every change in the incremental table below. nElo **+108.57 ± 24.70**, pentanomial
+`[0, 47, 173, 158, 2]`, pairs ratio 3.40, 256 MB hash, resign/draw adjudication on. The July 16 row
+predates rows 4–13 and used 64 MB at 20+0.2, so it is **superseded, not contradicted** — the two are
+separate measurements, and the increments below are not additive.</sub>
 
 #### State 6+7+8 vs State 5
 
