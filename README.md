@@ -29,14 +29,18 @@
 
 ## Rating
 
-**CCRL 40/15** (40 moves in 15 minutes + increment), list of 2026-07-16:
+**CCRL 40/15** (40 moves in 15 minutes + increment):
 
-| Rank | Version | Rating |
+| Version | Rating | List |
 |---|---|---|
-| #29 | Triumviratus 5.0 64-bit (4 CPU) | 3603 |
-| #47 | Triumviratus 5.0 64-bit (1 CPU) | 3570 |
+| **Triumviratus 5.1 64-bit (1 CPU)** | **3605** | 2026-07-23 |
+| Triumviratus 5.0 64-bit (4 CPU) | 3603 | 2026-07-16 |
+| Triumviratus 5.0 64-bit (1 CPU) | 3570 | 2026-07-16 |
 
-<sub>5.1 and 6.0 are not yet CCRL-rated; this section will be updated when they are.</sub>
+<sub>5.1 on a single CPU has just entered the list at **3605**, on few games so far — provisional, and
+placed just below the 24th–25th positions of the full ranking. **6.0 is not yet rated**; on the
+internal gate it is a further **+53 Elo** over 5.1, but a rating list is a different measurement and
+this section will be updated when CCRL publishes one.</sub>
 
 ---
 
@@ -59,6 +63,19 @@ changes and is superseded by the figure above, not contradicted by it — the tw
 measurements at different time controls and hash sizes, and the incremental gains listed in
 [`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md) are **not additive** (each is measured against the state
 immediately before it, and they overlap).</sub>
+
+#### Against other engines
+
+| Opponent | Result | Games | TC | Book |
+|---|---|---|---|---|
+| **Berserk 14** | **+8.7 Elo** (51.25%), 95% CI [+2.2, +15.2] | 600 | 60+1 | Perfect2023 |
+| Pawnocchio 1.9.1 | **+41.89 ± 11.08**, LOS 100% | — | 20+0.2 | UHO |
+
+<sub>The Berserk match was played from **Perfect2023**, a deep balanced book, which is why **94.5% of
+the games were drawn** (24 wins, 567 draws, 9 losses) and why the margin is small even though the
+confidence interval excludes zero. A book like that compresses differences between strong engines by
+design; the same engines on an unbalanced book would show a wider gap in either direction. Recorded
+as measured rather than re-run on a friendlier book.</sub>
 
 > [!NOTE]
 > Networks, SPSA tunes, time management, the full incremental table, the corrections and the
