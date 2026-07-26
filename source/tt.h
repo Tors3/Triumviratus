@@ -211,9 +211,15 @@ inline void new_search() {
     current_age = (current_age + 1) & 0x1F;   // age a 5 bit (vedi pack_tt_data)
 }
 
-// TT prefetch (toggle "TTPrefetch", default OFF). Ritestato 2026-07-13 (Reckless
-// #1085): il tentativo 2026-06-07 era NPS-neutral, ma da allora e' stato bakato
-// TTTwoLevel (bucket 2 slot) -> pattern di accesso diverso, vale ri-misurare.
+// TT prefetch (toggle "TTPrefetch"). ⚠️ COMMENTO CORRETTO 2026-07-26: diceva
+// "default OFF" e "vale ri-misurare", ma era gia' stato **BAKATO ON** (vedi
+// threads.cpp: `g_tt_prefetch = true`, +1.88% NPS misurato, riconfermato +2.75%
+// nell'audit del 25/07). Il commento stantio ha tenuto chiuso un fronte NPS che
+// era gia' vinto: un auditor l'ha letto e ha riportato il prefetch come non
+// ancora provato. Se un commento contraddice il default vivo, vince il codice.
+// Ritestato 2026-07-13 (Reckless #1085): il tentativo 2026-06-07 era
+// NPS-neutral, ma nel frattempo era stato bakato TTTwoLevel (bucket a 2 slot),
+// che cambia il pattern di accesso -> da li' il guadagno.
 // Prefetch della PRIMA cacheline del bucket subito dopo il calcolo della chiave
 // figlia in td_make_move (post-legalita': la variante pre-legalita' era -2.5%).
 #if defined(_MSC_VER)

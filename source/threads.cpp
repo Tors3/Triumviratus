@@ -198,6 +198,40 @@ void set_thread_voting(bool v) { g_thread_voting = v; }
 // giorno) il segno si e' ribaltato. Una misura vale solo nel regime in cui e'
 // stata fatta.
 static bool g_qs_checks = false;
+// QSTTQuiets (porta FEDELE di Stormphrax, search.cpp:1557) — default OFF.
+// Stormphrax non tiene gli scacchi quieti "sempre" come facevamo noi: genera
+// TUTTE le mosse quiete in qsearch, ma SOLO quando la TT ha gia' l'evidenza che
+// la mossa migliore e' quieta e il bound e' affidabile:
+//     !PvNode && ttMove && ttFlag != UpperBound && !isNoisy(ttMove)
+// Il movente da noi e' doppio, ed e' il motivo per cui questa e' l'ultima voce
+// aperta della search:
+//  (1) esterno: e' la forma che Stormphrax usa al posto del nostro vecchio
+//      QSChecks sempre-on;
+//  (2) interno: il 25/07 abbiamo spento QSChecks guadagnando +9.71 Elo (bound
+//      chiuso @20+0.2) ma la suite hard-position di Maurizio e' calata di 4
+//      posizioni. Statisticamente e' rumore (McNemar: servirebbero <=4 discordi
+//      totali), pero' il meccanismo e' plausibile — gli scacchi quieti sono cio'
+//      che trova le sequenze forzate — e abbiamo un precedente NOSTRO in cui
+//      l'SPRT non vedeva il danno: NMPEvalScale, che SF ha revertato per
+//      mate-finding dopo 290k partite verdi.
+// Una sequenza forzata e' PRECISAMENTE il caso in cui la TT, da una visita piu'
+// profonda, ha gia' memorizzato che la mossa chiave e' quieta. Questa condizione
+// riammette le quiete li' e solo li': recupera la tattica senza ricomprarsi il
+// 21.6% di albero che spegnere QSChecks ci ha fatto risparmiare.
+// MODALITA' (misurate sul bench, base 205566):
+//   0 = OFF, byte-identico.
+//   1 = porta FEDELE Stormphrax: quando la condizione TT vale, ammette TUTTE le
+//       quiete. Bench 371449 = +80.7%. Troppo caro da noi: la condizione TT e'
+//       rara ma quando scatta apre l'intero ventaglio quieto, mentre il nostro
+//       vecchio QSChecks teneva solo le quiete che danno SCACCO. (Stormphrax se
+//       lo permette perche' rompe a legalMoves>=2; noi abbiamo QSMoveCap=3 ma
+//       paghiamo comunque movegen+scoring di tutte le mosse.)
+//   2 = **scacchi quieti TT-gated**: la condizione TT di Stormphrax applicata al
+//       filtro NOSTRO (solo quiete che danno scacco diretto, SEE >= -75). E' la
+//       forma piu' stretta delle tre e quella che risponde alla domanda vera:
+//       recuperare le sequenze forzate SENZA ricomprare l'albero.
+static int g_qs_tt_quiets = 0;
+void set_qs_tt_quiets(int v) { g_qs_tt_quiets = v < 0 ? 0 : (v > 2 ? 2 : v); }
 void set_qs_checks(bool v) { g_qs_checks = v; }
 
 // P1.6 (UCI "NMPVerif"): robustezza null-move — (a) niente due null
@@ -1219,6 +1253,24 @@ static bool g_lmr_captures =
     true; // [F-004 BAKE 2026-07-02] LMR anche sulle CATTURE
           // (SF/Stormphrax-style). Vettore SPSA (MinMoves=2, EvalMargin=20)
           // SPRT: +7.38 LOS 87% @800g 8+0.08
+// LMRCheckExempt (2026-07-26) — default 0 = byte-identico.
+// Entrambi i rami LMR (quiet :7490 e catture :7741) sono gated da
+// `!in_check && !gives_check`: **nessuna mossa che da' scacco viene MAI ridotta,
+// e in un nodo in scacco nessuna mossa viene ridotta.** SF non ha nessuno dei
+// due gate: la sua LMR (search.cpp:1327) e' condizionata solo da
+// `depth >= 2 && moveCount > 1`.
+// MOVENTE: e' la TERZA esenzione-scacchi del motore, e le prime due, tolte, hanno
+// pagato — rimozione della check-extension **+7.98 Elo** (19/07) e rimozione degli
+// scacchi quieti in qsearch **+9.71 Elo** (25/07, bound chiuso @20+0.2). Il motore
+// era sistematicamente troppo generoso con gli scacchi in tre posti distinti.
+//   0 = comportamento attuale (entrambe le esenzioni)
+//   1 = si riducono anche le mosse che DANNO scacco  <- testare QUESTA per prima
+//       (rischio piu' basso: tocca solo le mosse figlie, non il regime del nodo)
+//   2 = si riduce anche nei nodi IN scacco (tattico, molto piu' rischioso)
+// ⚠️ Tocca OGNI nodo: bench a profondita' 13/17/20 sul LIBRO dei gate PRIMA di
+// qualunque SPRT — e' la regola nata da SingularExactMargin, che stringeva
+// l'albero a d13/d17 e lo faceva ESPLODERE (+42.7%) a d20.
+int g_lmr_check_exempt = 0;
 int g_lmr_cap_scale = 52; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g). F-004: % della lmr_table applicata alle catture (50
                           // = dimezzata; SPSA confermo' ~50)
 int g_singular_dmargin = 59; // double-extension margin below singular_beta
@@ -1528,6 +1580,27 @@ int g_negext_alpha =
 static bool g_fh_smooth =
     true; // #7 fail-high: return (score+beta)/2 su RFP e qsearch (bound TT meno
           // gonfiati) [BAKE 2026-07-03]
+// FailHighSmooth, PESI SEPARATI (2026-07-25). Il midpoint era `(x+beta)/2`
+// cablato su TRE ritorni semanticamente diversi, sotto un unico toggle e senza
+// nessun parametro. Nessuno dei riferimenti fa cosi': Reckless (search.rs:1437
+// `lerp`) usa CINQUE t distinti e tunati — 0.6945 su RFP, 0.8256 sullo stand-pat
+// di qsearch, 0.5072 sul finale di qsearch, 0.2695 su NMP, 0.4027 su multicut —
+// e Stormphrax ne espone due tunabili a SPSA. Due implementazioni indipendenti
+// convergono su valori LONTANI dal nostro 0.5, e lo stand-pat di qsearch e' il
+// sito piu' eseguito del motore.
+// Scala /1024: 512 = midpoint = comportamento storico.
+int g_fh_t_qs_standpat = 512; // Reckless: ~845/1024
+int g_fh_t_qs_final = 512;    // Reckless: ~519/1024
+int g_fh_t_rfp = 512;         // Reckless: ~711/1024
+// ⚠️ A t = 512 si ritorna l'ESPRESSIONE ORIGINALE, non la lerp equivalente: con
+// x+beta negativo e dispari le due troncano diversamente (es. x=-4, beta=-1 ->
+// (x+beta)/2 = -2 ma x+(beta-x)/2 = -3). Il caso speciale garantisce che il
+// default sia byte-identico; fuori dal default la lerp e' la forma giusta.
+static inline int td_fail_firm(int x, int beta, int t) {
+  if (t == 512)
+    return (x + beta) / 2;
+  return x + (int)((long long)(beta - x) * t / 1024);
+}
 static bool g_nmp_static_margin =
     false; // #8a NMP solo se static_eval >= beta - mult*depth + bias (SF)
 int g_nmp_sm_mult = 23;
@@ -2378,6 +2451,10 @@ bool set_search_param(const char *name, int value) {
     g_lmr_cap_scale = value < 0 ? 0 : value;
     return true;
   }
+  if (!strcmp(name, "LMRCheckExempt")) {
+    g_lmr_check_exempt = value < 0 ? 0 : (value > 2 ? 2 : value);
+    return true;
+  }
   if (!strcmp(name, "TMMovesToGo")) {
     g_tm_movestogo = value < 1 ? 1 : value;
     return true;
@@ -2679,6 +2756,19 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "ThreatHistWeight")) {
     g_threat_hist_weight = value < 0 ? 0 : value;
+    return true;
+  }
+  // FailHighSmooth: i tre pesi separati (scala /1024, 512 = midpoint storico).
+  if (!strcmp(name, "FHTQsStandPat")) {
+    g_fh_t_qs_standpat = value;
+    return true;
+  }
+  if (!strcmp(name, "FHTQsFinal")) {
+    g_fh_t_qs_final = value;
+    return true;
+  }
+  if (!strcmp(name, "FHTRfp")) {
+    g_fh_t_rfp = value;
     return true;
   }
   if (!strcmp(name, "CheckBonus")) {
@@ -5532,7 +5622,7 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     // (Obsidian/Berserk).
     if (stand_pat >= beta)
       return (g_fh_smooth && stand_pat < mate_score && stand_pat > -mate_score)
-                 ? (stand_pat + beta) / 2
+                 ? td_fail_firm(stand_pat, beta, g_fh_t_qs_standpat)
                  : stand_pat;
 
     // F-002: era `const int DELTA = 1000` (unita'-eval, mai ricalibrato
@@ -5578,7 +5668,17 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   // catture. P1.3 QSChecks (default OFF): alla prima ply di qsearch genera
   // TUTTO, poi il loop tiene solo catture + quiet che danno SCACCO DIRETTO.
   const bool qs_checks_here = g_qs_checks && qs_depth == 0 && !in_check;
-  td_generate_moves(td, move_list, !in_check && !qs_checks_here);
+  // QSTTQuiets (Stormphrax search.cpp:1557): genera anche le quiete quando la TT
+  // dice che la best e' quieta E il bound e' affidabile. `hash_flag_alpha` e' il
+  // nostro upper bound (fail-low), quindi escluderlo = il loro
+  // `flag != UpperBound`. Nessun cap di qs_depth: la condizione TT e' gia' molto
+  // piu' stretta di "prima ply". OFF -> byte-identico.
+  const bool qs_tt_quiets = g_qs_tt_quiets && !pv_node && !in_check && tt_hit &&
+                            tt_move && tt_flag != hash_flag_alpha &&
+                            !get_move_capture(tt_move) &&
+                            !get_move_promoted(tt_move);
+  td_generate_moves(td, move_list,
+                    !in_check && !qs_checks_here && !qs_tt_quiets);
 
   // Calcola punteggi senza ordinare (selezione pick-next).
   int move_scores[256];
@@ -5624,17 +5724,27 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
 
     if (!in_check) {
       if (!get_move_capture(move)) {
-        // P1.3 QSChecks: tieni il quiet SOLO se da' scacco diretto e non
-        // e' un check-blunder (SEE >= -75, stesso filtro del CheckOrdering).
-        if (!qs_checks_here)
-          continue;
-        if (td.check_key != td.hash_key)
-          td_compute_checks(td);
-        if (!get_bit(td.check_sq[get_move_piece(move) % 6],
-                     get_move_target(move)))
-          continue;
-        if (!td_see_at_least(td, move, -75))
-          continue;
+        // QSTTQuiets: quando la condizione TT vale, le quiete passano SENZA il
+        // filtro "deve dare scacco" — e' la forma di Stormphrax, dove il
+        // generatore produce tutte le mosse e a limitare sono l'ordinamento
+        // best-first, il SEE e il cap di move-count (da noi QSMoveCap=3).
+        // Il filtro vero e' gia' nella condizione TT, che e' rarissima.
+        // modo 1 = tutte le quiete ammesse (Stormphrax). modo 2 = ammesse solo
+        // quelle che danno scacco, cioe' il filtro qui sotto resta attivo ma il
+        // gate d'ingresso e' la condizione TT invece di "prima ply".
+        if (g_qs_tt_quiets != 1) {
+          // P1.3 QSChecks: tieni il quiet SOLO se da' scacco diretto e non
+          // e' un check-blunder (SEE >= -75, stesso filtro del CheckOrdering).
+          if (!qs_checks_here && !qs_tt_quiets)
+            continue;
+          if (td.check_key != td.hash_key)
+            td_compute_checks(td);
+          if (!get_bit(td.check_sq[get_move_piece(move) % 6],
+                       get_move_target(move)))
+            continue;
+          if (!td_see_at_least(td, move, -75))
+            continue;
+        }
       } else {
         // BadNoisy (SF qsearch move-count pruning, gated OFF): le catture sono
         // ordinate best-first -> dopo le prime N le rimanenti sono quasi-sempre
@@ -5787,7 +5897,7 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   // re-search dei padri).
   if (g_fh_smooth && best_score >= beta && best_score < mate_score &&
       best_score > -mate_score)
-    best_score = (best_score + beta) / 2;
+    best_score = td_fail_firm(best_score, beta, g_fh_t_qs_final);
 
   int store_flag = (best_score >= beta) ? hash_flag_beta : hash_flag_alpha;
   store_tt(td.hash_key, best_move, best_score, 0, store_flag, td.ply, false,
@@ -6610,7 +6720,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     if (rfp_ok && eval - rfp_margin >= beta)
       // F-018.7 FailHighSmooth: midpoint verso beta = bound TT meno gonfiato ->
       // meno re-search.
-      return g_fh_smooth ? (eval - rfp_margin + beta) / 2 : eval - rfp_margin;
+      return g_fh_smooth
+                 ? td_fail_firm(eval - rfp_margin, beta, g_fh_t_rfp)
+                 : eval - rfp_margin;
   }
 
   // Null move pruning (not when beta is a mate score)
@@ -7397,7 +7509,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       // F-005: gate LMR promossi a tunable (erano hardcoded 3/3; SF riduce da
       // depth>=2, 2a mossa).
       if (depth >= g_lmr_min_depth && moves_searched >= g_lmr_min_moves &&
-          is_quiet && !in_check && !gives_check) {
+          is_quiet && (!in_check || g_lmr_check_exempt >= 2) &&
+          (!gives_check || g_lmr_check_exempt >= 1)) {
         int d_idx = (depth < 63) ? depth : 63;
         int m_idx = (moves_searched < 63) ? moves_searched : 63;
         if (!g_lmr_fine) {
@@ -7648,8 +7761,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       // dall'avversario (stessa esenzione della QFutility: potare/ridurre il
       // recupero = perdere la valutazione dello scambio). Default OFF =
       // byte-identico.
-      else if (g_lmr_captures && is_capture && !is_promotion && !in_check &&
-               !gives_check && depth >= g_lmr_min_depth &&
+      else if (g_lmr_captures && is_capture && !is_promotion &&
+               (!in_check || g_lmr_check_exempt >= 2) &&
+               (!gives_check || g_lmr_check_exempt >= 1) &&
+               depth >= g_lmr_min_depth &&
                moves_searched >= g_lmr_min_moves) {
         int prev_mv = td.move_stack[td.ply - 1];
         int prev_sq = prev_mv ? get_move_target(prev_mv) : -1;
@@ -8165,7 +8280,14 @@ static void thread_search(int thread_id, int max_depth) {
   // sola risposta legale pensare e' inutile: basta la prima iterazione
   // completata. Stesso protocollo make/unmake del rescue anti-forfeit (ply +
   // repetition stack).
-  if (g_tmv2_single_reply && g_tmv2_tc_ok && thread_id == 0 && timeset) {
+  // FIX 2026-07-26: tolto `&& g_tmv2_tc_ok`. Quel gate vale `inc > 0` e serve
+  // ai fattori di ALLOCAZIONE di TMv2, che presuppongono formule pool-incremento.
+  // Questo pero' non alloca niente: se a root c'e' UNA SOLA mossa legale,
+  // pensare di piu' non puo' cambiare la mossa — vero con o senza incremento.
+  // Conta perche' **CCRL 40/4 e CEGT girano a inc=0**: e' proprio il regime dove
+  // veniamo valutati, ed era l'unico in cui questa sicurezza restava spenta.
+  // Puo' solo fermarsi PRIMA, mai spendere di piu' -> non puo' causare forfeit.
+  if (g_tmv2_single_reply && thread_id == 0 && timeset) {
     moves ml[1];
     td_generate_moves(td, ml, false);
     int legal = 0;
@@ -8680,7 +8802,11 @@ static void thread_search(int thread_id, int max_depth) {
       // (b) mate-stop: score di matto per N iterazioni consecutive -> il matto
       //     e' confermato, il tempo extra non serve piu' (robusto ai matti
       //     instabili proprio perche' chiede N conferme, alla Caissa).
-      if (g_tmv2_mate_stop && g_tmv2_tc_ok) {
+      // FIX 2026-07-26: tolto `&& g_tmv2_tc_ok` anche qui, stessa ragione del
+      // single-reply a :8258. Un matto confermato per N iterazioni consecutive
+      // resta confermato che ci sia o no l'incremento: il tempo extra non serve.
+      // Non e' allocazione, e' uno stop -> puo' solo risparmiare tempo.
+      if (g_tmv2_mate_stop) {
         int mabs = score < 0 ? -score : score;
         if (mabs >= mate_score)
           mate_score_iters++;
@@ -8688,7 +8814,7 @@ static void thread_search(int thread_id, int max_depth) {
           mate_score_iters = 0;
       }
       if ((root_single_reply && td.best_move) ||
-          (g_tmv2_mate_stop && g_tmv2_tc_ok &&
+          (g_tmv2_mate_stop &&
            mate_score_iters >= g_tmv2_mate_iters)) {
         stop_threads.store(true, std::memory_order_relaxed);
         break;

@@ -440,6 +440,7 @@ void uci_loop()
             printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
             printf("option name QSChecks type check default false\n");         // P1.3 scacchi quieti alla prima ply di qsearch. BAKED OFF 2026-07-25: spegnerli vale +9.71 +/- 5.99 Elo, LOS 99.93%, LLR 2.96 @3294g 20+0.2 (SF li ha rimossi, PR #5498)
+            printf("option name QSTTQuiets type spin default 0 min 0 max 2\n"); // condizione TT di Stormphrax (search.cpp:1557: !PvNode && ttMove && flag!=UpperBound && ttMove quieta). 0=off (byte-identico) · 1=porta fedele, TUTTE le quiete (bench 371449, +80.7%: troppo caro) · 2=solo quiete che danno SCACCO, cioe' QSChecks TT-gated = la forma stretta che recupera le sequenze forzate senza ricomprare l'albero
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
             printf("option name NMPVerifDepth type spin default 1 min 1 max 64\n");
             printf("option name LMPImproving type check default true\n");      // P1.7 LMP SF-style senza cap d8
@@ -499,6 +500,11 @@ void uci_loop()
             printf("option name ThreatHist type check default true\n");                   // [BAKE 2026-07-03] history quiet condizionata dalle minacce (from/to attaccata)
             printf("option name CapHistThreat type check default false\n");               // l'analogo sulla CAPTURE history (casa d'arrivo difesa). Reckless/Stormphrax, SF non ce l'ha. OFF = byte-identico
             printf("option name ThreatHistWeight type spin default 130 min 0 max 400\n");  // /100 scala extra threat-history in ordering [BAKE 2026-07-04 100->75->60, ultimo step LOS82.13% @296g + SPSA concorde]
+            // FailHighSmooth con pesi SEPARATI (2026-07-25): /1024, 512 = midpoint = comportamento storico byte-identico.
+            // Reckless tuna 5 t distinti; qui i 3 che abbiamo. Riferimento Reckless: standpat ~845, final ~519, rfp ~711.
+            printf("option name FHTQsStandPat type spin default 512 min 0 max 1024\n");   // stand-pat di qsearch: il sito piu' eseguito del motore
+            printf("option name FHTQsFinal type spin default 512 min 0 max 1024\n");      // best finale di qsearch (va anche in TT)
+            printf("option name FHTRfp type spin default 512 min 0 max 1024\n");          // reverse futility pruning
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
             printf("option name QuietOffense type check default true\n");    // BAKED 2026-07-24 (solo wall-pawn, vedi WallPawnPenalty); port Reckless move-ordering
@@ -576,6 +582,7 @@ void uci_loop()
             printf("option name SeeGE type check default true\n");                            // F-008: SEE a soglia early-exit, +1.81%% NPS node-identico (ON 2026-07-02)
             printf("option name SeeGEVerify type check default false\n");                     // F-008: oracle cross-check dei due path SEE (diagnostica)
             printf("option name LMRCapScale type spin default 52 min 10 max 150\n");          // REVERT 2026-07-23 (SPSA B1 evaporato); %% lmr_table sulle catture
+            printf("option name LMRCheckExempt type spin default 0 min 0 max 2\n");           // terza esenzione-scacchi del motore (le prime due, tolte, valevano +7.98 e +9.71). 0=attuale (mai ridurre chi da' scacco ne' in scacco; SF non ha nessuno dei due gate) · 1=riduci anche chi DA' scacco · 2=riduci anche IN scacco
             // ==== F-018 (secondo audit 2026-07-03): micro-tecniche Obsidian/Berserk, default OFF/neutro ====
             printf("option name PostLMRHist type check default false\n");                     // conthist update post re-search LMR (SF mainline); test pulito neutro -> OFF, candidato tuning
             printf("option name PostLMRHistScale type spin default 106 min 0 max 400\n");
@@ -1196,6 +1203,10 @@ void uci_loop()
         {
             const char* v = input + 30;
             set_qs_checks(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name QSTTQuiets value ", 32) == 0)
+        {
+            set_qs_tt_quiets(atoi(input + 32));
         }
         else if (strncmp(input, "setoption name NMPVerif value ", 30) == 0)
         {

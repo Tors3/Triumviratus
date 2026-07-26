@@ -266,7 +266,6 @@ extern std::vector<std::thread> search_threads;
 extern std::vector<ThreadData> thread_data;
 extern std::atomic<bool> stop_threads;
 extern std::atomic<U64> total_nodes;
-extern std::mutex cout_mutex;
 extern int num_threads;
 
 // Thread management functions
@@ -473,6 +472,7 @@ extern void set_cutnode_lmr(bool enabled);    // riduzione extra sui cut-node
 extern void set_threat_ordering(bool enabled); // ThreatOrdering: bonus/malus quiet per pezzo minacciato da uno di valore inferiore (SF-style)
 extern void set_threat_hist(bool enabled);     // ThreatHist (5.1): history quiet condizionata dalle minacce (from/to attaccata)
 extern void set_caphist_threat(bool enabled);  // CapHistThreat: l'analogo sulla CAPTURE history (casa di arrivo difesa). Reckless/Stormphrax; SF non ce l'ha
+extern void set_qs_tt_quiets(int mode);        // QSTTQuiets: 0=off · 1=tutte le quiete (Stormphrax fedele) · 2=solo quiete che danno scacco (QSChecks TT-gated)
 extern void set_check_ordering(bool enabled);  // CheckOrdering: bonus quiet che danno scacco diretto, filtrati SEE>=-75 (SF-style)
 extern void set_conthist36(bool enabled);      // ContHist36: aggiunge conthist 3-ply e 6-ply all'ordering quiet (SF #4)
 extern void set_prior_bonus(bool enabled);     // PriorBonus (V2): su fail-low, bonus alla mossa precedente (conthist/main + capture-hist se cattura)

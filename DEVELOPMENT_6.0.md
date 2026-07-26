@@ -92,6 +92,14 @@ Each row is measured against the state *before* that change (1 thread, 64 MB, UH
 | 12 | QSMoveCap 1 → 3 (quiescence searched one move per node) ⁹ | 2026-07-25 | 15+0.15 | 2868 | **+5.21 ± 6.47** | 94.3% |
 | 13 | Quiet checks removed from quiescence (`QSChecks=false`) ¹⁰ | 2026-07-25 | 20+0.2 | 3294 | **+9.71 ± 5.99** | 99.93% |
 
+<sub>**Rows 11–13, measured together: +19.51 ± 10.48, LOS 99.99%, 1016 games at 20+0.2.** Worth stating
+separately, because the individual figures sum to about +25 and the block is worth +20 — the three
+changes overlap heavily on the same quiescence/evaluation circuit, which is why this table's rows are
+**not additive** and should never be added up. The cumulative test was run by reproducing the previous
+day's state on the *same binary* through UCI options (`QSMoveCap=1 CorrMaterial=true QSChecks=true`,
+verified to restore the earlier benchmark signature exactly), so both sides share a compiler and build
+flags and the comparison isolates the changes rather than the toolchain.</sub>
+
 <sub>¹ Row 3 is a cumulative snapshot: mid-training `nn-rubicon-alea-v2` (checkpoint ep439 of ~800,
 so it understates the final net) plus an SPSA re-tune and large-pages/NPS work, measured together
 against rows 1–2. Superseded by the final v2/v3 networks above and by the version-bump gate below.</sub>
@@ -199,6 +207,23 @@ Bugs and stale design decisions found during and after prerelease prep. All are 
 current source and in the published binaries; they are recorded because the first one changes what
 *earlier* prerelease builds were, and the others are the kind of thing worth being honest about.
 
+- **Two time-management safety stops were disabled at zero increment — the regime the rating lists
+  use.** Time management v2 is gated on the game having an increment, because its *allocation*
+  formulas assume an increment pool. That gate had also been switched off two things that are not
+  allocation at all: stopping once the root has a single legal move (thinking longer cannot change
+  the move) and stopping once a mate score has been confirmed for several consecutive iterations.
+  Neither depends on an increment, and both can only stop **earlier**, never overspend, so neither
+  can cause a loss on time. They were nonetheless inactive at increment zero — which is exactly how
+  **CCRL 40/4 and CEGT** are played. Now ungated; byte-identical whenever an increment is present, so
+  no result measured with one is affected.
+- **A correction-history table was baked on a short-time-control measurement and has been removed
+  again.** A bundle of three small changes measured **+10.43 ± 5.57** at 10+0.1 and was baked; the
+  long-time-control confirmation was recorded as in progress and never actually completed. Redone at
+  20+0.2, the same bundle measured **−6.89 ± 9.01** — the sign reversed. Its weakest member, a
+  material-keyed evaluation correction, was isolated (**+10.04 ± 16.76** in favour of switching it
+  off) and now ships disabled; the other two members stay. This is the second time this class of
+  change has reversed between 10 s and 20 s, and it is why nothing in this release is baked on a
+  short time control alone any more.
 - **The Windows binaries embedded the wrong network.** The single source of truth for the default
   net name was updated in the code but not in the Windows resource file, so the embedded blob was
   still `rubicon-alea-v2`. Binaries with `nn-rubicon-alea-v3.nnue` next to them were unaffected
