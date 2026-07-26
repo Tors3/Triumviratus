@@ -9052,6 +9052,37 @@ void search_position_mt(int depth) {
     }
   }
 
+  // FIX 2026-07-26 — "Bestmove does not match beginning of last PV".
+  // La bestmove puo' venire da un thread != 0 (sia col voting, sia col legacy
+  // "vince il piu' profondo" qui sopra), ma le info-line le stampa SOLO il
+  // thread 0: tutte le chiamate a print_search_info sono guardate da
+  // thread_id == 0. Quando vince un helper, l'ultima PV stampata e' quella del
+  // thread 0 mentre la mossa giocata e' quella dell'helper -> due ricerche
+  // diverse. Le GUI e fastchess lo segnalano, e la PV mostrata in analisi e'
+  // fuorviante.
+  // ⚠️ NON tocca la forza di gioco: la mossa giocata resta quella scelta dalla
+  // regola di selezione, che e' il comportamento voluto. E' un difetto di
+  // REPORTING. Si vede solo da oggi perche' e' il primo match multi-thread:
+  // tutti i gate fino al 26/07 erano a 1 thread.
+  // Effetto collaterale che resta APERTO: la predizione TM qui sotto richiede
+  // thread_data[0].pv_table[0][0] == best_move, quindi quando vince un helper
+  // si disattiva da sola. Non e' un bug di correttezza, ma con 8 thread quella
+  // parte di TMv2 e' di fatto spenta. Farla puntare al thread vincitore
+  // cambierebbe il comportamento a >1 thread e va misurato, non fatto qui.
+  // A 1 thread la condizione non scatta mai -> byte-identico.
+  if (best_move && num_threads > 1 &&
+      thread_data[0].pv_table[0][0] != best_move) {
+    for (int i = 1; i < num_threads; i++) {
+      if (thread_data[i].pv_length[0] > 0 &&
+          thread_data[i].pv_table[0][0] == best_move) {
+        print_search_info(thread_data[i], best_depth, best_score, 0,
+                          thread_data[i].pv_table[0],
+                          thread_data[i].pv_length[0]);
+        break;
+      }
+    }
+  }
+
   // TM v2 Q-06 (Caissa): salva l'hash della posizione PREVISTA dopo
   // best+risposta (pv[0], pv[1]): al prossimo "go", se l'avversario ha giocato
   // la risposta predetta la TT e' calda -> meno tempo (fattore in parse_go).
