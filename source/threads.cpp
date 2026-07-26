@@ -9070,16 +9070,31 @@ void search_position_mt(int depth) {
   // parte di TMv2 e' di fatto spenta. Farla puntare al thread vincitore
   // cambierebbe il comportamento a >1 thread e va misurato, non fatto qui.
   // A 1 thread la condizione non scatta mai -> byte-identico.
-  if (best_move && num_threads > 1 &&
-      thread_data[0].pv_table[0][0] != best_move) {
+  if (best_move && thread_data[0].pv_table[0][0] != best_move) {
+    int src = -1;
     for (int i = 1; i < num_threads; i++) {
       if (thread_data[i].pv_length[0] > 0 &&
           thread_data[i].pv_table[0][0] == best_move) {
-        print_search_info(thread_data[i], best_depth, best_score, 0,
-                          thread_data[i].pv_table[0],
-                          thread_data[i].pv_length[0]);
+        src = i;
         break;
       }
+    }
+    if (src >= 0) {
+      print_search_info(thread_data[src], best_depth, best_score, 0,
+                        thread_data[src].pv_table[0],
+                        thread_data[src].pv_length[0]);
+    } else {
+      // FALLBACK (2026-07-26, seconda passata): puo' non esserci NESSUN thread
+      // la cui pv_table[0][0] sia la bestmove. `td.best_move` e `pv_table[0][0]`
+      // non sono la stessa cosa: se un'iterazione viene interrotta a meta', la
+      // PV e' gia' stata sovrascritta da quella incompleta mentre best_move
+      // conserva l'ultima completata; e il mate-restore assegna best_move = cand
+      // senza toccare la PV. La prima versione del fix cercava solo un thread
+      // corrispondente e in quel caso non stampava nulla -> warning ancora li'.
+      // Qui si stampa almeno la mossa come PV di lunghezza 1: e' meno
+      // informativo ma e' VERO, e la coerenza bestmove/PV e' garantita sempre.
+      print_search_info(thread_data[0], best_depth, best_score, 0, &best_move,
+                        1);
     }
   }
 
