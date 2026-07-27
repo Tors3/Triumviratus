@@ -40,12 +40,16 @@
 namespace Triumviratus::Eval::NNUE {
 
 // Input features used in evaluation function.
-// TRANN1 (Triumviratus Rubicon Alea NNUE 1): architettura derivata da
-// Stockfish SFNNv13 (GPLv3, attribuzione in COPYING/README) + DUE blocchi di
-// input assenti in SF: PawnPair (4560 feature) e PassedPawns (96 feature).
-// Il nome proprio riflette la divergenza reale, non nasconde la derivazione:
-// il formato del net NON e' piu' SFNNv13 (hash diverso) e un net SFNNv13 non
-// e' caricabile.
+// TRANN2 (Triumviratus NNUE 2, linea rete "legio-septima", 7.0): architettura derivata da
+// Stockfish **SFNNv15** (GPLv3, attribuzione in COPYING/README) + UN blocco di input assente
+// in SF: PassedPawns (96 feature).
+// NB: il blocco PawnPair (4560) NON e' piu' un'aggiunta nostra — SF ha adottato la stessa
+// feature come `PP_3Wide` (nnue-pytorch PR #502, merged 25/07/2026): coppie di pedoni su
+// stessa colonna o adiacenti, stesse 4560 dimensioni. Il nostro filtro di banda in
+// features/pawn_pair.cpp e' sempre stato quello; il "combinatorio pieno" non e' mai esistito.
+// Il nome proprio riflette la divergenza reale, non nasconde la derivazione: il formato del net
+// NON e' SFNNv15 puro (hash diverso: c'e' un blocco di input in piu') e i net TRANN1 della 6.0
+// non sono caricabili.
 using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 using PawnFeatureSet   = Features::PawnPair;
@@ -53,7 +57,10 @@ using PassedFeatureSet = Features::PassedPawns;  // v3 graft: 96 feature passed-
 
 // Number of input feature dimensions after conversion
 constexpr IndexType L1 = 1024;
-constexpr int       L2 = 31;
+// L2 = 32 (era 31 in TRANN1/v13): SFNNv15 non ha piu' il neurone forwarded in uno slot extra, quindi
+// L2 e' un multiplo di 32 pulito e il concat e' allineato senza rimappe. Il conto dei parametri della
+// testa cambia ⇒ i net v13 NON sono caricabili (l'hash li rifiuta: e' voluto).
+constexpr int       L2 = 32;
 constexpr int       L3 = 32;
 
 constexpr IndexType PSQTBuckets = 8;
@@ -70,12 +77,25 @@ struct NetworkArchitecture {
     static constexpr int       FC_0_OUTPUTS                 = L2;
     static constexpr int       FC_1_OUTPUTS                 = L3;
 
-    Layers::AffineTransformSparseInput<TransformedFeatureDimensions, FC_0_OUTPUTS + 1> fc_0;
-    Layers::SqrClippedReLU<FC_0_OUTPUTS + 1, WeightScaleBits + 1>                      ac_sqr_0;
-    Layers::ClippedReLU<FC_0_OUTPUTS + 1, WeightScaleBits + 1>                         ac_0;
-    Layers::AffineTransform<FC_0_OUTPUTS * 2, FC_1_OUTPUTS>                            fc_1;
-    Layers::ClippedReLU<FC_1_OUTPUTS, WeightScaleBits>                                 ac_1;
-    Layers::AffineTransform<FC_1_OUTPUTS, 1>                                           fc_2;
+    // --- SFNNv15 "Better Skip Architecture" (port di SF master 2384f27, 04/07/2026) ---
+    // Due differenze rispetto al v13 che avevamo:
+    //  1) L'output layer non legge piu' solo L3: legge il CONCAT di L2 e L3, ognuno nelle sue due
+    //     attivazioni (quadratica + lineare) -> fc_2 ha 2*L2 + 2*L3 = 128 input invece di 32.
+    //     E' lo "skip L2->output": la testa vede anche i neuroni di L2, non solo quelli filtrati da L3.
+    //  2) Compare ac_sqr_1: anche L3 ha l'attivazione quadratica, prima ce l'aveva solo L2.
+    // Inoltre L2 passa da 31 a 32 (vedi il commento su L2): sparisce il neurone-forwarded in slot
+    // extra, e con esso TUTTA la rimappa delle colonne di fc_1 che serviva per riallinearlo.
+    Layers::AffineTransformSparseInput<TransformedFeatureDimensions, FC_0_OUTPUTS> fc_0;
+    Layers::SqrClippedReLU<FC_0_OUTPUTS, WeightScaleBits + 1>                      ac_sqr_0;
+    Layers::ClippedReLU<FC_0_OUTPUTS, WeightScaleBits + 1>                         ac_0;
+    Layers::AffineTransform<FC_0_OUTPUTS * 2, FC_1_OUTPUTS>                        fc_1;
+    Layers::SqrClippedReLU<FC_1_OUTPUTS, WeightScaleBits>                          ac_sqr_1;
+    Layers::ClippedReLU<FC_1_OUTPUTS, WeightScaleBits>                             ac_1;
+    Layers::AffineTransform<FC_0_OUTPUTS * 2 + FC_1_OUTPUTS * 2, 1>                fc_2;
+
+    // Dimensione del buffer di concat: [ac_sqr_0 | ac_0 | ac_sqr_1 | ac_1]
+    static constexpr IndexType ConcatDims =
+      ceil_to_multiple<IndexType>(FC_0_OUTPUTS * 2 + FC_1_OUTPUTS * 2, 32);
 
     // Hash value embedded in the evaluation file
     static constexpr u32 get_hash_value() {
@@ -94,74 +114,29 @@ struct NetworkArchitecture {
         return hashValue;
     }
 
-    // --- Rimappa colonne fc_1 (2026-07-19, port dell'idea SF eca43a97 alle NOSTRE dimensioni) ---
-    // Il FILE (formato canonico, invariato) ha il concat [sqr 0..30 | lin 31..61 | pad 62..63]:
-    // con FC_0_OUTPUTS=31 l'offset 31 e' disallineato e propagate() pagava memset+memcpy+buffer
-    // extra A OGNI EVAL. In MEMORIA usiamo invece [sqr 0..31 | lin 32..63] dove le posizioni 31 e
-    // 63 (attivazioni del neurone forwarded) sono COLONNE MORTE a peso zero: ac_sqr_0/ac_0
-    // scrivono direttamente nel concat, allineati, senza copie. Semantica identica (colonna a
-    // zero x input qualunque = 0); il costo di fc_1 e' invariato (processava gia' 64 input paddati).
-    // La rimappa avviene QUI, al confine file<->memoria, in entrambe le direzioni: il formato su
-    // disco non cambia mai (stessi hash, stesse reti, stesso trainer).
-    static constexpr size_t FC1BiasBytes = FC_1_OUTPUTS * sizeof(i32);
-    static constexpr size_t FC1RowBytes  = 64;   // PaddedInputDimensions di fc_1 (= anche il file)
-    static constexpr size_t FC1BlockBytes = FC1BiasBytes + FC_1_OUTPUTS * FC1RowBytes;
-
+    // Con L2 = 32 il concat e' allineato per costruzione: nessuna rimappa delle colonne di fc_1.
+    // (La rimappa del 19/07 esisteva SOLO per riallineare l'offset 31 quando L2 era 31; il v15
+    // la rende inutile. Cancellata: era ~50 righe al confine file<->memoria in due direzioni.)
     bool read_parameters(std::istream& stream) {
-        if (!(fc_0.read_parameters(stream) && ac_0.read_parameters(stream)))
-            return false;
-        char buf[FC1BlockBytes];
-        stream.read(buf, sizeof(buf));
-        if (stream.fail())
-            return false;
-        for (int r = 0; r < FC_1_OUTPUTS; ++r)
-        {
-            char* row = buf + FC1BiasBytes + r * FC1RowBytes;
-            char  tmp[FC1RowBytes];
-            std::memcpy(tmp, row, FC1RowBytes);
-            row[31] = 0;                                        // colonna morta: sqr(forwarded)
-            for (int c = 31; c <= 61; ++c) row[c + 1] = tmp[c]; // lin k: colonna 31+k -> 32+k
-            row[63] = 0;                                        // colonna morta: lin(forwarded)
-        }
-        std::stringstream remapped(std::string(buf, sizeof(buf)),
-                                   std::ios::in | std::ios::binary);
-        return fc_1.read_parameters(remapped) && ac_1.read_parameters(stream)
+        return fc_0.read_parameters(stream) && ac_0.read_parameters(stream)
+            && fc_1.read_parameters(stream) && ac_1.read_parameters(stream)
             && fc_2.read_parameters(stream);
     }
 
-    // Write network parameters (rimappa INVERSA: la memoria torna al formato-file canonico)
     bool write_parameters(std::ostream& stream) const {
-        if (!(fc_0.write_parameters(stream) && ac_0.write_parameters(stream)))
-            return false;
-        std::stringstream mem(std::ios::in | std::ios::out | std::ios::binary);
-        if (!fc_1.write_parameters(mem))
-            return false;
-        std::string blk = mem.str();
-        if (blk.size() != FC1BlockBytes)
-            return false;
-        for (int r = 0; r < FC_1_OUTPUTS; ++r)
-        {
-            char* row = &blk[0] + FC1BiasBytes + r * FC1RowBytes;
-            char  tmp[FC1RowBytes];
-            std::memcpy(tmp, row, FC1RowBytes);
-            for (int c = 31; c <= 61; ++c) row[c] = tmp[c + 1]; // 32+k -> 31+k
-            row[62] = 0;
-            row[63] = 0;
-        }
-        stream.write(blk.data(), blk.size());
-        return !stream.fail() && ac_1.write_parameters(stream) && fc_2.write_parameters(stream);
+        return fc_0.write_parameters(stream) && ac_0.write_parameters(stream)
+            && fc_1.write_parameters(stream) && ac_1.write_parameters(stream)
+            && fc_2.write_parameters(stream);
     }
 
     i32 propagate(const TransformedFeatureType* transformedFeatures,
                   const NNZInfo<L1>&            nnzInfo) const {
         struct alignas(CacheLineSize) Buffer {
             alignas(CacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
-            // Concat [sqr 0..31 | lin 32..63]: le posizioni 31 e 63 sono colonne morte a peso
-            // zero (vedi read_parameters) -> le due attivazioni scrivono DIRETTAMENTE qui,
-            // allineate. Niente memset, niente memcpy, niente ac_0_out (port idea SF eca43a97).
-            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[64];
+            // Concat SFNNv15: [ac_sqr_0 0..31 | ac_0 32..63 | ac_sqr_1 64..95 | ac_1 96..127].
+            // fc_1 legge i primi 2*L2; fc_2 legge TUTTO il buffer (skip L2->output).
+            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[ConcatDims];
             alignas(CacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
-            alignas(CacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
             alignas(CacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
         };
 
@@ -171,16 +146,18 @@ struct NetworkArchitecture {
         // ⛔ propagate_pair (attivazione fusa) MISURATA PIU' LENTA e non usata: vedi il commento
         // in layers/sqr_clipped_relu.h. Le due attivazioni separate restano la via veloce.
         ac_sqr_0.propagate(buffer.fc_0_out, buffer.concat);
-        ac_0.propagate(buffer.fc_0_out, buffer.concat + 32);
+        ac_0.propagate(buffer.fc_0_out, buffer.concat + FC_0_OUTPUTS);
         fc_1.propagate(buffer.concat, buffer.fc_1_out);
-        ac_1.propagate(buffer.fc_1_out, buffer.ac_1_out);
-        fc_2.propagate(buffer.ac_1_out, buffer.fc_2_out);
+        ac_sqr_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2);
+        ac_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2 + FC_1_OUTPUTS);
+        fc_2.propagate(buffer.concat, buffer.fc_2_out);
 
-        // max value for fwdOut is (L1 + L3) * HiddenMaxVal * WeightMaxVal
-        // for int8 activations and weights this is (L1 + L3) * 16129 making
-        // fwdOut safe from overflow until (L1 + L3) > 133,144
-        // first layer and last layer use WeightScaleBits + 1
-        i32 fwdOut = buffer.fc_2_out[0] + buffer.fc_0_out[FC_0_OUTPUTS];
+        // Skip L1->output (SFNNv15): non c'e' piu' un neurone forwarded in slot extra; si prende la
+        // DIFFERENZA degli ultimi due output di fc_0, che sarebbero comunque zero-paddati per il SIMD
+        // ("keep the 'free' information as we would otherwise zero pad anyway").
+        static_assert(FC_0_OUTPUTS >= 2);
+        i32 fwdOut = buffer.fc_2_out[0]
+                   + (buffer.fc_0_out[FC_0_OUTPUTS - 2] - buffer.fc_0_out[FC_0_OUTPUTS - 1]);
         // fwdOut is such that 1.0 is equal to HiddenOneVal*(1<<WeightScaleBits)*2 in
         // quantized form, but we want 1.0 to be equal to 600*OutputScale
         // to make overflow impossible we cast to i64
@@ -199,9 +176,8 @@ struct NetworkArchitecture {
                         const NNZInfo<L1>& nnzInfo, i32* l2out, i32* l3out) const {
         struct alignas(CacheLineSize) Buffer {
             alignas(CacheLineSize) typename decltype(fc_0)::OutputBuffer fc_0_out;
-            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[64];
+            alignas(CacheLineSize) typename decltype(ac_sqr_0)::OutputType concat[ConcatDims];
             alignas(CacheLineSize) typename decltype(fc_1)::OutputBuffer fc_1_out;
-            alignas(CacheLineSize) typename decltype(ac_1)::OutputBuffer ac_1_out;
             alignas(CacheLineSize) typename decltype(fc_2)::OutputBuffer fc_2_out;
         };
         Buffer buffer;
@@ -209,14 +185,18 @@ struct NetworkArchitecture {
         // ⛔ propagate_pair (attivazione fusa) MISURATA PIU' LENTA e non usata: vedi il commento
         // in layers/sqr_clipped_relu.h. Le due attivazioni separate restano la via veloce.
         ac_sqr_0.propagate(buffer.fc_0_out, buffer.concat);
-        ac_0.propagate(buffer.fc_0_out, buffer.concat + 32);
+        ac_0.propagate(buffer.fc_0_out, buffer.concat + FC_0_OUTPUTS);
         fc_1.propagate(buffer.concat, buffer.fc_1_out);
-        ac_1.propagate(buffer.fc_1_out, buffer.ac_1_out);
-        fc_2.propagate(buffer.ac_1_out, buffer.fc_2_out);
-        // l2out: le attivazioni lineari ora vivono nel concat a partire da +32
-        for (int i = 0; i < FC_0_OUTPUTS; ++i) l2out[i] = i32(buffer.concat[32 + i]);
-        for (int i = 0; i < FC_1_OUTPUTS; ++i) l3out[i] = i32(buffer.ac_1_out[i]);
-        i32 fwdOut = buffer.fc_2_out[0] + buffer.fc_0_out[FC_0_OUTPUTS];
+        ac_sqr_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2);
+        ac_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2 + FC_1_OUTPUTS);
+        fc_2.propagate(buffer.concat, buffer.fc_2_out);
+        // attivazioni LINEARI: L2 dal concat a +FC_0_OUTPUTS, L3 a +2*FC_0_OUTPUTS+FC_1_OUTPUTS
+        for (int i = 0; i < FC_0_OUTPUTS; ++i) l2out[i] = i32(buffer.concat[FC_0_OUTPUTS + i]);
+        for (int i = 0; i < FC_1_OUTPUTS; ++i)
+            l3out[i] = i32(buffer.concat[FC_0_OUTPUTS * 2 + FC_1_OUTPUTS + i]);
+        static_assert(FC_0_OUTPUTS >= 2);
+        i32 fwdOut = buffer.fc_2_out[0]
+                   + (buffer.fc_0_out[FC_0_OUTPUTS - 2] - buffer.fc_0_out[FC_0_OUTPUTS - 1]);
         constexpr i64 multiplier = 600 * OutputScale;
         constexpr i64 denominator =
           static_cast<i64>(HiddenOneVal) * static_cast<i64>(1U << WeightScaleBits) * 2;

@@ -602,7 +602,15 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
 // Stateless full-refresh eval ("eval" command + NNUE_VERIFY oracle). pieces[] /
 // squares[] are already in SF encoding (the engine's nn_build_piece_list maps via
 // nn_piece_code[]/nnue_squares[]). Single-threaded (UI/debug only).
-int nn_eval(int side_white, const int* pieces, const int* squares, int count, int rule50) {
+// `raw_out` (opzionale): uscita GREZZA della rete, psqt + positional, PRIMA di nn_scale.
+// Serve al cross-check contro il trainer: il valore di ritorno passa per nn_scale, che
+// applica blend psqt/positional, smorzamento per complessita', scaling per materiale e
+// smorzamento rule50 — nessuna delle quali esiste nel forward del trainer. Confrontare il
+// ritorno col trainer paragona due grandezze diverse: misurato R^2 0.73 anche su una coppia
+// motore+rete NOTA-BUONA (6.0 + v3), con gli errori massimi tutti su posizioni ad alto
+// contatore 50-mosse. (27/07/2026)
+int nn_eval(int side_white, const int* pieces, const int* squares, int count, int rule50,
+            int* raw_out) {
     static std::unique_ptr<AccumulatorStack>  s_acc;
     static std::unique_ptr<AccumulatorCaches> s_cch;
     static Position                           s_pos;
@@ -622,5 +630,7 @@ int nn_eval(int side_white, const int* pieces, const int* squares, int count, in
     s_pos.set_pieces(pcs, sqs, count, side_white ? WHITE : BLACK, &s_si);
     s_acc->reset();
     auto [psqt, positional] = g_net->evaluate(s_pos, *s_acc, *s_cch);
+    if (raw_out)
+        *raw_out = int(psqt) + int(positional);
     return nn_scale(s_pos, psqt, positional, rule50);
 }

@@ -206,9 +206,14 @@ void Network::verify(std::string                                  evalfilePath,
             std::string msg2 = "The network file " + evalfilePath + " was not loaded successfully.";
             std::string msg3 = "The UCI option EvalFile might need to specify the full path, "
                                "including the directory name, to the network file.";
-            std::string msg4 = "The default net can be downloaded from: "
-                               "https://tests.stockfishchess.org/api/nn/"
-                             + std::string(evalFile.defaultName);
+            // NB: qui c'era il testo ereditato da Stockfish che rimandava a
+            // tests.stockfishchess.org/api/nn/<nome>. E' FALSO per noi: le nostre reti non
+            // stanno sul server di test di SF, e chi ci finiva trovava un 404. (27/07/2026)
+            std::string msg4 = "Triumviratus networks are published with the engine release: "
+                               "https://github.com/Tors3/Triumviratus/releases  (the network is "
+                               "also embedded in the binary, so a bare executable normally works "
+                               "on its own; this error means the file that WAS found is not "
+                               "compatible with this build).";
             std::string msg5 = "The engine will be terminated now.";
 
             std::string msg = "ERROR: " + msg1 + '\n' + "ERROR: " + msg2 + '\n' + "ERROR: " + msg3
@@ -366,7 +371,16 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
     // viene zero-fillato in FeatureTransformer::read_parameters (eval identica).
     const bool v2Compat = (hashValue == Network::hash_v2);
     if (hashValue != Network::hash && !v2Compat)
+    {
+        // Diagnostica: senza questi numeri un rifiuto di rete e' muto e si finisce a
+        // indovinare quale pezzo non combacia (ordine dei blocchi, hash di una feature,
+        // dimensioni della testa). Costa una riga e vale ogni volta. (27/07/2026)
+        std::cerr << "ERROR: network hash mismatch. file=0x" << std::hex << hashValue
+                  << " engine=0x" << Network::hash << " (v2-compat=0x" << Network::hash_v2 << ")"
+                  << "\n       FT=0x" << FeatureTransformer::get_hash_value()
+                  << "  arch=0x" << NetworkArchitecture::get_hash_value() << std::dec << std::endl;
         return false;
+    }
     {
         // Sezione FT: header di sezione + parametri (dual-format; specchia
         // Detail::read_parameters, che non puo' passare il flag).
@@ -374,7 +388,11 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
         const u32 expected =
           v2Compat ? FeatureTransformer::get_hash_value_v2() : FeatureTransformer::get_hash_value();
         if (!stream || header != expected)
+        {
+            std::cerr << "ERROR: feature-transformer hash mismatch. file=0x" << std::hex << header
+                      << " engine=0x" << expected << std::dec << std::endl;
             return false;
+        }
         if (!featureTransformer.read_parameters(stream, v2Compat))
             return false;
     }

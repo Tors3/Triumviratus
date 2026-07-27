@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [Development](DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Development](DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -82,6 +82,31 @@ as measured rather than re-run on a friendlier book.</sub>
 > retractions are all in **[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md)**, to keep this page short.
 > How each network was trained: **[`NETWORKS.md`](NETWORKS.md)**.
 
+---
+
+## Triumviratus 7.0 — in development
+
+> [!IMPORTANT]
+> **6.0 is and remains the official release.** 7.0 has no binary, no network and no measured
+> strength yet. Nothing here is a claim — it is the direction of the work in progress.
+
+7.0 is a **network project**, not a search project. The search is measurably close to exhausted for
+this project's effort budget: a full audit in July 2026 found the remaining gap to the strongest
+engines is **≈ 25–40 Elo of network**, not of search.
+
+Two things change, and the second one is the real one:
+
+- **Architecture** moves from SFNNv13 to **SFNNv16** — Stockfish's newer skip structure, plus the
+  removal of pawn→pawn threat inputs that the pawn-pair block already covers. Total inputs
+  87,904 → 86,992. The project's own `PassedPawns` block stays.
+- **Training method.** Every network shipped so far has been a **graft**: an existing network frozen,
+  with only a newly added feature block allowed to learn — which is why they converge in about four
+  epochs. 7.0 is the project's **first full training from scratch**, in two stages, on a much larger
+  public corpus re-labelled with Leela's BT4 network.
+
+The new network line is called **`legio-septima`**. Details as they are decided:
+**[`NETWORKS.md`](NETWORKS.md)**.
+
 
 ## License
 
@@ -119,7 +144,9 @@ engines. Credit and thanks to all of them:
 - **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, **[Viridithas](https://github.com/cosmobobak/viridithas)** — the **`PawnPair` NNUE input feature** (see below).
 - **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**, **[Ethereal](https://github.com/AndyGrant/Ethereal)** and **[Stormphrax](https://github.com/Ciekce/Stormphrax)** — assorted search, pruning and ordering refinements (Stormphrax also originated the `PawnPair` feature design).
 
-**NNUE input features — attribution.** The **`PawnPair`** block (a pairwise pawn-square co-occurrence feature, `96·95/2 = 4560` inputs) is **not an original idea of this project**: it is a design shared by **Stormphrax**, **Viridithas** and **Pawnocchio**. Our C++ implementation (`nnue/features/pawn_pair.*`) and the trained network weights are our own, but the feature itself belongs to those engines and is credited to them explicitly. The **`PassedPawns`** block (one input per passed pawn, 96 slots) is, by contrast, **an original feature of this project** — designed, implemented and trained here, and not drawn from another engine.
+**NNUE input features — attribution.** The **`PawnPair`** block (pairs of pawns on the same or adjacent files, `4560` inputs) is **not an original idea of this project**. It was **invented by Jonathan Hallström for [Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, from his observation that in a network trained on *all* pawn pairs the ones that mattered were those at most one file apart. It was also used by **Stormphrax** and **Viridithas**, and in July 2026 **Stockfish adopted it as `PP_3Wide` in SFNNv16** — so what we implement here is now the same feature Stockfish itself carries. Our C++ implementation (`nnue/features/pawn_pair.*`) and the trained weights are our own; the idea is his.
+
+The **`PassedPawns`** block (one input per passed pawn, 96 slots) is, by contrast, **an original feature of this project** — designed, implemented and trained here, and present in no other engine we know of.
 
 The open-source computer-chess community is what makes a project like this possible.
 

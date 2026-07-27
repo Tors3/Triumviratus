@@ -72,7 +72,8 @@ int  nn_finalize(int unadjusted, int rule50);  // ricostruisce l'eval finale dal
 //   rule50     : halfmove (fifty-move) clock
 // Returns the evaluation (stm-relative, Stockfish internal units == the engine's
 // eval scale). Stateless oracle for the "eval" command + the NNUE_VERIFY check.
-int nn_eval(int side_white, const int* pieces, const int* squares, int count, int rule50);
+int nn_eval(int side_white, const int* pieces, const int* squares, int count, int rule50,
+            int* raw_out = nullptr);
 
 // ---------------------------------------------------------------------------
 // Per-thread incremental position handle. In M2 it only tracks side-to-move and

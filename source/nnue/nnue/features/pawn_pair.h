@@ -29,9 +29,12 @@ namespace Triumviratus::Eval::NNUE::Features {
 
 class PawnPair {
    public:
-    // Hash value embedded in the evaluation file — MUST match the trainer
-    // (model/modules/features/pawn_pair.py: 0x50414952 = "PAIR")
-    static constexpr u32 HashValue = 0x50414952u;
+    // Hash value embedded in the evaluation file — MUST match the trainer.
+    // 7.0: allineato a upstream `model/modules/features/pp_3wide.py` (HASH = 0x86F2B1DD).
+    // Era 0x50414952 ("PAIR") quando il blocco viveva solo nel nostro fork; ora la stessa
+    // feature e' il PP_3Wide di SF (SFNNv16) e usiamo il loro trainer, quindi vince il loro hash.
+    // 🔴 Un disallineamento qui NON e' silenzioso: il motore rifiuta la rete (verificato 27/07).
+    static constexpr u32 HashValue = 0x86f2b1ddu;
 
     // Number of feature dimensions
     static constexpr IndexType Dimensions = 4560;

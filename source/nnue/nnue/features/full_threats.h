@@ -29,16 +29,20 @@ class Position;
 
 namespace Triumviratus::Eval::NNUE::Features {
 
-static constexpr int numValidTargets[PIECE_NB] = {0, 6, 10, 8, 8, 10, 0, 0,
-                                                  0, 6, 10, 8, 8, 10, 0, 0};
+// Le threat diagonali di pedone puntano SOLO a cavalli e torri: le relazioni
+// pedone-pedone (e le spinte) sono coperte dal blocco PawnPair, che e' la stessa
+// feature del PP_3Wide di SF. Tenerle anche qui era pagare DUE VOLTE la stessa
+// informazione (SF le ha rimosse in nnue-pytorch PR #502 / SF #6982). -> 4 target.
+static constexpr int numValidTargets[PIECE_NB] = {0, 4, 10, 8, 8, 10, 0, 0,
+                                                  0, 4, 10, 8, 8, 10, 0, 0};
 
 class FullThreats {
    public:
     // Hash value embedded in the evaluation file
-    static constexpr u32 HashValue = 0x8f234cb8u;
+    static constexpr u32 HashValue = 0x2e6b9d04u;  // allineato a SF master (threats senza pawn-pawn)
 
     // Number of feature dimensions
-    static constexpr IndexType Dimensions = 60720;
+    static constexpr IndexType Dimensions = 59808;  // era 60720 con pawn->pawn + pusher
 
     // clang-format off
     // Orient a square according to perspective (rotates by 180 for black)
@@ -54,7 +58,7 @@ class FullThreats {
     };
 
     static constexpr int map[PIECE_TYPE_NB-2][PIECE_TYPE_NB-2] = {
-      { 0,  1, -1,  2, -1, -1},
+      {-1,  0, -1,  1, -1, -1},   // pedone: pawn escluso, knight->0, rook->1
       { 0,  1,  2,  3,  4, -1},
       { 0,  1,  2,  3, -1, -1},
       { 0,  1,  2,  3, -1, -1},

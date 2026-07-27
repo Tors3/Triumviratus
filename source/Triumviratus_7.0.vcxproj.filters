@@ -135,7 +135,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="Triumviratus_5.0.rc">
+    <ResourceCompile Include="Triumviratus_7.0.rc">
       <Filter>File di risorse</Filter>
     </ResourceCompile>
   </ItemGroup>

@@ -328,6 +328,9 @@ extern void set_probcut_tt(bool enabled);      // N2 probcut fail-high salvato i
 // DIAGNOSTIC ("eval" UCI command): static NNUE eval (cp, side-to-move relative)
 // of the current global board. For cross-checking the NNUE port vs official SF.
 extern int debug_eval_position();
+// Uscita GREZZA della rete (psqt + positional, pre-nn_scale): l'unica grandezza
+// confrontabile col trainer in un cross-check.
+extern int debug_eval_position_raw();
 
 // Eval-off diagnostic (UCI option "EvalOff") — NPS profiling only, not for play.
 extern void set_eval_off(bool enabled);

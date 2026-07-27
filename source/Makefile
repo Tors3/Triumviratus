@@ -46,7 +46,7 @@ OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
 # incbin (un file omonimo accanto all'exe la sovrascrive; EvalFile carica
 # qualsiasi path). Senza file -> NNUE_EMBEDDING_OFF come prima (es. bundle
 # sorgenti-only per le VM). NB: il nome deve restare allineato a evaluate.h.
-NET_NAME := nn-rubicon-alea-v3.nnue
+NET_NAME := nn-legio-septima.nnue
 ifneq (,$(wildcard $(NET_NAME)))
   EMBED_DEF :=
   $(info [i] $(NET_NAME) trovata: rete EMBEDDATA nel binario)

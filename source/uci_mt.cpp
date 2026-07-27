@@ -944,7 +944,18 @@ void uci_loop()
         // side-to-move relative), no search => byte-identical for cross-checks.
         else if (strncmp(input, "eval", 4) == 0)
         {
-            printf("eval %d\n", debug_eval_position());
+            const int e = debug_eval_position();
+            printf("eval %d\n", e);
+            // Formato Stockfish, richiesto dagli strumenti standard (nnue-pytorch
+            // cross_check_eval.py cerca esattamente questa riga). "internal units" e'
+            // letterale: questo valore NON passa per la normalizzazione NORM_CP=392
+            // applicata al `score cp` della search-info (threads.cpp:8212), quindi e'
+            // direttamente confrontabile con l'uscita del trainer. (27/07/2026)
+            // 🔴 GREZZO, non `e`: `e` passa per nn_scale (blend psqt/positional, complessita',
+            // materiale, rule50), che il trainer NON ha. Confrontare `e` col trainer paragona
+            // due grandezze diverse — misurato R^2 0.73 anche su una coppia nota-buona.
+            printf("NNUE evaluation  %d (side to move, internal units)\n",
+                   debug_eval_position_raw());
             fflush(stdout);
         }
 

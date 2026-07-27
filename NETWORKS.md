@@ -8,8 +8,10 @@ are Stockfish's (GPLv3 — see [`README`](README.md) and [`COPYING`](COPYING)); 
 mostly public** — Leela Chess Zero `test79`/`test80` binpacks, plus Stockfish-generated packs in one early stage,
 plus a small slice of our own self-play. What is **ours** is the **network weights**: trained from scratch, with no
 Stockfish network used as a seed or teacher, on a data mix and schedule we chose — and the extra input feature
-blocks (`PawnPair`, `PassedPawns`) that the architecture carries. This document records how each shipped network
-was trained, for transparency and reproducibility.
+blocks the architecture carries. On those two: the pawn-pair block was **invented by Jonathan Hallström for
+Pawnocchio** and has since been adopted by Stockfish itself as `PP_3Wide` (SFNNv16) — our implementation and
+weights are ours, the idea is his. **`PassedPawns` is original to this project.** This document records how
+each shipped network was trained, for transparency and reproducibility.
 
 ---
 
@@ -118,69 +120,38 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ---
 
-## `Outposts` — a third input block, tested and **rejected** (negative result, kept for the record)
+## `legio-septima` — the Triumviratus 7.0 network (**in development, not released**)
 
-> **Status: implemented, verified, trained, and measured at parity — not shipped.** The block was
-> mechanically sound (a network with random Outposts weights collapses by −614 Elo, so the features
-> demonstrably drive the evaluation) but added no strength: frozen-base training showed no signal by
-> epoch 3-5, where `PassedPawns` had already shown its gain, and whole-network co-adaptation first
-> *lost* ~18 Elo, then merely recovered to parity. The information is evidently already inferable
-> from the threat features and `PawnPair` through the L1 pairwise product. Two lessons worth the GPU
-> hours: square-only features that are meaningless without a piece standing on them get a diluted
-> gradient (an outpost square matters only when something occupies it — a passed pawn matters by
-> itself), and training loss is useless as a guide at the label-noise floor (it sat flat at ~0.0036
-> while playing strength swung by tens of Elo). The third block slot went on to carry one more
-> candidate (`CandidatePassers`, below) with the same outcome, after which the slot and the
-> tri-format reader were **removed from the engine** — the shipped format is the four-block v3.
+> **Status: in development.** No network shipped yet, no strength measured yet. **Triumviratus 6.0 with
+> `rubicon-alea-v3` remains the official release.** This section is here so the direction is public while
+> the work happens, not because there is a result to report.
 
-The engine's feature set can now carry a third project-specific block, on the same pattern as
-`PawnPair` and `PassedPawns`:
+The `rubicon-alea` lineage ends with 6.0. The 7.0 network changes both the architecture and, more
+importantly, **the training method** — which is why it starts a new lineage and a new name.
 
-| | |
-|---|---|
-| **Feature space** | **96 features** — 48 oriented squares × {own outpost, enemy outpost}. A square is an *outpost* for a side when it is **defended by one of that side's pawns** and **no enemy pawn can ever attack it** (no enemy pawn on an adjacent file still able to advance onto it). |
-| **Why square-only** | No flags for the piece standing there, its colour complex, or whether it is defended twice. Those are learnable through the pairwise-multiplied L1 against `HalfKAv2_hm` (which already knows which piece is on which square), and adding them would break the pawn-event-only incremental update. Only the part the network *cannot* infer — the cross-file pawn configuration — is encoded. Same reasoning that shaped `PassedPawns`. |
-| **Cost** | Folds into the existing threat accumulator and reuses the `PassedPawns` pawn-event trigger, so it adds **no new SIMD path** and no measurable inference cost. |
-| **Reader** | During the experiment the reader was **tri-format**: one binary loaded a v4 net (with Outposts), a v3 net (zero-filling Outposts) and a v2 net (zero-filling both PassedPawns and Outposts), with automatic format detection from the network hash. This is what made net-isolated A/B gating possible with a single executable. Removed together with the slot once the experiments closed. |
-| **Verification** | The zero-initialised graft is **bit-identical** to its parent (same bench signature through graft → serialize → reader), the incremental update matches a full refresh with **zero mismatches**, and the C++ loader agrees with an independent Python reference on every test position. |
+| | 6.0 — `rubicon-alea-v3` | 7.0 — `legio-septima` |
+|---|---|---|
+| Base architecture | SFNNv13 | **SFNNv16** |
+| L2 | 31 | 32 |
+| `Full_Threats` | 60,720 | **59,808** |
+| Pawn-pair block | ours, 4,560 | **identical** — it is Stockfish's `PP_3Wide` |
+| `PassedPawns` | 96 | 96 (still ours; Stockfish has no equivalent) |
+| **Total inputs** | 87,904 | **86,992** |
+| Training | **graft** — the base net is frozen (`--lr 0`) and only the new feature block learns | **full training**, 600 + 800 epochs |
 
-One methodological observation worth recording, independent of whether this network ships: grafting a
-new block and then **co-adapting the whole network** (a two-group fine-tune — low learning rate on the
-base, high on the new block) behaves very differently from the frozen-base screening used for
-`PassedPawns`. Early in such a run the network is measurably *weaker* than its parent, because the
-base is being pulled around by a block that is still changing quickly; it recovers only after a few
-epochs. Training loss is close to useless as a guide here — it sat flat at the label-noise floor
-(~0.0036) throughout, while playing strength moved by tens of Elo in both directions. Only game
-results tracked what was actually happening.
+**Why the input count goes down.** Stockfish's SFNNv16 removed the pawn→pawn threat features and the
+pawn-pusher inputs, because the pawn-pair block already covers every pawn–pawn interaction — keeping both
+means paying twice for the same information. We had both; now we don't.
 
----
+**The change that actually matters is not in that table.** Every network this project has shipped so far
+was a **graft**: an existing net with its dense layers frozen, learning only a newly added feature block.
+That is why they saturate in about four epochs — most of the network never learns anything. `legio-septima`
+is the project's **first real full training**: base and feature blocks together, from scratch, over a corpus
+of public Stockfish self-play and DFRC data re-labelled with Leela's BT4 network, followed by a second stage
+on Leela-derived data. Whether that closes the gap to the strongest networks is exactly the open question.
 
-## `CandidatePassers` — the second slot candidate, also **rejected** (negative result, kept for the record)
-
-> **Status: implemented, verified, trained frozen-base, and measured negative — not shipped.** After
-> Outposts, the same third-block slot carried a **candidate-passer / pawn-majority** feature: 96
-> features (48 oriented squares × own/enemy), where a pawn is a *candidate* when it is not passed,
-> sits on a semi-open file, and its potential helpers on adjacent files are at least as many as the
-> enemy sentries ahead of it. Same pawn-event incremental trigger, same zero-init graft discipline
-> as `PassedPawns`.
-
-Wiring was proven the same way (random block weights collapse the net by **−240 Elo**, so the
-features drive the eval), and the block demonstrably *learned* — its mean absolute weight after 7
-epochs of frozen-base training exceeded that of the shipped `PassedPawns` block. It still measured
-**negative at every gate**: −1.9 / −3.1 / −6.8 at 12 s across epochs 3-7, and −5.0 at 18 s with
-adjudication for the final check. Learned-but-useless is the interesting part: the information is
-real but evidently already inferable from the threat features and `PawnPair` through the L1 pairwise
-product. Together with Outposts (and a re-test of the best co-adapted Outposts checkpoint, which
-came back neutral), this closed the slot: **the slot-5 code and the tri-format reader were removed
-from the engine**, and the experimental nets are archived off-tree
-(`nn-rubicon-alea-v4-coadapt-ep3-UNCONFIRMED.nnue`, `nn-rubicon-alea-v5-candidates-ep7-NEGATIVE.nnue`).
-
-The refined lesson after two rejections, added to the feature-selection criteria: a block earns its
-place only when the encoded information is (a) **not inferable** from existing inputs through the
-pairwise L1, (b) carries **large evaluation magnitude** in classical terms, (c) **correlates with
-the label** strongly enough to survive the label-noise floor, and (d) **means something by itself**,
-without a piece having to stand on the square (`PassedPawns` passes all four; Outposts fails (d),
-CandidatePassers fails (a)).
+Architecture diagram, gates and the full recipe live in the development tree, not here — this file records
+what shipped.
 
 ---
 

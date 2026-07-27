@@ -4252,6 +4252,27 @@ int debug_eval_position() {
   return nn_eval(side == white, pieces, squares, count, fifty);
 }
 
+// Come debug_eval_position ma restituisce l'uscita GREZZA della rete (psqt + positional,
+// pre-nn_scale). E' la grandezza che calcola anche il trainer, quindi e' l'unica
+// confrontabile in un cross-check. Vedi il commento su nn_eval in nnue_bridge.cpp.
+int debug_eval_position_raw() {
+  int pieces[33], squares[33];
+  int count = 0;
+  for (int bb_piece = P; bb_piece <= k; bb_piece++) {
+    U64 bb = bitboards[bb_piece];
+    while (bb) {
+      int sq = get_ls1b_index(bb);
+      pieces[count] = nn_piece_code[bb_piece];
+      squares[count] = nnue_squares[sq];
+      count++;
+      pop_bit(bb, sq);
+    }
+  }
+  int raw = 0;
+  nn_eval(side == white, pieces, squares, count, fifty, &raw);
+  return raw;
+}
+
 // Re-sync the incremental NNUE mirror to the thread's current board (full
 // refresh). Called at the root of each iterative-deepening iteration.
 static inline void nn_root_sync(ThreadData &td) {
