@@ -1,0 +1,325 @@
+diff --git a/data_loader/cpp/training_data_loader.cpp b/data_loader/cpp/training_data_loader.cpp
+index b874b08..f0781d7 100644
+--- a/data_loader/cpp/training_data_loader.cpp
++++ b/data_loader/cpp/training_data_loader.cpp
+@@ -7,6 +7,7 @@
+ #include <random>
+ #include <cstring>
+ #include <cmath>
++#include <cstdlib>
+ 
+ #include "lib/rng.h"
+ 
+@@ -388,6 +389,109 @@ struct PP_3WideExtractor: IFeatureExtractor {
+     }
+ };
+ 
++// ---------------------------------------------------------------------------
++// Passed-pawn inputs — blocco PROPRIO di Triumviratus (rete "legio-septima", 7.0).
++// Non esiste in Stockfish. Trapiantato dal nostro fork (TrainingAleaV2_Grafting),
++// adattato all'interfaccia upstream che non passa piu' l'array `values`
++// (nnue-pytorch PR #490 "Removing feature value tensors": i valori sono tutti 1.0).
++//
++// Una feature per pedone passato. 96 slot (48 propri + 48 avversari, traverse 2-7
++// orientate per prospettiva e specchiate col re come HalfKA/threats/PP_3Wide).
++// "Passato" = nessun pedone avversario sulla stessa colonna o su quelle adiacenti
++// davanti, E nessun pedone proprio direttamente davanti sulla stessa colonna (un
++// doppiato arretrato non e' un passato). Deliberatamente solo-casa (nessun flag
++// bloccato/re/connesso): quelle interazioni sono apprendibili dal prodotto a coppie
++// in L1 contro i blocchi HalfKA e PP_3Wide.
++//
++// 🔴 DEVE combaciare con il motore (Triumviratus_7/nnue/nnue/features/passed_pawns.cpp).
++// Il gate che lo verifica e' cross_check_eval.py — vedi il README del workspace.
++// ---------------------------------------------------------------------------
++struct PassedPawns {
++    static constexpr std::string_view NAME = "PassedPawns";
++
++    static constexpr int INPUTS              = 96;
++    static constexpr int MAX_ACTIVE_FEATURES = 16;  // tutti i pedoni passati (limite teorico)
++
++    // Stessa codifica di slot del pawn_id di PP_3Wide: 0..47 propri, 48..95 avversari.
++    static int pawn_id(Color persp, Square ksq, Color pc, Square sq) {
++        int o = int(sq) ^ int(FullThreats::OrientTBL[(int) persp][(int) ksq]);
++        return (pc != persp ? 48 : 0) + o - 8;  // i pedoni orientati vivono su 8..55 -> 0..47
++    }
++
++    // Test "passato" su case RAW: l'orientazione entra solo al momento dell'indice.
++    static bool is_passed(int s, bool white, const int* own, int nOwn, const int* opp, int nOpp) {
++        const int f = s & 7, r = s >> 3;
++        for (int i = 0; i < nOpp; i++)
++        {
++            const int of = opp[i] & 7, orr = opp[i] >> 3;
++            const int df = of - f;
++            if (df >= -1 && df <= 1 && (white ? orr > r : orr < r))
++                return false;
++        }
++        for (int i = 0; i < nOwn; i++)
++        {
++            if (own[i] == s)
++                continue;
++            const int orr = own[i] >> 3;
++            if ((own[i] & 7) == f && (white ? orr > r : orr < r))
++                return false;
++        }
++        return true;
++    }
++
++    // Conta i pedoni passati (entrambi i lati). Stessa verita' di fill_features_sparse:
++    // un solo posto dove "passato" e' definito.
++    static int count_passed(const TrainingDataEntry& e) {
++        auto& pos = e.pos;
++        int   wp[8], bp[8];
++        int   nw = 0, nb = 0;
++        for (Square s : pos.piecesBB(whitePawn))
++            wp[nw++] = int(s);
++        for (Square s : pos.piecesBB(blackPawn))
++            bp[nb++] = int(s);
++        int cnt = 0;
++        for (int i = 0; i < nw; i++)
++            if (is_passed(wp[i], true, wp, nw, bp, nb))
++                cnt++;
++        for (int i = 0; i < nb; i++)
++            if (is_passed(bp[i], false, bp, nb, wp, nw))
++                cnt++;
++        return cnt;
++    }
++
++    static std::pair<int, int>
++    fill_features_sparse(const TrainingDataEntry& e, int* features, Color color) {
++        auto&  pos = e.pos;
++        Square ksq = pos.kingSquare(color);
++
++        int wp[8], bp[8];
++        int nw = 0, nb = 0;
++        for (Square s : pos.piecesBB(whitePawn))
++            wp[nw++] = int(s);
++        for (Square s : pos.piecesBB(blackPawn))
++            bp[nb++] = int(s);
++
++        int k = 0;
++        for (int i = 0; i < nw; i++)
++            if (is_passed(wp[i], true, wp, nw, bp, nb))
++                features[k++] = pawn_id(color, ksq, Color::White, Square(wp[i]));
++        for (int i = 0; i < nb; i++)
++            if (is_passed(bp[i], false, bp, nb, wp, nw))
++                features[k++] = pawn_id(color, ksq, Color::Black, Square(bp[i]));
++        return {k, INPUTS};
++    }
++};
++
++struct PassedPawnsExtractor: IFeatureExtractor {
++    int inputs() const override { return PassedPawns::INPUTS; }
++    int max_active_features() const override { return PassedPawns::MAX_ACTIVE_FEATURES; }
++    std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e,
++                                             int*                     features,
++                                             Color                    color) const override {
++        return PassedPawns::fill_features_sparse(e, features, color);
++    }
++};
++
+ struct ComposedFeatureExtractor: IFeatureExtractor {
+     std::vector<std::unique_ptr<IFeatureExtractor>> extractors;
+     int                                             m_inputs;
+@@ -437,6 +541,9 @@ static std::unique_ptr<IFeatureExtractor> make_single_extractor(std::string_view
+         return std::make_unique<FullThreatsExtractor>();
+     if (name == "PP_3Wide")
+         return std::make_unique<PP_3WideExtractor>();
++    // Triumviratus 7.0 "legio-septima": blocco nostro, assente in Stockfish.
++    if (name == "PassedPawns")
++        return std::make_unique<PassedPawnsExtractor>();
+     return nullptr;
+ }
+ 
+@@ -543,16 +650,43 @@ void SparseBatch::fill_features(const IFeatureExtractor& fs, int i, const Traini
+       fs.fill_features_sparse(e, black + offset, Color::Black).first;
+ }
+ 
++// Ripartizione dei thread fra chi DECODIFICA il binpack (reader) e chi ESTRAE le feature
++// (worker). Il valore upstream, 0.14, e' tarato sul costo di estrazione di upstream; il
++// nostro feature set e' molto piu' pesante (Full_Threats 128 attive + PP_3Wide 128 +
++// PassedPawns) a parita' di costo di lettura, quindi l'ottimo si sposta verso i worker.
++// Reso regolabile a runtime con NNUE_WORKER_THREAD_RATIO per poter fare uno sweep senza
++// ricompilare: 0 < ratio < 1. Fuori range o non impostata => il default compilato.
++static double effective_worker_thread_ratio(double compiled_default) {
++    static const double cached = [compiled_default]() {
++        const char* env = std::getenv("NNUE_WORKER_THREAD_RATIO");
++        if (env == nullptr)
++            return compiled_default;
++        const double v = std::atof(env);
++        if (!(v > 0.0) || !(v < 1.0))
++        {
++            std::cerr << "NNUE_WORKER_THREAD_RATIO='" << env
++                      << "' fuori range (0,1): uso il default " << compiled_default << std::endl;
++            return compiled_default;
++        }
++        std::cerr << "NNUE_WORKER_THREAD_RATIO=" << v << " (default compilato "
++                  << compiled_default << ")" << std::endl;
++        return v;
++    }();
++    return cached;
++}
++
+ int FeaturedBatchStream::calculate_num_reader_threads(int concurrency) {
+-    if (worker_thread_ratio >= 1)
++    const double ratio = effective_worker_thread_ratio(worker_thread_ratio);
++    if (ratio >= 1)
+         return 1;
+     return std::max(1, concurrency - calculate_num_worker_threads(concurrency));
+ }
+ 
+ int FeaturedBatchStream::calculate_num_worker_threads(int concurrency) {
+-    if (worker_thread_ratio <= 0)
++    const double ratio = effective_worker_thread_ratio(worker_thread_ratio);
++    if (ratio <= 0)
+         return 1;
+-    return std::max(1, static_cast<int>(std::floor(concurrency * worker_thread_ratio)));
++    return std::max(1, static_cast<int>(std::floor(concurrency * ratio)));
+ }
+ 
+ FeaturedBatchStream::FeaturedBatchStream(
+@@ -575,6 +709,12 @@ FeaturedBatchStream::FeaturedBatchStream(
+     m_concurrency(concurrency),
+     m_num_workers(calculate_num_worker_threads(concurrency)) {
+ 
++    // Diagnostica: la ripartizione reader/worker non era visibile da nessuna parte, e col
++    // ratio di default un --num-workers 64 diventa 8 estrattori di feature e 56 lettori.
++    std::cerr << "[loader] concurrency=" << concurrency
++              << "  reader=" << calculate_num_reader_threads(concurrency)
++              << "  worker(feature)=" << m_num_workers.load() << std::endl;
++
+     m_stop_flag.store(false);
+ 
+     auto worker = [this]() {
+diff --git a/model/modules/feature_transformer/fused_ft_kernel.py b/model/modules/feature_transformer/fused_ft_kernel.py
+index 4d8e130..baeecce 100644
+--- a/model/modules/feature_transformer/fused_ft_kernel.py
++++ b/model/modules/feature_transformer/fused_ft_kernel.py
+@@ -1,3 +1,4 @@
++import os
+ import cupy as cp
+ import torch
+ 
+@@ -124,7 +125,11 @@ void fused_double_ft_forward(
+         )
+     return _fused_double_ft_forward_kernel_cache[key]
+ 
+-BACKWARD_TILE_SIZE = 4
++# Quante posizioni elabora insieme un blocco nel backward. Il costo del backward e'
++# dominato dagli atomicAdd su grad_weight (una tabella 87k x 1024): tile piu' grandi
++# ammortizzano le letture delle slice di gradiente su piu' posizioni. Regolabile da
++# NNUE_BACKWARD_TILE per poter cercare l'ottimo senza ricompilare.
++BACKWARD_TILE_SIZE = int(os.environ.get("NNUE_BACKWARD_TILE", "4"))
+ 
+ _fused_double_ft_backward_kernel_cache = {}
+ 
+diff --git a/model/modules/features/__init__.py b/model/modules/features/__init__.py
+index fda0dc4..bfda99b 100644
+--- a/model/modules/features/__init__.py
++++ b/model/modules/features/__init__.py
+@@ -8,15 +8,26 @@ import tyro
+ from .full_threats import FullThreats
+ from .halfka_v2_hm import HalfKav2Hm
+ from .input_feature import InputFeature
++from .passed_pawns import PassedPawns
+ from .pp_3wide import PP3Wide
+ 
+ _FEATURE_COMPONENTS: dict[str, type[InputFeature]] = {
+     "HalfKAv2_hm^": HalfKav2Hm,
+     "Full_Threats": FullThreats,
+     "PP_3Wide": PP3Wide,
++    # Triumviratus 7.0 "legio-septima": blocco NOSTRO, non esiste in SF.
++    # L'estrazione degli indici sta nel data loader C++ ("PassedPawns").
++    "PassedPawns": PassedPawns,
+ }
+ 
+-DEFAULT_FEATURES = "Full_Threats+PP_3Wide+HalfKAv2_hm^"
++# Default upstream: "Full_Threats+PP_3Wide+HalfKAv2_hm^"
++# Default Triumviratus 7.0: lo stesso + PassedPawns.
++# 🔴 L'ORDINE NON E' ESTETICO: determina sia il layout dei pesi nel file .nnue sia
++# l'hash (combine_hash e' una rotazione+xor, quindi ordine-dipendente). Il nostro motore
++# legge lo stream come Full_Threats -> HalfKA -> PawnPair -> PassedPawns
++# (nnue_feature_transformer.h::read_parameters), quindi HalfKA va PRIMA di PP_3Wide.
++# Upstream ha l'ordine opposto: invertirlo fa rifiutare la rete dal motore (verificato 27/07).
++DEFAULT_FEATURES = "Full_Threats+HalfKAv2_hm^+PP_3Wide+PassedPawns"
+ 
+ 
+ def get_feature_cls(name: str) -> list[Callable[[int], InputFeature]]:
+diff --git a/model/modules/features/passed_pawns.py b/model/modules/features/passed_pawns.py
+new file mode 100644
+index 0000000..c92eefa
+--- /dev/null
++++ b/model/modules/features/passed_pawns.py
+@@ -0,0 +1,73 @@
++import torch
++from torch import nn
++
++from .input_feature import InputFeature
++
++
++class PassedPawns(InputFeature):
++    """Passed-pawn inputs (rubicon-alea-v3 graft).
++
++    One feature per passed pawn: 96 slots (48 own + 48 enemy; squares on
++    ranks 2-7 oriented per perspective and file-mirrored with the king like
++    HalfKA/threats/PawnPair). "Passed" = no enemy pawn on the same or
++    adjacent files ahead of the pawn AND no own pawn directly ahead on the
++    same file (a rear doubled pawn is not a passer).
++
++    The passed property is the relational signal HalfKA cannot represent
++    directly; interactions with blockers / kings / chains are learnable
++    through the SFNNv13 pairwise-multiplied L1 against the HalfKA and
++    PawnPair blocks, so v1 is deliberately square-only (no flags).
++    Extraction lives in the C++ data loader ("PassedPawns").
++    """
++
++    HASH = 0x50535344  # "PSSD" — must match the engine-side hash (passed_pawns.h)
++    FEATURE_NAME = "PassedPawns"
++    INPUT_FEATURE_NAME = "PassedPawns"
++    MAX_ACTIVE_FEATURES = 16  # all 16 pawns passed (theoretical bound)
++
++    NUM_INPUTS = 96
++    NUM_REAL_FEATURES = 96
++    EXPORT_WEIGHT_DTYPE = torch.int8
++
++    def __init__(self, num_outputs: int):
++        super().__init__()
++
++        self.num_outputs = num_outputs
++        self.weight = nn.Parameter(
++            torch.empty(self.NUM_INPUTS, num_outputs, dtype=torch.float32)
++        )
++
++        self.reset_parameters()
++
++    def merged_weight(self) -> torch.Tensor:
++        return self.weight
++
++    @torch.no_grad()
++    def coalesce(self) -> None:
++        pass  # no virtual weights
++
++    @torch.no_grad()
++    def zero_virtual_weights(self) -> None:
++        pass  # no virtual weights
++
++    @torch.no_grad()
++    def init_weights(self, num_psqt_buckets: int, nnue2score: float) -> None:
++        """Passed pawns carry no material (the pawn itself is already in the
++        HalfKA PSQT), so PSQT columns are zero."""
++        L1 = self.num_outputs - num_psqt_buckets
++        for i in range(num_psqt_buckets):
++            self.weight[:, L1 + i] = 0.0
++
++    @torch.no_grad()
++    def get_export_weights(self) -> torch.Tensor:
++        return self.weight.data.clone()
++
++    @torch.no_grad()
++    def load_export_weights(self, export_weight: torch.Tensor) -> None:
++        self.weight.data.copy_(export_weight)
++
++    def clip_weights(self, quantization) -> None:
++        """int8 export like threats -> same quantization-safe clamp range."""
++        self.weight.data.clamp_(
++            quantization.min_threat_weight, quantization.max_threat_weight
++        )
