@@ -58,11 +58,8 @@ search work: an unconditional check extension removed, a quiescence search that 
 examining a single move per node, quiet checks removed from quiescence, continuation-history and
 killer-move fixes, and a pre-release audit that found seven latent defects.
 
-<sub>An earlier gate measured **+33.18 ± 9.86** at 20+0.2 on 2026-07-16. It predates eight further
-changes and is superseded by the figure above, not contradicted by it — the two are separate
-measurements at different time controls and hash sizes, and the incremental gains listed in
-[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md) are **not additive** (each is measured against the state
-immediately before it, and they overlap).</sub>
+<sub>The incremental gains listed in [`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md) are **not additive** —
+each is measured against the state immediately before it, and they overlap.</sub>
 
 #### Against other engines
 

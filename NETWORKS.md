@@ -122,9 +122,9 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ## `legio-septima` — the Triumviratus 7.0 network (**in development, not released**)
 
-> **Status: in development.** No network shipped yet, no strength measured yet. **Triumviratus 6.0 with
-> `rubicon-alea-v3` remains the official release.** This section is here so the direction is public while
-> the work happens, not because there is a result to report.
+> **Status: in development.** Nothing shipped; stage 1 is roughly a quarter done and the only strength
+> figure so far is a preliminary one (see below). **Triumviratus 6.0 with `rubicon-alea-v3` remains the
+> official release.** This section is here so the direction is public while the work happens.
 
 The `rubicon-alea` lineage ends with 6.0. The 7.0 network changes both the architecture and, more
 importantly, **the training method** — which is why it starts a new lineage and a new name.
@@ -137,7 +137,7 @@ importantly, **the training method** — which is why it starts a new lineage an
 | Pawn-pair block | ours, 4,560 | **identical** — it is Stockfish's `PP_3Wide` |
 | `PassedPawns` | 96 | 96 (still ours; Stockfish has no equivalent) |
 | **Total inputs** | 87,904 | **86,992** |
-| Training | **graft** — the base net is frozen (`--lr 0`) and only the new feature block learns | **full training**, 600 + 800 epochs |
+| Training | **graft** — the base net is frozen (`--lr 0`) and only the new feature block learns | **full training**, 500 + 800 epochs |
 
 **Why the input count goes down.** Stockfish's SFNNv16 removed the pawn→pawn threat features and the
 pawn-pusher inputs, because the pawn-pair block already covers every pawn–pawn interaction — keeping both
@@ -149,6 +149,47 @@ That is why they saturate in about four epochs — most of the network never lea
 is the project's **first real full training**: base and feature blocks together, from scratch, over a corpus
 of public Stockfish self-play and DFRC data re-labelled with Leela's BT4 network, followed by a second stage
 on Leela-derived data. Whether that closes the gap to the strongest networks is exactly the open question.
+
+### Stage 1 data
+
+All five packs come from **[`vondele/master-binpacks_relabel`](https://huggingface.co/datasets/vondele/master-binpacks_relabel)**
+— public Stockfish self-play, **re-labelled with Leela's BT4 network** so the whole stage shares one label
+scale. Mixing BT4 labels with search-Stockfish labels would put two different target distributions in the
+same training run.
+
+| binpack | size | what it is |
+|---|---|---|
+| `nodes5000pv2_UHO.relabel-BT4-tf13tune.binpack` | 41.1 GiB | self-play, 5000 nodes, UHO openings |
+| `dfrc_n5000.relabel-BT4-tf13tune.binpack` | 38.2 GiB | **DFRC / Fischer random** |
+| `multinet_pv-2_diff-100_nodes-5000.relabel-BT4-tf13tune.binpack` | 28.4 GiB | multi-net labelling |
+| `wrongIsRight_nodes5000pv2.relabel-BT4-tf13tune.binpack` | 7.3 GiB | positions where the eval is wrong |
+| `fishpack32.relabel-BT4-tf13tune.binpack` | 5.5 GiB | misc |
+| **total** | **121 GiB** | ≈ 50 G positions |
+
+The trainer interleaves them at chunk level — the datasets are positional, so no pre-merge step is needed.
+
+**Recipe:** 500 epochs × 100 M positions = **50 G positions seen**, ≈ one pass over the corpus.
+`batch 131,072`, `lr 2.47e-3`, `gamma 0.990`, WDL lambda annealed **1.0 → 0.75**,
+`random-fen-skipping 3`. The batch was raised mid-run for throughput and the learning rate scaled with it
+by `√(batch/16384)` — which is why neither matches Stockfish's published `16384 / 8.75e-4`.
+
+Stage 2 moves to Leela-derived data (T80 re-labelled with BT4, plus T91), ~380 GB, 800 epochs.
+
+### Where it stands
+
+Measured at **epoch 111 of 500** — 23 % of stage 1, and stage 2 has not started:
+
+> **−21.95 ± 30.38 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 206 games, 15+0.15, 1 thread,
+> 64 MB, UHO book, both engines built PGO + AVX-512.
+
+That interval is wide and the number will move; it is recorded because the *direction* is the point.
+A from-scratch network that has seen a quarter of its first stage is already within ~20 Elo of the
+lineage that took three graft generations to build — with the second, larger stage still ahead.
+
+<sub>An earlier figure of −64.97 ± 13.39 (epoch 54) is **not** comparable: it predates both 57 epochs of
+training and the discovery that the 7.0 Windows project was not defining `USE_AVX512`, so that build was
+effectively AVX2 against a PGO opponent. Two things changed between the measurements; neither can be
+credited alone.</sub>
 
 Architecture diagram, gates and the full recipe live in the development tree, not here — this file records
 what shipped.
