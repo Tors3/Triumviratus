@@ -84,8 +84,8 @@ as measured rather than re-run on a friendlier book.</sub>
 ## Triumviratus 7.0 — in development
 
 > [!IMPORTANT]
-> **6.0 is and remains the official release.** 7.0 has no binary, no network and no measured
-> strength yet. Nothing here is a claim — it is the direction of the work in progress.
+> **6.0 is and remains the official release.** 7.0 is still in training and has no binary. The
+> figure below is a mid-training checkpoint with its error bar, not a release claim.
 
 7.0 is a **network project**, not a search project. The search is measurably close to exhausted for
 this project's effort budget: a full audit in July 2026 found the remaining gap to the strongest
