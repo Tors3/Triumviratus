@@ -220,13 +220,23 @@ costs more in repetition than it adds in coverage.
 
 ### Where it stands
 
-Measured at **stage-2 epoch 189** — stage 1 complete, stage 2 ~24 % done:
+Stage 1 complete, stage 2 at **epoch 370 of 800**:
 
-> **+13.00 ± 12.72 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 802 games, 12+0.12, 1 thread,
-> 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign 650 / draw 10 cp.
+> **+17.09 ± 10.55 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 1180 games, 15+0.15, LOS
+> 99.93 %, 1 thread, 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign 650 / draw
+> 10 cp.
 
 Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the network.
-Zero is excluded, but only just: `[+0.28, +25.72]`, with ~600 epochs still to run.
+
+| stage-2 epoch | date | TC | games | Elo | LOS |
+|---|---|---|---|---|---|
+| 189 | 2026-07-29 | 12+0.12 | 802 | +13.00 ± 12.72 | 97.75% |
+| 229 | 2026-07-29 | 15+0.15 | 942 | +8.85 ± 11.82 | 92.91% |
+| 263 | 2026-07-29 | 15+0.15 | 1678 | +13.88 ± 8.58 | 99.92% |
+| **370** | 2026-07-30 | 15+0.15 | 1180 | **+17.09 ± 10.55** | 99.93% |
+
+<sub>Not a progression: 370 vs 263 is +3.2 ± 13.6. The last 107 epochs produced no gain this
+measurement can resolve.</sub>
 
 Progression against the end of stage 1 — same binary, only the `.nnue` swapped:
 

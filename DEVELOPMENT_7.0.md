@@ -146,13 +146,19 @@ All measurements: 1 thread, 64 MB hash, UHO_4060_v4 book, two-sided resign 650 /
 
 #### vs 6.0 — first checkpoint ahead
 
-| | date | TC | games | Elo | LOS |
-|---|---|---|---|---|---|
-| stage-2 epoch 189 vs `6.0` + `rubicon-alea-v3` | 2026-07-29 | 12+0.12 | 802 | **+13.00 ± 12.72** | 97.75% |
+All against `6.0` + `rubicon-alea-v3`, on the 7.0 binary **frozen before** any search change, so
+each figure isolates the network.
 
-Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the network.
-Zero is excluded, but only just — the interval is `[+0.28, +25.72]` — and roughly 600 training
-epochs remain.
+| stage-2 epoch | date | TC | games | Elo | LOS |
+|---|---|---|---|---|---|
+| 189 | 2026-07-29 | 12+0.12 | 802 | +13.00 ± 12.72 | 97.75% |
+| 229 | 2026-07-29 | 15+0.15 | 942 | +8.85 ± 11.82 | 92.91% |
+| 263 | 2026-07-29 | 15+0.15 | 1678 | +13.88 ± 8.58 | 99.92% |
+| **370** | 2026-07-30 | 15+0.15 | 1180 | **+17.09 ± 10.55** | 99.93% |
+
+Ahead of 6.0 from epoch 189 on, and by epoch 263 the interval `[+5.3, +22.5]` clears zero on
+margin rather than on noise. The four figures are **not** a progression: 370 vs 263 is
++3.2 ± 13.6, so 107 epochs of training produced no gain this measurement can see.
 
 #### Stage 2 progress — vs the end of stage 1
 

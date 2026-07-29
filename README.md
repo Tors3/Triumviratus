@@ -100,15 +100,15 @@ Two things change, and the second one is the real one:
 
 The new network line is called **`legio-septima`**.
 
-#### First checkpoint ahead of 6.0
+#### Ahead of 6.0
 
 | | date | TC | games | Elo | LOS |
 |---|---|---|---|---|---|
-| stage-2 epoch 189 vs `6.0` + `rubicon-alea-v3` | 2026-07-29 | 12+0.12 | 802 | **+13.00 ± 12.72** | 97.75% |
+| stage-2 epoch 370 vs `6.0` + `rubicon-alea-v3` | 2026-07-30 | 15+0.15 | 1180 | **+17.09 ± 10.55** | 99.93% |
 
 <sub>Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the
-network. Zero is excluded, but only just — the interval is `[+0.28, +25.72]` — and roughly 600
-training epochs remain. Development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network
+network. Ahead since epoch 189; 430 training epochs remain. Full per-checkpoint table and the
+caveat that these figures are not a progression: **[`NETWORKS.md`](NETWORKS.md)**. Development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network
 details: **[`NETWORKS.md`](NETWORKS.md)**.</sub>
 
 
