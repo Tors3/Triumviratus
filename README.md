@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Dev log 6.0](DEVELOPMENT_6.0.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Development](DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -84,8 +84,8 @@ as measured rather than re-run on a friendlier book.</sub>
 ## Triumviratus 7.0 — in development
 
 > [!IMPORTANT]
-> **6.0 is and remains the official release.** 7.0 is still in training and has no binary. The
-> figure below is a mid-training checkpoint with its error bar, not a release claim.
+> **6.0 is and remains the official release.** 7.0 has no binary, no network and no measured
+> strength yet. Nothing here is a claim — it is the direction of the work in progress.
 
 7.0 is a **network project**, not a search project. The search is measurably close to exhausted for
 this project's effort budget: a full audit in July 2026 found the remaining gap to the strongest
@@ -98,21 +98,11 @@ Two things change, and the second one is the real one:
   87,904 → 86,992. The project's own `PassedPawns` block stays.
 - **Training method.** Every network shipped so far has been a **graft**: an existing network frozen,
   with only a newly added feature block allowed to learn — which is why they converge in about four
-  epochs. 7.0 is the project's **first full training from scratch**, in two stages, on ~380 GB of
-  public data re-labelled with Leela's BT4 network.
+  epochs. 7.0 is the project's **first full training from scratch**, in two stages, on a much larger
+  public corpus re-labelled with Leela's BT4 network.
 
-The new network line is called **`legio-septima`**.
-
-#### First checkpoint ahead of 6.0
-
-| | date | TC | games | Elo | LOS |
-|---|---|---|---|---|---|
-| stage-2 epoch 189 vs `6.0` + `rubicon-alea-v3` | 2026-07-29 | 12+0.12 | 802 | **+13.00 ± 12.72** | 97.75% |
-
-<sub>Measured on the 7.0 binary **frozen before** any search change, so the number isolates the
-network. Zero is excluded, but only just — the interval is `[+0.28, +25.72]` — and roughly 600
-training epochs remain. Full log, including the measurement mistakes made along the way:
-**[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network details: **[`NETWORKS.md`](NETWORKS.md)**.</sub>
+The new network line is called **`legio-septima`**. Details as they are decided:
+**[`NETWORKS.md`](NETWORKS.md)**.
 
 
 ## License
