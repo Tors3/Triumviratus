@@ -122,12 +122,11 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ## `legio-septima` — the Triumviratus 7.0 network (**in development, not released**)
 
-> **Status: in development.** Nothing shipped; stage 1 is roughly a quarter done and the only strength
-> figure so far is a preliminary one (see below). **Triumviratus 6.0 with `rubicon-alea-v3` remains the
-> official release.** This section is here so the direction is public while the work happens.
+> **Status: in development.** Stage 1 complete (479 epochs). Stage 2 running, ~220 of 800 epochs.
+> Nothing shipped. **Triumviratus 6.0 with `rubicon-alea-v3` remains the official release.**
 
-The `rubicon-alea` lineage ends with 6.0. The 7.0 network changes both the architecture and, more
-importantly, **the training method** — which is why it starts a new lineage and a new name.
+The `rubicon-alea` lineage ends with 6.0. `legio-septima` changes both the architecture and the
+training method — hence a new lineage and a new name.
 
 | | 6.0 — `rubicon-alea-v3` | 7.0 — `legio-septima` |
 |---|---|---|
@@ -143,12 +142,17 @@ importantly, **the training method** — which is why it starts a new lineage an
 pawn-pusher inputs, because the pawn-pair block already covers every pawn–pawn interaction — keeping both
 means paying twice for the same information. We had both; now we don't.
 
-**The change that actually matters is not in that table.** Every network this project has shipped so far
-was a **graft**: an existing net with its dense layers frozen, learning only a newly added feature block.
-That is why they saturate in about four epochs — most of the network never learns anything. `legio-septima`
-is the project's **first real full training**: base and feature blocks together, from scratch, over a corpus
-of public Stockfish self-play and DFRC data re-labelled with Leela's BT4 network, followed by a second stage
-on Leela-derived data. Whether that closes the gap to the strongest networks is exactly the open question.
+**The change that actually matters is not in that table — it is how the weights are made.**
+
+| network | how it was trained |
+|---|---|
+| `rubicon-alea-v1` | from scratch, ~400 epochs, batch 16,384 |
+| `rubicon-alea-v2` | fine-tune of v1, with a zero-grafted `PawnPair` block |
+| `rubicon-alea-v3` | v2 **frozen at `lr = 0`**, only `PassedPawns` trains — saturates in ~4 epochs |
+| **`legio-septima`** | **base and feature blocks together, from scratch**, two stages |
+
+Grafting worked: v2 + v3 are worth **+15.14 ± 7.69 Elo** over v1. Its limit is structural — a frozen
+base can only *add* what the new block expresses, never re-learn what the rest already believes.
 
 ### Stage 1 data
 
@@ -168,31 +172,78 @@ same training run.
 
 The trainer interleaves them at chunk level — the datasets are positional, so no pre-merge step is needed.
 
-**Recipe:** 500 epochs × 100 M positions = **50 G positions seen**, ≈ one pass over the corpus.
-`batch 131,072`, `lr 2.47e-3`, `gamma 0.990`, WDL lambda annealed **1.0 → 0.75**,
-`random-fen-skipping 3`. The batch was raised mid-run for throughput and the learning rate scaled with it
-by `√(batch/16384)` — which is why neither matches Stockfish's published `16384 / 8.75e-4`.
+**Recipe.** `batch 131,072` · `lr 2.47e-3` · `gamma 0.990` · lambda **1.0 → 0.75** across the run ·
+`random-fen-skipping 3` · `epoch-size 100 M`.
 
-Stage 2 moves to Leela-derived data (T80 re-labelled with BT4, plus T91), ~380 GB, 800 epochs.
+- Ran to **epoch 479** of a planned 500 — **47.9 G positions**, ≈ one pass over the corpus.
+- Batch and lr are 8× and `√8`× Stockfish's published `16,384 / 8.75e-4`. Raising the batch amortises
+  the DDP all-reduce, which is a **fixed** per-step cost; the lr is scaled to match.
+- Stopping at 479 costs nothing measurable: lr was already at 1.2 % of its initial value, and no
+  change was detectable between epochs 249 and 416.
+
+### Stage 2 data
+
+Leela-derived, **21 binpacks, 423 GB**. Everything from
+[`vondele/*_relabel`](https://huggingface.co/vondele) is **re-labelled with BT4**, so it shares one
+label scale with stage 1.
+
+| binpack | files | size | source |
+|---|---|---|---|
+| `T60T70wIsRightFarseerT60T74T75T76.split_0…4.relabel-BT4-tf13tune` | 5 | ~105 GB | `vondele/from_kaggle_2_relabel` |
+| `leela96-filt-v2.min.split_0…4.relabel-BT4-tf13tune` | 5 | ~95 GB | `vondele/from_kaggle_1_relabel` |
+| `test80-2022-{jun,jul,aug,sep,oct,nov}-16tb7p.v6-dd[.min].relabel-BT4-tf13tune` | 6 | ~126 GB | `vondele/linrock_relabel_1` |
+| `test78-2022-{01-to-05-jantomay,06-to-09-juntosep}-16tb7p.v6-dd.min.relabel-BT4-tf13tune` | 2 | ~31 GB | `vondele/linrock_relabel_1` |
+| `test77-2021-12-dec-16tb7p.v6-dd.min.relabel-BT4-tf13tune` | 1 | ~18 GB | `vondele/linrock_relabel_1` |
+| `T91-2026-{May,June}-6p-bp` | 2 | ~31 GB | `jshriver/t91-binpacks` |
+
+**T91 is the one exception, and deliberately so.** It is *not* re-labelled: T91 is the Leela run that
+*produces* the BT4 nets, so its labels come from that run's own search — at **800 visits** against the
+10,000 of the re-labelled T80. Only the two most recent months are used (quality rises month by month),
+which keeps it to 2 files of 21.
+
+**Excluded on purpose:** `test60-2021-{nov,dec}` and `test79-2022-{apr,may}`. The loader picks a file
+**uniformly at random**, not proportionally to size, so a 3 GB binpack would be traversed ~13× and its
+positions repeated — exactly the correlation `random-fen-skipping` exists to avoid. Below ~9 GB a file
+costs more in repetition than it adds in coverage.
+
+**Recipe.** `batch 131,072` · `lr 1.237e-3` · `gamma 0.995` · `random-fen-skipping 3` ·
+`epoch-size 100 M` · **800 epochs** · seeded from the stage-1 weights with a fresh schedule.
+
+- **Lambda 0.79 → 0.75 over the first 100 epochs, then fixed.** Stage 1 annealed lambda across its
+  whole run, so the target was still moving at the end — when lr was 3.8e-5 and the model could no
+  longer follow it. Stage 2 resumes at 0.79, finishes the shift while lr is still ≥ 61 % of initial,
+  and spends the remaining 700 epochs on a target that does not move.
+- ⚠️ **`val_loss` is not comparable across epochs while lambda anneals.** The loss is computed against
+  the *current* lambda: as weight moves onto the game result, the achievable floor rises by
+  construction. It climbed 0.00331 → 0.00352 here while the network was measurably improving.
+  Corollary: **`--save-top-k` by `val_loss` is unusable** in an annealed run.
 
 ### Where it stands
 
-Measured at **epoch 111 of 500** — 23 % of stage 1, and stage 2 has not started:
+Measured at **stage-2 epoch 189** — stage 1 complete, stage 2 ~24 % done:
 
-> **−21.95 ± 30.38 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 206 games, 15+0.15, 1 thread,
-> 64 MB, UHO book, both engines built PGO + AVX-512.
+> **+13.00 ± 12.72 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 802 games, 12+0.12, 1 thread,
+> 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign 650 / draw 10 cp.
 
-That interval is wide and the number will move; it is recorded because the *direction* is the point.
-A from-scratch network that has seen a quarter of its first stage is already within ~20 Elo of the
-lineage that took three graft generations to build — with the second, larger stage still ahead.
+Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the network.
+Zero is excluded, but only just: `[+0.28, +25.72]`, with ~600 epochs still to run.
 
-<sub>An earlier figure of −64.97 ± 13.39 (epoch 54) is **not** comparable: it predates both 57 epochs of
-training and the discovery that the 7.0 Windows project was not defining `USE_AVX512`, so that build was
-effectively AVX2 against a PGO opponent. Two things changed between the measurements; neither can be
-credited alone.</sub>
+Progression against the end of stage 1 — same binary, only the `.nnue` swapped:
 
-Architecture diagram, gates and the full recipe live in the development tree, not here — this file records
-what shipped.
+| stage-2 epoch | TC | games | Elo |
+|---|---|---|---|
+| 19 | depth 15 | 494 | −27.49 ± 16.24 |
+| 39 | depth 15 | 1000 | −6.25 ± 11.06 |
+| 119 | 15+0.15 | 500 | +1.39 ± 15.17 |
+| 176 | 15+0.15 | 1200 | +0.87 ± 10.33 |
+
+<sub>The first 40 epochs are **recovery, not progress**: stage 2 restarts at an lr 32× higher than
+where stage 1 ended, which moves the model off its converged minimum before it re-converges on better
+data. The +21 Elo between epochs 19 and 39 is significant (z = 2.16).</sub>
+
+<sub>Earlier stage-1 figures of −64.97 (epoch 54) and −21.95 (epoch 111) are **not** comparable to each
+other: between them fell both 57 epochs of training and the discovery that the 7.0 Windows project was
+not defining `USE_AVX512`, so the earlier build was effectively AVX2 against a PGO opponent.</sub>
 
 ---
 

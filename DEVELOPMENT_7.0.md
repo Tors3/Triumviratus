@@ -40,10 +40,19 @@ prior worth +1..+5 Elo, and the rest were below the resolution floor or already 
 
 So 7.0 does not try to out-search anyone. It changes how the network is *made*.
 
-**Every network this project has shipped so far was a graft**: an existing net frozen, a newly added
-input block allowed to learn, everything else at `lr 0`. That is why they converged in about four
-epochs — and why they could only ever add what the new block could express. **7.0 is the first full
-training from scratch.**
+The first own-lineage network, `rubicon-alea-v1`, was trained from scratch — but the two that
+followed grew by **grafting** a new input block onto the previous net:
+
+| | how it was trained |
+|---|---|
+| `rubicon-alea-v1` | from scratch, ~400 epochs, batch 16,384, λ = 1.0 |
+| `rubicon-alea-v2` | **fine-tune of v1** with a zero-initialised `PawnPair` block grafted on |
+| `rubicon-alea-v3` | **v2 frozen at `lr = 0`**, only the new `PassedPawns` block trains — converged in ~4 epochs |
+
+Grafting is cheap and it worked: v2 and v3 are worth **+15.14 ± 7.69 Elo** together over v1. But a
+frozen base can only ever *add* what the new block can express — it cannot re-learn what the rest of
+the network already believes. **7.0 trains base and feature blocks together, from scratch**, on a
+corpus an order of magnitude larger than v1's.
 
 ---
 
@@ -95,11 +104,11 @@ scaling and the fifty-move damping, none of which the trainer has.</sub>
 
 ## Training
 
-Two stages, ~380 GB of public data, all re-labelled with Leela's **BT4** network.
+Two stages. Full corpus, per-file, in **[`NETWORKS.md`](NETWORKS.md)**.
 
 | | stage 1 | stage 2 |
 |---|---|---|
-| corpus | 129 GB — Stockfish self-play + DFRC, BT4-relabelled | 422 GB — Leela T80/T78/T77/leela96/Farseer BT4-relabelled + T91-2026 |
+| corpus | **121 GiB**, 5 binpacks — Stockfish self-play + DFRC, BT4-relabelled | **423 GB**, 21 binpacks — Leela T80/T78/T77/leela96/Farseer BT4-relabelled + T91-2026 |
 | epochs | 500 (stopped at 479) | 800 |
 | batch | 131,072 | 131,072 |
 | lr | 2.47e-3 | 1.237e-3 |

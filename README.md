@@ -91,10 +91,12 @@ Two things change, and the second one is the real one:
   the SFNNv16 skip structure instead of SFNNv13, and still carrying the **`PassedPawns`** block that
   no other engine has, exactly as `TRANN1` did. Pawn→pawn threat inputs are dropped because the
   pawn-pair block already covers them: total inputs 87,904 → 86,992.
-- **Training method.** Every network shipped so far has been a **graft**: an existing network frozen,
-  with only a newly added feature block allowed to learn — which is why they converge in about four
-  epochs. 7.0 is the project's **first full training from scratch**, in two stages, on ~380 GB of
-  public data re-labelled with Leela's BT4 network.
+- **Training method.** `rubicon-alea-v1` was trained from scratch, but the two networks after it grew
+  by **grafting**: v2 fine-tuned v1 with a zero-initialised `PawnPair` block added, and v3 froze v2
+  entirely (`lr = 0`) and trained only the new `PassedPawns` block — which is why it converged in
+  about four epochs. 7.0 trains **base and feature blocks together, from scratch**, in two stages on
+  a much larger corpus of public data re-labelled with Leela's BT4 network. Corpus, recipe and
+  per-stage figures: **[`NETWORKS.md`](NETWORKS.md)**.
 
 The new network line is called **`legio-septima`**.
 
