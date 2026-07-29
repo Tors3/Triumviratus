@@ -3898,9 +3898,18 @@ static inline U64 td_attackers_to(ThreadData &td, int sq, int by) {
 //   - catture di pedone (usano `& enemies` diretto)
 //   - EN PASSANT: e' una cattura che atterra su una casa VUOTA, quindi passerebbe il filtro
 //   - (arrocco e promozioni quiete vanno bene da soli: atterrano su case vuote)
+//
+// 🔴 known_in_check (2C, 29/07): -1 = ignoto (si calcola qui, come prima), 0/1 = il chiamante
+// lo sa gia'. Il gate evasion chiedeva `td_is_square_attacked(ksq, ~side)` a OGNI chiamata, e
+// nel caso comune — non sotto scacco — quel test NON ha early-exit: deve provare pedoni,
+// cavalli, re, e due lookup magic (alfiere e torre, due possibili cache-miss su tabelle
+// grosse) solo per rispondere "no". E si pagava TRE volte per nodo: una nella search, una per
+// lo stage tattico del movepicker e una per lo stage quieto.
+// ⚠️ Passare un valore SBAGLIATO cambia le mosse generate sotto scacco: il gate e' il bench.
 static void td_generate_moves(ThreadData &td, moves *move_list,
                               bool captures_only = false,
-                              bool quiets_only   = false) {
+                              bool quiets_only   = false,
+                              int  known_in_check = -1) {
   PROF_GUARD(prof_mg);
   move_list->count = 0;
   int source_square, target_square;
@@ -3931,7 +3940,11 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
   if (g_evasion_gen) {
     const int ksq =
         get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
-    if (td_is_square_attacked(td, ksq, td.side ^ 1)) {
+    // 2C: se il chiamante lo sa gia', non si ri-scandiscono tutti i tipi di attaccante.
+    const bool in_chk = (known_in_check >= 0)
+                            ? (known_in_check != 0)
+                            : td_is_square_attacked(td, ksq, td.side ^ 1);
+    if (in_chk) {
       U64 checkers = td_attackers_to(td, ksq, td.side ^ 1);
       if (checkers & (checkers - 1)) {
         evasion_mask = 0ULL; // doppio scacco: solo il re
@@ -4002,7 +4015,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
               add_move(move_list, encode_move(source_square, target_square,
                                               piece, 0, 1, 0, 0, 0));
             }
-            pop_bit(attacks, target_square);
+            pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
           }
 
           // En passant (  sempre una cattura, lo generiamo sempre)
@@ -4015,7 +4028,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                                               piece, 0, 1, 0, 1, 0));
             }
           }
-          pop_bit(bitboard, source_square);
+          pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
         }
       }
       if (piece == K) {
@@ -4091,7 +4104,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
               add_move(move_list, encode_move(source_square, target_square,
                                               piece, 0, 1, 0, 0, 0));
             }
-            pop_bit(attacks, target_square);
+            pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
           }
           if (!quiets_only && td.enpassant != no_sq) {   // 2A: e.p. atterra su casa VUOTA
             U64 enpassant_attacks =
@@ -4102,7 +4115,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                                               piece, 0, 1, 0, 1, 0));
             }
           }
-          pop_bit(bitboard, source_square);
+          pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
         }
       }
       if (piece == k) {
@@ -4141,9 +4154,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           else
             add_move(move_list, encode_move(source_square, target_square, piece,
                                             0, 1, 0, 0, 0));
-          pop_bit(attacks, target_square);
+          pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
-        pop_bit(bitboard, source_square);
+        pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
@@ -4160,9 +4173,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           else
             add_move(move_list, encode_move(source_square, target_square, piece,
                                             0, 1, 0, 0, 0));
-          pop_bit(attacks, target_square);
+          pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
-        pop_bit(bitboard, source_square);
+        pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
@@ -4179,9 +4192,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           else
             add_move(move_list, encode_move(source_square, target_square, piece,
                                             0, 1, 0, 0, 0));
-          pop_bit(attacks, target_square);
+          pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
-        pop_bit(bitboard, source_square);
+        pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
@@ -4198,9 +4211,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           else
             add_move(move_list, encode_move(source_square, target_square, piece,
                                             0, 1, 0, 0, 0));
-          pop_bit(attacks, target_square);
+          pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
-        pop_bit(bitboard, source_square);
+        pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
@@ -4216,9 +4229,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           else
             add_move(move_list, encode_move(source_square, target_square, piece,
                                             0, 1, 0, 0, 0));
-          pop_bit(attacks, target_square);
+          pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
-        pop_bit(bitboard, source_square);
+        pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
   }
@@ -5177,6 +5190,10 @@ static const int MP_CONSUMED = -2000000000;
 struct MovePicker {
   bool staged;
   int stage;
+  // 2C: lo scacco al nodo, gia' calcolato dalla search. Resta valido per tutta la vita del
+  // picker: fra i due stage di generazione le mosse vengono fatte e disfatte, ma make/unmake
+  // ripristina esattamente la posizione, quindi il nodo e' sempre lo stesso.
+  int in_check;
   int tt_move, killer0, killer1, counter;
   moves *caps;
   int *cap_scores;
@@ -5197,8 +5214,9 @@ struct MovePicker {
 // list; in staged mode they are reused as the quiet-stage buffer.
 static inline void mp_init(MovePicker &mp, ThreadData &td, bool staged,
                            int tt_move, moves *caps, int *cap_scores,
-                           moves *quiets, int *q_scores) {
+                           moves *quiets, int *q_scores, int in_check) {
   mp.staged = staged;
+  mp.in_check = in_check;   // 2C: lo passa la search, che l'ha gia' calcolato
   mp.tt_move = tt_move;
   mp.caps = caps;
   mp.cap_scores = cap_scores;
@@ -5261,7 +5279,8 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     [[fallthrough]];
 
   case MPS_GEN_TACTICAL:
-    td_generate_moves(td, mp.caps, true); // captures + capture-promos
+    td_generate_moves(td, mp.caps, /*captures_only=*/true, /*quiets_only=*/false,
+                      mp.in_check);   // 2C
     mp.cap_n = mp.caps->count;
     for (int i = 0; i < mp.cap_n; i++)
       mp.cap_scores[i] = td_score_move(td, mp.caps->moves[i], mp.tt_move);
@@ -5318,7 +5337,8 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     // 2A: quiets_only. Prima era `false` = tutte le pseudo-legali, quindi ogni cattura veniva
     // rigenerata qui dopo essere gia' stata prodotta da MPS_GEN_TACTICAL, e subito buttata
     // marcandola CONSUMED. Node-identical: le catture non venivano rese comunque.
-    td_generate_moves(td, mp.quiets, /*captures_only=*/false, /*quiets_only=*/true);
+    td_generate_moves(td, mp.quiets, /*captures_only=*/false, /*quiets_only=*/true,
+                      mp.in_check);   // 2C
     mp.q_n = mp.quiets->count;
     for (int i = 0; i < mp.q_n; i++) {
       int m = mp.quiets->moves[i];
@@ -7024,7 +7044,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
 
   MovePicker mp;
   mp_init(mp, td, use_picker, tt_move, cap_buf, cap_score_buf, move_list,
-          move_scores);
+          move_scores, in_check ? 1 : 0);
 
   int best_move = 0;
   int best_score = -infinity;

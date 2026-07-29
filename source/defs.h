@@ -99,6 +99,15 @@ extern int g_mate_in;            // "go mate N": stop al matto in <= N mosse (0 
 #define set_bit(bitboard, square) ((bitboard) |= (1ULL << (square)))
 #define get_bit(bitboard, square) ((bitboard) & (1ULL << (square)))
 #define pop_bit(bitboard, square) ((bitboard) &= ~(1ULL << (square)))
+// 2D: cancella il bit MENO SIGNIFICATIVO. Una sola istruzione (BLSR con -mbmi2, altrimenti
+// due) invece di shift+not+and, e soprattutto NON dipende dal risultato di get_ls1b_index:
+// la catena `sq = ls1b(bb); ... ; pop_bit(bb, sq)` costringe la cancellazione ad aspettare il
+// tzcnt, questa no.
+// 🔴 Vale SOLO dove il bit da togliere e' davvero l'LSB (tipicamente subito dopo un
+// get_ls1b_index sulla STESSA variabile). Dove si cancella una casa specifica — come in
+// see.cpp, che toglie `from`/`captured_sq`/`to` — serve pop_bit e questa macro sarebbe
+// SILENZIOSAMENTE SBAGLIATA.
+#define pop_lsb_bb(bitboard) ((bitboard) &= (bitboard) - 1)
 extern int count_bits(U64 bitboard);
 extern int get_ls1b_index(U64 bitboard);
 
