@@ -68,12 +68,6 @@ each is measured against the state immediately before it, and they overlap.</sub
 | **Berserk 14** | **+8.7 Elo** (51.25%), 95% CI [+2.2, +15.2] | 600 | 60+1 | Perfect2023 |
 | Pawnocchio 1.9.1 | **+41.89 ± 11.08**, LOS 100% | — | 20+0.2 | UHO |
 
-<sub>The Berserk match was played from **Perfect2023**, a deep balanced book, which is why **94.5% of
-the games were drawn** (24 wins, 567 draws, 9 losses) and why the margin is small even though the
-confidence interval excludes zero. A book like that compresses differences between strong engines by
-design; the same engines on an unbalanced book would show a wider gap in either direction. Recorded
-as measured rather than re-run on a friendlier book.</sub>
-
 > [!NOTE]
 > Networks, SPSA tunes, time management, the full incremental table, the corrections and the
 > retractions are all in **[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md)**, to keep this page short.
@@ -93,9 +87,10 @@ engines is **≈ 25–40 Elo of network**, not of search.
 
 Two things change, and the second one is the real one:
 
-- **Architecture** moves from SFNNv13 to **SFNNv16** — Stockfish's newer skip structure, plus the
-  removal of pawn→pawn threat inputs that the pawn-pair block already covers. Total inputs
-  87,904 → 86,992. The project's own `PassedPawns` block stays.
+- **Architecture** moves from **`TRANN1` to `TRANN2`** — the project's own network line, now built on
+  the SFNNv16 skip structure instead of SFNNv13, and still carrying the **`PassedPawns`** block that
+  no other engine has, exactly as `TRANN1` did. Pawn→pawn threat inputs are dropped because the
+  pawn-pair block already covers them: total inputs 87,904 → 86,992.
 - **Training method.** Every network shipped so far has been a **graft**: an existing network frozen,
   with only a newly added feature block allowed to learn — which is why they converge in about four
   epochs. 7.0 is the project's **first full training from scratch**, in two stages, on ~380 GB of
@@ -151,7 +146,7 @@ engines. Credit and thanks to all of them:
 - **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, **[Viridithas](https://github.com/cosmobobak/viridithas)** — the **`PawnPair` NNUE input feature** (see below).
 - **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**, **[Ethereal](https://github.com/AndyGrant/Ethereal)** and **[Stormphrax](https://github.com/Ciekce/Stormphrax)** — assorted search, pruning and ordering refinements (Stormphrax also originated the `PawnPair` feature design).
 
-**NNUE input features — attribution.** The **`PawnPair`** block (pairs of pawns on the same or adjacent files, `4560` inputs) is **not an original idea of this project**. It was **invented by Jonathan Hallström for [Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, from his observation that in a network trained on *all* pawn pairs the ones that mattered were those at most one file apart. It was also used by **Stormphrax** and **Viridithas**, and in July 2026 **Stockfish adopted it as `PP_3Wide` in SFNNv16** — so what we implement here is now the same feature Stockfish itself carries. Our C++ implementation (`nnue/features/pawn_pair.*`) and the trained weights are our own; the idea is his.
+**NNUE input features — attribution.** The **`PawnPair`** block (pairs of pawns on the same or adjacent files, `4560` inputs) is **not an original idea of this project**. It was **invented by Jonathan Hallström for [Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**, from his observation that in a network trained on *all* pawn pairs the ones that mattered were those at most one file apart. It was also used by **Stormphrax** and **Viridithas**, and in July 2026 **Stockfish adopted it too, as `PP_3Wide`**. Our C++ implementation (`nnue/features/pawn_pair.*`) and the trained weights are our own; the idea is his.
 
 The **`PassedPawns`** block (one input per passed pawn, 96 slots) is, by contrast, **an original feature of this project** — designed, implemented and trained here, and present in no other engine we know of.
 

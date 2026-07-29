@@ -65,9 +65,8 @@ Two changes from `TRANN1`:
   which removes the forwarded-neuron-in-an-extra-slot construction and with it the entire column
   remap that used to realign `fc_1`.
 - **Pawn→pawn threat inputs removed** (60,720 → 59,808). They duplicated information the
-  `PawnPair` block already carries. Stockfish reached the same conclusion independently
-  (nnue-pytorch PR #502): what this project called `PawnPair` and what upstream calls `PP_3Wide`
-  are the same 4,560-dimension feature.
+  `PawnPair` block already carries — a conclusion Stockfish reached independently around the same
+  time (nnue-pytorch PR #502).
 
 `PassedPawns` (96 features, one per passed pawn) remains **the only block original to this
 project** — a relational property `HalfKAv2_hm` cannot express directly.
