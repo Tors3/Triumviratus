@@ -3882,8 +3882,25 @@ static inline U64 td_attackers_to(ThreadData &td, int sq, int by) {
           (td.bitboards[R + off] | td.bitboards[Q + off]));
 }
 
+// 🔴 quiets_only (2A, 29/07): il movepicker chiamava questa funzione con captures_only=false
+// nello stage QUIET, cioe' generando TUTTE le pseudo-legali — comprese le catture che aveva
+// gia' generato nello stage TACTICAL — per poi marcarle MP_CONSUMED e non renderle mai
+// (threads.cpp:5299-5307). Ogni nodo che supera le good-tactical senza cutoff pagava la
+// generazione a vuoto di ~7 catture: pop_lsb, encode, store in lista, e un get_move_capture
+// a valle. Con quiets_only si generano solo gli approdi su case VUOTE.
+//
+// NODE-IDENTICAL, e si dimostra: le catture erano gia' CONSUMED (mai rese), l'ordine relativo
+// delle quiete non cambia, e la selection-sort a :5322 rompe i pari col PRIMO indice — quindi
+// toglierle dalla lista non cambia ne' l'insieme ne' l'ordine delle mosse rese.
+// ⇒ il bench DEVE restare identico: se cambia di un nodo la patch e' sbagliata.
+//
+// ⚠️ Tre cose NON passano da allowed_squares e vanno escluse a mano:
+//   - catture di pedone (usano `& enemies` diretto)
+//   - EN PASSANT: e' una cattura che atterra su una casa VUOTA, quindi passerebbe il filtro
+//   - (arrocco e promozioni quiete vanno bene da soli: atterrano su case vuote)
 static void td_generate_moves(ThreadData &td, moves *move_list,
-                              bool captures_only = false) {
+                              bool captures_only = false,
+                              bool quiets_only   = false) {
   PROF_GUARD(prof_mg);
   move_list->count = 0;
   int source_square, target_square;
@@ -3896,7 +3913,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
       (td.side == white) ? td.occupancies[white] : td.occupancies[black];
   // Se vogliamo solo catture, le uniche case valide sono quelle nemiche.
   // Altrimenti, tutte le case tranne le nostre.
-  U64 allowed_squares = captures_only ? enemies : ~friends;
+  U64 allowed_squares = captures_only ? enemies
+                      : quiets_only   ? ~td.occupancies[both]   // solo case VUOTE
+                                      : ~friends;
 
   // P2.3 EvasionGen: sotto scacco le sole pseudo-legali che POSSONO essere
   // legali sono: mosse di re, catture dello scaccante, blocchi sul raggio
@@ -3966,8 +3985,8 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           }
 
           // Catture dei pedoni
-          attacks =
-              pawn_attacks[td.side][source_square] & enemies & evasion_mask;
+          attacks = quiets_only ? 0ULL   // 2A: le catture di pedone non passano da allowed_squares
+                  : (pawn_attacks[td.side][source_square] & enemies & evasion_mask);
           while (attacks) {
             target_square = get_ls1b_index(attacks);
             if (source_square >= a7 && source_square <= h7) {
@@ -3987,7 +4006,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           }
 
           // En passant (  sempre una cattura, lo generiamo sempre)
-          if (td.enpassant != no_sq) {
+          if (!quiets_only && td.enpassant != no_sq) {   // 2A: e.p. atterra su casa VUOTA
             U64 enpassant_attacks =
                 pawn_attacks[td.side][source_square] & (1ULL << td.enpassant);
             if (enpassant_attacks) {
@@ -4055,8 +4074,8 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
             }
           }
 
-          attacks =
-              pawn_attacks[td.side][source_square] & enemies & evasion_mask;
+          attacks = quiets_only ? 0ULL   // 2A: le catture di pedone non passano da allowed_squares
+                  : (pawn_attacks[td.side][source_square] & enemies & evasion_mask);
           while (attacks) {
             target_square = get_ls1b_index(attacks);
             if (source_square >= a2 && source_square <= h2) {
@@ -4074,7 +4093,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
             }
             pop_bit(attacks, target_square);
           }
-          if (td.enpassant != no_sq) {
+          if (!quiets_only && td.enpassant != no_sq) {   // 2A: e.p. atterra su casa VUOTA
             U64 enpassant_attacks =
                 pawn_attacks[td.side][source_square] & (1ULL << td.enpassant);
             if (enpassant_attacks) {
@@ -5296,12 +5315,17 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
       mp.stage = MPS_BAD_TACTICAL;
       goto bad_tactical;
     }
-    td_generate_moves(td, mp.quiets, false); // all pseudo-legal moves
+    // 2A: quiets_only. Prima era `false` = tutte le pseudo-legali, quindi ogni cattura veniva
+    // rigenerata qui dopo essere gia' stata prodotta da MPS_GEN_TACTICAL, e subito buttata
+    // marcandola CONSUMED. Node-identical: le catture non venivano rese comunque.
+    td_generate_moves(td, mp.quiets, /*captures_only=*/false, /*quiets_only=*/true);
     mp.q_n = mp.quiets->count;
     for (int i = 0; i < mp.q_n; i++) {
       int m = mp.quiets->moves[i];
-      // Captures are handled by the tactical stages; the TT/killer/counter
-      // moves were already yielded -> mark them consumed so we never repeat.
+      // Le catture le rendono gli stage tattici; TT/killer/counter sono gia' state rese ->
+      // marcate CONSUMED per non ripeterle. Il test get_move_capture resta anche con
+      // quiets_only: la lista ora non ne contiene, ma il costo e' nullo e toglierlo
+      // renderebbe la funzione dipendente dalla modalita' del chiamante.
       if (get_move_capture(m) || m == mp.tt_move || m == mp.killer0 ||
           m == mp.killer1 || m == mp.counter)
         mp.q_scores[i] = MP_CONSUMED;
