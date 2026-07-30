@@ -156,10 +156,13 @@ each figure isolates the network.
 | 263 | 2026-07-29 | 15+0.15 | 1678 | +13.88 ± 8.58 | 99.92% |
 | 370 | 2026-07-30 | 15+0.15 | 1180 | +17.09 ± 10.55 | 99.93% |
 | 659 | 2026-07-30 | 15+0.15 | 378 | +17.48 ± 18.71 | 96.68% |
-| **696** | 2026-07-30 | 15+0.15 | 2138 | **+28.01 ± 7.72** | 100 % |
+| 696 | 2026-07-30 | 15+0.15 | 2138 | +28.01 ± 7.72 | 100 % |
+| **799** (stage-2 final) | 2026-07-30 | 15+0.15 | 1442 | **+23.41 ± 9.22** | 100 % |
 
-Ahead of 6.0 from epoch 189 on. The rows in between are mutually indistinguishable at their error
-bars; the epoch-696 run is the first with the games to halve the interval.
+Ahead of 6.0 from epoch 189 on. The rows are mutually indistinguishable at their error bars — at
+±9 Elo a 1000-game match cannot separate +20 from +30, so this column shows the level, not a trend.
+The direct paired match between the last two networks is the tighter measurement: epoch 799 beats
+epoch 696 by **+5.18 ± 6.03** over 3892 games.
 
 #### Stage 2 progress — vs the end of stage 1
 
