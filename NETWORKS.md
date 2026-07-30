@@ -218,80 +218,27 @@ costs more in repetition than it adds in coverage.
   construction. It climbed 0.00331 → 0.00352 here while the network was measurably improving.
   Corollary: **`--save-top-k` by `val_loss` is unusable** in an annealed run.
 
-### Stage 3 — annealing tail (running)
+### Stage 3 — annealing tail (run and closed)
 
-Stage 2 ran out of learning-rate, not out of data. Three facts, measured at its end:
+Stage 2 ended with lr at 2.24e-5, so a natural question was whether the schedule had simply
+been cut short. A third stage extended the annealing tail — 350 epochs planned, lr 3.36e-5 →
+2.0e-6, lambda fixed, corpus weighted per position instead of per file.
 
-- **No overfitting, at any point.** `val_loss` sits *at or below* `train_loss` for the whole run
-  (gap −1.1 % to +1.2 %, oscillating around zero). The model never memorised; it never even fit the
-  training set tightly.
-- **More than half the corpus was never delivered.** 423 GB ≈ 169 G positions; 800 epochs × 100 M
-  delivered 80 G, and no file was exhausted — so **~53 % of the corpus is untouched**.
-- **The Elo rate did not slow.** Weighted regression over the stage-2 series gives
-  **0.031 ± 0.020 Elo/epoch** across 507 epochs, and the last window (696 → 799) is the steepest at
-  0.049. That rate held **while lr fell by a factor of 50** — a saturated model does not behave that
-  way.
+**It produced nothing.** Stopped at epoch 169 and measured against its own starting point:
 
-So stage 3 extends the annealing tail instead of truncating it.
+> **−0.28 ± 5.21 Elo** over 5024 games, 15+0.15, same binary, only the `.nnue` swapped.
 
-| | stage 2 | **stage 3** |
-|---|---|---|
-| epochs | 800 | **350** (35 G positions) |
-| lr | 1.237e-3 → 2.24e-5 | **3.36e-5 → 2.0e-6** (`gamma 0.99197`) |
-| lambda | 0.79 → 0.75 over 100 ep | **0.75 fixed** |
-| corpus | 21 files, uniform per **file** | 23 files, weighted per **position** |
-| seed | 42 | 43 |
+Zero with the tightest interval of the whole project. Three earlier checkpoints agreed
+(−3.37, −3.54, −1.09, all at ±9–11). The shipped network is therefore the **stage-2 final**,
+epoch 799.
 
-**Why lr starts at 1.5× and not 2×.** The rate stayed constant while lr fell 50×, so what produces
-Elo is the fresh material each epoch delivers, not the step size. Doubling the lr buys nothing the
-data predicts, and risks leaving a minimum that cost 800 epochs. Only ~50 of the 350 epochs sit
-above where stage 2 closed; 300 sit below.
-
-**Corpus weighting — the defect stage 3 corrects.** The loader picks a file **uniformly at random**
-(`parallel_dataloader.h:145`), not proportionally to size, so in stage 2 each file received 1/21 of
-the positions and the *passes* over each were inversely proportional to its size:
-
-| passes in stage 2 | file |
-|---|---|
-| 0.14× | `test80-2022-10-oct` (69 GB) — seen 14 % |
-| 0.43–0.52× | the 18–22 GB packs (`T60T70Farseer`, `test78-jan-may`, `leela96`, `test77`) |
-| 0.69–0.90× | the 10–14 GB monthlies |
-
-The 20 GB packs saw **half** as much of themselves as the 11 GB ones — an artefact of counting files,
-not a choice. Stage 3 gives each file a number of list entries proportional to its size (~4 GB per
-entry, nearest rounding), which the loader treats as separate files. Result: every file is traversed
-0.80–1.00× instead of 0.14–0.90×.
-
-Two deliberate departures:
-
-- **`test80-2022-10-oct` is pinned to 1 entry** despite being 69 GB. It is the only file without
-  `.min` in its name — the non-deduplicated version of that dataset — so weighting it by size risks
-  feeding repetition rather than variety.
-- **`test60-2021-{nov,dec}` are dropped** (3.2 + 3.4 GB): below one weighting unit they would be
-  over-weighted without bound and would cycle. `test79-2022-{apr,may}` **enter** for the first time —
-  15 GB of BT4 never delivered in stage 2.
-
-**Why re-reading the same file heads is not re-showing the same data.** `random-fen-skipping 3`
-discards 75 % of what it reads: stage 2's cursor advanced 15.2 G positions per file but delivered only
-3.81 G — the other 11.4 G were read and thrown away without a single gradient step. Re-reading that
-region under a **different seed** samples a different 25 %, so the expected overlap with stage 2's
-delivered set is ~25 %: about **three quarters of what stage 3 delivers has never been used**, with no
-file splitting and no offset seeking.
-
-<sub>Honest limits. Two of the smallest files cross 1.0 traversals from rounding (`test79-may` 1.12,
-`test78-jun-sep` 1.03), which after the 75 % discard means ~3 % repeated delivered positions on the
-smallest file — negligible, but not zero. All traversal figures assume ~2.5 bytes/position, an
-estimate rather than a measurement. The untouched 53 % of the corpus lies in the *tails* of the files
-and stays out of reach: the loader has `skipChunks()` but exposes no start offset.</sub>
-
-⚠️ **The verdict will not be `val_loss`.** In the stage-2 tail it oscillates by ~1e-4 with the sampled
-file mixture, against an expected signal of ~2e-5. The proof it is the data and not the lr: dispersion
-was 0.49 % of the mean at epochs 400–499 and **rose to 1.08 %** at 700–799 *while lr fell 4×*. Stage 3
-will be judged by a paired match against stage-2 epoch 799 on the frozen binary.
+<sub>Worth recording because it was not obvious in advance: at that point the network showed
+no overfitting at all — `val_loss` sat at or below `train_loss` for the entire run — and less
+than half the corpus had ever been delivered. Neither data nor overfitting was the limit.</sub>
 
 ### Where it stands
 
-Stage 1 complete, stage 2 **finished at epoch 799**, stage 3 running. The stage-2 network:
+Stage 1 and stage 2 complete; stage 3 run and closed at zero. The shipped network:
 
 > **+23.41 ± 9.22 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 1442 games, 15+0.15, LOS
 > 100 %, nElo +45.65, 1 thread, 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign
