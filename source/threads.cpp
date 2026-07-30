@@ -939,17 +939,17 @@ void set_aggr_lmr(bool v) { g_aggr_lmr = v; }
 // external SPSA tuner (fastchess) can set them per-game without recompiling.
 // Defaults = the current hand-set values. After a tuning run, bake the
 // converged values in.
-int g_rfp_margin = 62;  // reverse futility: static_eval - g*depth >= beta
+int g_rfp_margin = 64;  // reverse futility: static_eval - g*depth >= beta
                         // [SPSA-tuned: 30->21]
-int g_razor_base = 293; // razoring: base + mult*depth below alpha -> qsearch
-int g_razor_mult = 77;  // [SPSA-tuned: 102->139]
-int g_fut_base = 202;   // futility: base + mult*depth (+improving bonus)
+int g_razor_base = 314; // razoring: base + mult*depth below alpha -> qsearch
+int g_razor_mult = 87;  // [SPSA-tuned: 102->139]
+int g_fut_base = 133;   // futility: base + mult*depth (+improving bonus)
                         // [SPSA-tuned: 82->111]
-int g_fut_mult = 61;    // [3.7 BAKE 53->41; BAKED #1 66->53]
+int g_fut_mult = 112;    // [3.7 BAKE 53->41; BAKED #1 66->53]
 int g_fut_depth =
     7; // gate profondita' del futility pruning (alzare = potare a nodi piu'
        // profondi = albero piu' stretto). UCI FutilityDepth, tunabile.
-int g_fut_improving = 186; // extra futility margin when improving [SPSA-tuned:
+int g_fut_improving = 169; // extra futility margin when improving [SPSA-tuned:
                            // 60->93]
 // Capture futility pruning (SF master Step 14, ported 2026-06-23). Default OFF
 // (A/B). SF prunes a capture at low (reduced) depth when even winning the
@@ -959,11 +959,11 @@ int g_fut_improving = 186; // extra futility margin when improving [SPSA-tuned:
 // g_capfut_depth is a small-int GATE kept fixed (small ints round to noise
 // under SPSA).
 static bool g_cap_futility = true; // CaptureFutility (UCI spin 0/1)
-int g_capfut_base = 155;           // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
+int g_capfut_base = 260;           // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
 int g_capfut_mult =
-    140; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
+    192; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
 int g_capfut_chist =
-    205; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
+    240; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
          // [F-002 audit 2026-07-02: 125->123, SPSA+SPRT] capture-history
          // contribution, /1024 (SF=131; our capt-hist clamp +/-7000 -> max
          // ~896cp). Extremi testati: 60=-45 Elo, 140=-25 Elo (LOS 0.4%/2%,
@@ -987,7 +987,7 @@ int g_capfut_depth =
 // EvalScale. Default 392 = NORM_CP (la costante con cui threads.cpp:~5051
 // converte score->cp mostrati): e' la stima onesta, non un numero inventato. E'
 // spin perche' l'SPSA lo assesti nel blocco CapFut*.
-int g_capfut_vic_scale = 392; // CapFutVicScale, /10000 insieme a EvalScale
+int g_capfut_vic_scale = 458; // CapFutVicScale, /10000 insieme a EvalScale
 // --- Other missing SF-master cut features (ported 2026-06-23, ALL default
 // OFF/legacy = byte-identical).
 //     SPSA targets = the cp MARGINS (wide range); toggles + small-int gates are
@@ -1189,7 +1189,7 @@ int g_bad_noisy_count = 7; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
 static bool g_lmr_enrich = true;
 int g_lmr_enrich_amount =
     2; // ply extra di riduzione quando la TT-move è noisy (SPSA target)
-int g_razor_quad_coef = 92; // RazorQuadCoef (SF :967): quadratic razor term
+int g_razor_quad_coef = 91; // RazorQuadCoef (SF :967): quadratic razor term
                             // (base + mult*d + coef*d^2); 0 = linear/off
 int g_rfp_depth_cap = 7; // RFPDepth: >0 overrides RFP depth cap (0=legacy 6/8);
                          // widen toward SF=17
@@ -1217,7 +1217,7 @@ static bool g_follow_pv = false;
 // tunable + LMR-catture. TUTTI i default = valore hardcoded storico =
 // comportamento BIT-IDENTICO (verificato via bench); si accendono solo dal
 // tuning/SPRT.
-int g_qs_delta = 1488; // F-002: delta-pruning qsearch (era const DELTA=1000; a
+int g_qs_delta = 3989; // F-002: delta-pruning qsearch (era const DELTA=1000; a
                        // scala-56 ~1785cp reali)
 int g_singular_mpd =
     1; // F-002: margine singular PER-DEPTH (era hardcoded 2*depth, unita'-eval)
@@ -1305,7 +1305,7 @@ int g_asp_score_mult =
 int g_cmhc_scale =
     6; // Q-12 CMHC: bonus conthist *= (100 + scale*consistenza)/100. 0 = neutro
 int g_probcut_margin =
-    271; // ProbCut: capture verification must beat beta by this margin
+    249; // ProbCut: capture verification must beat beta by this margin
 int g_probcut_improve = 4; // Q-20b (Alexandria): abbassa probcut_beta di questo
                            // quando improving (probcut piu' facile). 0 = OFF
 
@@ -1511,7 +1511,7 @@ int g_lowply_weight =
 // SOPRA il parco mega-SPSA (gli altri ordering-weight restano tunati). Spin
 // "StatEvalDiffMult": 0 = OFF (byte-identico al 4.0), 14 = SF-esatto, >14 =
 // piu' aggressivo di SF.
-int g_seo_mult = 14; // [4.1 BAKE 14->6] (Ripristinato a 14 dopo fix SEO)
+int g_seo_mult = 18; // [4.1 BAKE 14->6] (Ripristinato a 14 dopo fix SEO)
 // cutoffCnt (SF): contatore fail-high per-ply. In LMR riduce di piu' se il
 // figlio ha cuttato molto di recente. g_cutoffcnt_penalty: 0=off (default,
 // byte-identico), 1=SF (r+=1 se cutoff_cnt figlio > 3). Spin CutoffCntPenalty
@@ -1680,7 +1680,7 @@ bool g_cutoff_stats = false;
 // ProbCut-sotto-scacco (SF step 12): in scacco, se la TT ha una cattura con
 // bound LOWER e score >= beta+margin a depth>=depth-4, ritorna beta+margin.
 // 0=off (default). Spin ProbCutInCheckMargin [0,800] (SF=452). Co-tunabile.
-int g_probcut_incheck_margin = 335; // [4.1 BAKE 0->523]
+int g_probcut_incheck_margin = 183; // [4.1 BAKE 0->523]
 int g_lmr_ss_div =
     5430; // [4.1: tenuto 4.0 - il BAKE @12s 13790 GONFIAVA l'albero 2.5x (meno
           // riduzione) per ~pochi Elo: scelta = albero stretto > Elo]

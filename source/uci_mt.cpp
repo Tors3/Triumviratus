@@ -516,9 +516,9 @@ void uci_loop()
             printf("option name PriorBonusScale type spin default 189 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
             printf("option name LowPlyHistory type check default true\n");    // #5: history per-ply near-root nell'ordering quiet
             printf("option name LowPlyWeight type spin default 179 min 0 max 200\n");  // contributo lowply; co-tunabile
-            printf("option name StatEvalDiffMult type spin default 14 min 0 max 60\n");  // SF static-eval-diff ordering. A2 FIX 2026-07-25: annunciava 8 mentre il valore vivo e' 14 (threads.cpp:1431, ripristinato dopo il fix SEO) -> una GUI/tuner che rimanda i default espliciti spegneva il 15.4% dell'albero (bench 275063 -> 232681)
+            printf("option name StatEvalDiffMult type spin default 18 min 0 max 60\n");  // SF static-eval-diff ordering. A2 FIX 2026-07-25: annunciava 8 mentre il valore vivo e' 14 (threads.cpp:1431, ripristinato dopo il fix SEO) -> una GUI/tuner che rimanda i default espliciti spegneva il 15.4% dell'albero (bench 275063 -> 232681)
             printf("option name CutoffCntPenalty type spin default 2 min 0 max 3\n");        // SF cutoffCnt-LMR: 0=off, 1=SF (riduzione +1 se figlio cutoffCnt>3)
-            printf("option name ProbCutInCheckMargin type spin default 335 min 0 max 800\n");  // [4.1 BAKE 0->523] SF probcut-sotto-scacco
+            printf("option name ProbCutInCheckMargin type spin default 183 min 0 max 800\n");  // [4.1 BAKE 0->523] SF probcut-sotto-scacco
             printf("option name MainHistWeight type spin default 93 min 50 max 400\n");    // [4.1 BAKE 122->168]
             printf("option name ContHistWeight type spin default 135 min 50 max 400\n");    // [4.1 BAKE 80->96]
             printf("option name LMPScale type spin default 35 min 30 max 250\n");     // [3.7] scala % soglia LMP
@@ -561,16 +561,16 @@ void uci_loop()
             printf("option name LMRTTDepth type spin default 1 min 0 max 3\n");
             printf("option name LMRBase type spin default 22 min 0 max 200\n");   // [3.7]
             printf("option name LMRDiv type spin default 447 min 100 max 500\n");   // [3.7]
-            printf("option name RFPMargin type spin default 62 min 20 max 200\n");        // bakato: 30->21
-            printf("option name RazorBase type spin default 293 min 100 max 600\n");
-            printf("option name RazorMult type spin default 77 min 20 max 250\n");       // bakato: 102->139
-            printf("option name FutilityBase type spin default 202 min 20 max 300\n");
-            printf("option name FutilityMult type spin default 61 min 20 max 200\n");   // [3.7]
-            printf("option name FutilityImproving type spin default 186 min 0 max 200\n"); // bakato: 60->93
+            printf("option name RFPMargin type spin default 64 min 20 max 200\n");        // bakato: 30->21
+            printf("option name RazorBase type spin default 314 min 100 max 600\n");
+            printf("option name RazorMult type spin default 87 min 20 max 250\n");       // bakato: 102->139
+            printf("option name FutilityBase type spin default 133 min 20 max 300\n");
+            printf("option name FutilityMult type spin default 112 min 20 max 200\n");   // [3.7]
+            printf("option name FutilityImproving type spin default 169 min 0 max 200\n"); // bakato: 60->93
             printf("option name SingularDoubleMargin type spin default 59 min 0 max 200\n"); // bakato: 63->43
             // F-002/F-004/F-005 (audit 2026-07-02): ex-hardcoded promossi a tunable + LMR-catture.
             // Default = comportamento storico bit-identico; leve per SPSA (preset 5.1 in SPSA Lab).
-            printf("option name QSDeltaMargin type spin default 1488 min 200 max 4000\n");   // delta-pruning qsearch (unita'-eval)
+            printf("option name QSDeltaMargin type spin default 3989 min 200 max 32000\n");   // delta-pruning qsearch (unita'-eval)
             printf("option name SingularMarginPD type spin default 1 min 1 max 10\n");        // margine singular per-depth
             printf("option name TMDropThresh type spin default 6 min 1 max 100\n");           // soglia score-drop TM; BAKE 2026-07-03 TM post-F-003 8->6
             printf("option name TMDropCap type spin default 160 min 50 max 1000\n");          // cap score-drop TM; BAKE 2026-07-03 TM post-F-003 200->160
@@ -625,7 +625,7 @@ void uci_loop()
             printf("option name FutSpareQuiet type check default false\n");                // Q-20c (Caissa): la futility non pota mai la prima quiet del nodo
             printf("option name QSDeltaBestCase type check default false\n");              // Q-20d (Ethereal): delta-pruning qsearch col best-case reale (vittima max + promo)
             printf("option name QSBCMargin type spin default 183 min 0 max 800\n");        // Q-20d: cuscino sopra il best-case
-            printf("option name ProbCutMargin type spin default 271 min 60 max 400\n");
+            printf("option name ProbCutMargin type spin default 249 min 60 max 400\n");
             printf("option name ProbCutImprove type spin default 4 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
             printf("option name CorrCap type spin default 50 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 303 min 64 max 2048\n");
@@ -644,13 +644,13 @@ void uci_loop()
             printf("option name SEEQuietMargin type spin default 116 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
             // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
             printf("option name CaptureFutility type spin default 1 min 0 max 1\n");
-            printf("option name CapFutBase type spin default 155 min 0 max 500\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
-            printf("option name CapFutMult type spin default 140 min 0 max 400\n");    // REVERT 2026-07-23 (SPSA B1 evaporato)
-            printf("option name CapFutChist type spin default 205 min 0 max 400\n");   // REVERT 2026-07-23 (SPSA B1 evaporato); [F-002 audit 2026-07-02] 125->123
+            printf("option name CapFutBase type spin default 260 min 0 max 500\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
+            printf("option name CapFutMult type spin default 192 min 0 max 400\n");    // REVERT 2026-07-23 (SPSA B1 evaporato)
+            printf("option name CapFutChist type spin default 240 min 0 max 400\n");   // REVERT 2026-07-23 (SPSA B1 evaporato); [F-002 audit 2026-07-02] 125->123
             printf("option name CapFutDepth type spin default 8 min 1 max 12\n");    // REVERT 2026-07-23 (SPSA B1 evaporato)
             // Ponte cp->unita'-eval del termine vittima, /10000 insieme a EvalScale (v. threads.cpp).
             // 392 = NORM_CP -> fattore 2.35 a EvalScale=60. ~167 riproduce il vecchio 1x (il bug).
-            printf("option name CapFutVicScale type spin default 392 min 0 max 1000\n");
+            printf("option name CapFutVicScale type spin default 458 min 0 max 1000\n");
             printf("option name QFutVicScale type spin default 500 min 0 max 2000\n");   // ponte cp->eval qfut (500*EvalScale/10000; =x3.0 a EvalScale=60, byte-identico al vecchio hardcoded x3)
             // Other missing SF cut features (default OFF/legacy). Margins = SPSA targets; toggles/gates fixed.
             printf("option name OppWorsening type spin default 1 min 0 max 1\n");
@@ -697,7 +697,7 @@ void uci_loop()
             printf("option name BadNoisyCount type spin default 7 min 1 max 32\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
             printf("option name LMREnrich type spin default 1 min 0 max 1\n");        // 5.0-B (archivio 4.2): +riduzione LMR se TT-move noisy
             printf("option name LMREnrichAmount type spin default 2 min 0 max 4\n");
-            printf("option name RazorQuadCoef type spin default 92 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
+            printf("option name RazorQuadCoef type spin default 91 min 0 max 100\n");  // quad razor term cp*d^2 (0=linear)
             printf("option name RFPDepth type spin default 7 min 0 max 17\n");      // 0=legacy cap; widen toward SF=17
             printf("option name RazorDepth type spin default 6 min 0 max 18\n");    // 0=legacy cap; widen toward SF (uncapped)
             printf("option name IID type spin default 0 min 0 max 1\n");            // Internal Iterative Deepening (5.1): mini-ricerca per OTTENERE una hash move (ordinamento ~SF); 0=off,1=on (spin per il generic handler atoi)
