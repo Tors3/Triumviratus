@@ -104,11 +104,11 @@ The new network line is called **`legio-septima`**.
 
 | | date | TC | games | Elo | LOS |
 |---|---|---|---|---|---|
-| stage-2 epoch 370 vs `6.0` + `rubicon-alea-v3` | 2026-07-30 | 15+0.15 | 1180 | **+17.09 ± 10.55** | 99.93% |
+| stage-2 epoch 696 vs `6.0` + `rubicon-alea-v3` | 2026-07-30 | 15+0.15 | 2138 | **+28.01 ± 7.72** | 100 % |
 
 <sub>Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the
-network. Ahead since epoch 189; 430 training epochs remain. Full per-checkpoint table and the
-caveat that these figures are not a progression: **[`NETWORKS.md`](NETWORKS.md)**. Development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network
+network. Ahead since epoch 189; ~100 training epochs remain. Full per-checkpoint table:
+**[`NETWORKS.md`](NETWORKS.md)**. Development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network
 details: **[`NETWORKS.md`](NETWORKS.md)**.</sub>
 
 
