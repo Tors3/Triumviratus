@@ -291,10 +291,10 @@ will be judged by a paired match against stage-2 epoch 799 on the frozen binary.
 
 ### Where it stands
 
-Stage 1 complete, stage 2 **finished at epoch 799**, stage 3 running. Last measured point:
+Stage 1 complete, stage 2 **finished at epoch 799**, stage 3 running. The stage-2 network:
 
-> **+28.01 ± 7.72 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 2138 games, 15+0.15, LOS
-> 100 %, nElo +53.65, 1 thread, 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign
+> **+23.41 ± 9.22 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 1442 games, 15+0.15, LOS
+> 100 %, nElo +45.65, 1 thread, 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign
 > 650 / draw 10 cp.
 
 Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the network.
@@ -306,11 +306,14 @@ Measured on the 7.0 binary **frozen before** any search change, so the figure is
 | 263 | 2026-07-29 | 15+0.15 | 1678 | +13.88 ± 8.58 | 99.92% |
 | 370 | 2026-07-30 | 15+0.15 | 1180 | +17.09 ± 10.55 | 99.93% |
 | 659 | 2026-07-30 | 15+0.15 | 378 | +17.48 ± 18.71 | 96.68% |
-| **696** | 2026-07-30 | 15+0.15 | 2138 | **+28.01 ± 7.72** | 100 % |
+| 696 | 2026-07-30 | 15+0.15 | 2138 | +28.01 ± 7.72 | 100 % |
+| **799** (final) | 2026-07-30 | 15+0.15 | 1442 | **+23.41 ± 9.22** | 100 % |
 
-<sub>The middle rows are mutually indistinguishable at their error bars. Only the epoch-696 run has
-the games to halve the interval, so whether the gain arrived late or was under-resolved earlier
-cannot be settled from this table.</sub>
+<sub>Rows 189–659 are mutually indistinguishable at their error bars. The last two overlap heavily
+(+28.01 and +23.41, intervals `[20.3, 35.7]` and `[14.2, 32.6]`) and the direct paired match between
+those two networks — a much tighter measurement — says 799 is the *stronger* of the pair by
++5.18 ± 6.03. Reading a trend from this column is not supported: at ±9 Elo a 1000-game match cannot
+separate +20 from +30.</sub>
 
 The last 103 epochs of stage 2, measured directly (same binary, only the `.nnue` swapped, 128 threads):
 
