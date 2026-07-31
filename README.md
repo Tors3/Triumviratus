@@ -89,16 +89,12 @@ Two things change, and the second one is the real one:
 
 - **Architecture** moves from **`TRANN1` to `TRANN2`** — the project's own network line, now built on
   the SFNNv16 skip structure instead of SFNNv13, and still carrying the **`PassedPawns`** block that
-  no other engine has, exactly as `TRANN1` did. Pawn→pawn threat inputs are dropped because the
-  pawn-pair block already covers them: total inputs 87,904 → 86,992.
-- **Training method.** `rubicon-alea-v1` was trained from scratch, but the two networks after it grew
-  by **grafting**: v2 fine-tuned v1 with a zero-initialised `PawnPair` block added, and v3 froze v2
-  entirely (`lr = 0`) and trained only the new `PassedPawns` block — which is why it converged in
-  about four epochs. 7.0 trains **base and feature blocks together, from scratch**, in two stages on
-  a much larger corpus of public data re-labelled with Leela's BT4 network. Corpus, recipe and
-  per-stage figures: **[`NETWORKS.md`](NETWORKS.md)**.
-
-The new network line is called **`legio-septima`**.
+  no other engine has. Pawn→pawn threat inputs are dropped because the pawn-pair block already covers
+  them: total inputs 87,904 → 86,992.
+- **Training method.** The two networks before it grew by grafting a new input block onto a frozen
+  predecessor, which is cheap but can only *add* what the new block expresses. The new line —
+  **`legio-septima`** — trains **base and feature blocks together, from scratch**, in two stages on a
+  much larger corpus of public data re-labelled with Leela's BT4 network.
 
 #### Ahead of 6.0
 
@@ -107,9 +103,9 @@ The new network line is called **`legio-septima`**.
 | stage-2 final (epoch 799) vs `6.0` + `rubicon-alea-v3` | 2026-07-30 | 15+0.15 | 1442 | **+23.41 ± 9.22** | 100 % |
 
 <sub>Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the
-network. Ahead since epoch 189. Stage 2 is finished; a stage-3 annealing tail is running. Full
-per-checkpoint table: **[`NETWORKS.md`](NETWORKS.md)**. Development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** · network
-details: **[`NETWORKS.md`](NETWORKS.md)**.</sub>
+network. Ahead since epoch 189. Training is complete: stage 2 ended at epoch 799, and a stage-3
+annealing tail was run and closed at zero. Per-checkpoint table, corpus and recipe:
+**[`NETWORKS.md`](NETWORKS.md)** · development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
 
 
 ## License
