@@ -78,8 +78,8 @@ each is measured against the state immediately before it, and they overlap.</sub
 ## Triumviratus 7.0 — in development
 
 > [!IMPORTANT]
-> **6.0 is and remains the official release.** 7.0 is still in training and has no binary. The
-> figure below is a mid-training checkpoint with its error bar, not a release claim.
+> **6.0 is and remains the official release.** The 7.0 network is finished and chosen; there is no
+> 7.0 release yet.
 
 7.0 is a **network project**, not a search project. The search is measurably close to exhausted for
 this project's effort budget: a full audit in July 2026 found the remaining gap to the strongest
