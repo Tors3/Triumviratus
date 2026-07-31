@@ -25,8 +25,8 @@
 ---
 
 > [!IMPORTANT]
-> **6.0 is and remains the official release.** 7.0 is in training. The numbers below are
-> mid-training checkpoints, not release claims, and each carries its error bar.
+> **6.0 is and remains the official release.** The 7.0 network is finished — stage 2 closed at epoch
+> 799 — but there is no 7.0 release yet. Every figure below carries its error bar.
 
 ---
 
@@ -41,13 +41,9 @@ prior worth +1..+5 Elo, and the rest were below the resolution floor or already 
 So 7.0 does not try to out-search anyone. It changes how the network is *made*.
 
 The first own-lineage network, `rubicon-alea-v1`, was trained from scratch — but the two that
-followed grew by **grafting** a new input block onto the previous net:
-
-| | how it was trained |
-|---|---|
-| `rubicon-alea-v1` | from scratch, ~400 epochs, batch 16,384, λ = 1.0 |
-| `rubicon-alea-v2` | **fine-tune of v1** with a zero-initialised `PawnPair` block grafted on |
-| `rubicon-alea-v3` | **v2 frozen at `lr = 0`**, only the new `PassedPawns` block trains — converged in ~4 epochs |
+followed grew by **grafting** a new input block onto a frozen predecessor: v2 fine-tuned v1 with a
+zero-initialised `PawnPair` block, and v3 froze v2 entirely at `lr = 0` so that only `PassedPawns`
+trained, which converged in about four epochs.
 
 Grafting is cheap and it worked: v2 and v3 are worth **+15.14 ± 7.69 Elo** together over v1. But a
 frozen base can only ever *add* what the new block can express — it cannot re-learn what the rest of
