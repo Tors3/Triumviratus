@@ -98,14 +98,17 @@ Two things change, and the second one is the real one:
 
 #### Ahead of 6.0
 
-| | date | TC | games | Elo | LOS |
-|---|---|---|---|---|---|
-| stage-2 final (epoch 799) vs `6.0` + `rubicon-alea-v3` | 2026-07-30 | 15+0.15 | 1442 | **+23.41 ± 9.22** | 100 % |
+| | date | TC | games | Elo |
+|---|---|---|---|---|
+| whole engine — network + re-tuned search | 2026-07-31 | **25+0.25** | 1287 | **+22.17 ± 9.70** |
+| network alone — epoch 799, search frozen | 2026-07-30 | 15+0.15 | 1442 | +23.41 ± 9.22 |
 
-<sub>Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the
-network. Ahead since epoch 189. Training is complete: stage 2 ended at epoch 799, and a stage-3
-annealing tail was run and closed at zero. Per-checkpoint table, corpus and recipe:
-**[`NETWORKS.md`](NETWORKS.md)** · development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
+<sub>Both against 6.0 with `rubicon-alea-v3`, 1 thread, UHO_4060_v4, AVX-512 PGO builds. The rows
+answer different questions and are **not** additive: the second freezes the search to isolate the
+network, and the two agree within their error bars. Ahead of 6.0 since epoch 189. Training is
+complete — stage 2 ended at epoch 799, and a stage-3 annealing tail was run and closed at zero.
+Per-checkpoint table and recipe: **[`NETWORKS.md`](NETWORKS.md)** · development log:
+**[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
 
 
 ## License

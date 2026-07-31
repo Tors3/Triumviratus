@@ -12,9 +12,27 @@
 #include <vector>
 
 // Define version information
-#define VERSION " - 6.0"
+#define VERSION " - 7.0"
 #define AUTHOR "Francesco Torsello"
 #define NAME "Triumviratus"
+
+// Data di BUILD, presa dal compilatore: cambia da sola a ogni ricompilazione, cosi'
+// due build dello stesso giorno-diverso si distinguono nella GUI senza toccare il
+// sorgente. `__DATE__` e' "Jul 31 2026" (giorno con lo SPAZIO davanti sotto il 10):
+// build_date() lo riscrive in "2026-07-31", che si ordina.
+inline const char* build_date() {
+  static char iso[11];
+  if (!iso[0]) {
+    const char* d    = __DATE__;   // via un puntatore: `__DATE__ + 7` su un literal
+    const char* mons = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    const char  mon3[4] = { d[0], d[1], d[2], '\0' };  // SOLO le 3 lettere: cercare
+    const char* hit  = strstr(mons, mon3);             // "Jul 31 2026" intero non c'e'
+    const int   mon  = hit ? int(hit - mons) / 3 + 1 : 0;
+    snprintf(iso, sizeof iso, "%.4s-%02d-%02d", d + 7, mon,
+             atoi(d + 4));          // atoi mangia lo spazio dei giorni < 10
+  }
+  return iso;
+}
 
 // Define the size of a 64-bit unsigned integer
 #define U64 unsigned long long

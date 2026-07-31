@@ -241,6 +241,13 @@ Stage 1 and stage 2 complete; stage 3 run and closed at zero. The shipped networ
 
 Measured on the 7.0 binary **frozen before** any search change, so the figure isolates the network.
 
+The same comparison with the search **unfrozen** — network plus the two re-tuned parameter
+vectors — at a longer time control:
+
+> **+22.17 ± 9.70 Elo** over 1287 games at **25+0.25**.
+
+The two figures agree within their error bars: the gain is the network.
+
 | stage-2 epoch | date | TC | games | Elo | LOS |
 |---|---|---|---|---|---|
 | 189 | 2026-07-29 | 12+0.12 | 802 | +13.00 ± 12.72 | 97.75% |

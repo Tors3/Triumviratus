@@ -405,10 +405,12 @@ void uci_loop()
         // "ucinewgame" -> its handler below would be dead code).
         if (strcmp(input, "uci") == 0)
         {
-            // NB: VERSION contiene gia' il separatore (" - 6.0") -> %s%s, senza spazio
-            // in mezzo. Con "%s %s" usciva "Triumviratus  - 6.0" (doppio spazio): l'id
+            // NB: VERSION contiene gia' il separatore (" - 7.0") -> %s%s, senza spazio
+            // in mezzo. Con "%s %s" usciva "Triumviratus  - 7.0" (doppio spazio): l'id
             // name e' l'identita' del motore per GUI e liste rating, deve essere pulito.
-            printf("id name %s%s\n", NAME, VERSION);
+            // La data di build in coda distingue le build giornaliere fra loro:
+            // "Triumviratus - 7.0 2026-07-31".
+            printf("id name %s%s %s\n", NAME, VERSION, build_date());
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
@@ -419,7 +421,7 @@ void uci_loop()
             // Opzioni ufficiali di analisi/utilizzo (sempre visibili, anche in release):
             printf("option name UCI_ShowWDL type check default false\n");  // W/D/L nelle info-line (via generic handler)
             printf("option name Clear Hash type button\n");                // svuota la TT su richiesta
-            printf("option name UCI_EngineAbout type string default %s%s by %s\n", NAME, VERSION, AUTHOR);
+            printf("option name UCI_EngineAbout type string default %s%s build %s by %s\n", NAME, VERSION, build_date(), AUTHOR);
             // --- Tuning / experimental / diagnostic options: hidden in the release build
             //     (define TRIUMV_RELEASE). Dev/tuning builds expose them for SPSA. ---
 #ifndef TRIUMV_RELEASE
