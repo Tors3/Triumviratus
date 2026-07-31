@@ -257,15 +257,6 @@ those two networks — a much tighter measurement — says 799 is the *stronger*
 +5.18 ± 6.03. Reading a trend from this column is not supported: at ±9 Elo a 1000-game match cannot
 separate +20 from +30.</sub>
 
-The last 103 epochs of stage 2, measured directly (same binary, only the `.nnue` swapped, 128 threads):
-
-| | TC | games | Elo | LOS |
-|---|---|---|---|---|
-| epoch 799 vs epoch 696 | 15+0.15 | 3892 | **+5.18 ± 6.03** | 95.4 % |
-
-<sub>Not significant on its own, but it is the point estimate the stage-3 projection rests on:
-+5.18 over 103 epochs is 0.050 Elo/epoch, the steepest window of the run.</sub>
-
 Progression against the end of stage 1 — same binary, only the `.nnue` swapped:
 
 | stage-2 epoch | TC | games | Elo |
