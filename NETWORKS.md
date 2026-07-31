@@ -120,10 +120,11 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ---
 
-## `legio-septima` — the Triumviratus 7.0 network (**in development, not released**)
+## `legio-septima` — the Triumviratus 7.0 network
 
-> **Status: in development.** Stage 1 complete (479 epochs). Stage 2 running, ~220 of 800 epochs.
-> Nothing shipped. **Triumviratus 6.0 with `rubicon-alea-v3` remains the official release.**
+> **Status: training complete, network chosen — no release yet.** Stage 1 (479 epochs) and stage 2
+> (800 epochs) are done; a stage-3 annealing tail was run and closed at zero. The network is the
+> stage-2 final, **epoch 799**. **Triumviratus 6.0 with `rubicon-alea-v3` remains the current release.**
 
 The `rubicon-alea` lineage ends with 6.0. `legio-septima` changes both the architecture and the
 training method — hence a new lineage and a new name.
@@ -142,17 +143,11 @@ training method — hence a new lineage and a new name.
 pawn-pusher inputs, because the pawn-pair block already covers every pawn–pawn interaction — keeping both
 means paying twice for the same information. We had both; now we don't.
 
-**The change that actually matters is not in that table — it is how the weights are made.**
-
-| network | how it was trained |
-|---|---|
-| `rubicon-alea-v1` | from scratch, ~400 epochs, batch 16,384 |
-| `rubicon-alea-v2` | fine-tune of v1, with a zero-grafted `PawnPair` block |
-| `rubicon-alea-v3` | v2 **frozen at `lr = 0`**, only `PassedPawns` trains — saturates in ~4 epochs |
-| **`legio-septima`** | **base and feature blocks together, from scratch**, two stages |
-
-Grafting worked: v2 + v3 are worth **+15.14 ± 7.69 Elo** over v1. Its limit is structural — a frozen
-base can only *add* what the new block expresses, never re-learn what the rest already believes.
+**The change that actually matters is not in that table — it is how the weights are made.** Grafting
+worked: v2 and v3 together are worth **+15.14 ± 7.69 Elo** over v1, for a few epochs of training on
+one small block. Its limit is structural — a frozen base can only *add* what the new block expresses,
+never re-learn what the rest already believes. `legio-septima` trains base and blocks together, from
+scratch.
 
 ### Stage 1 data
 
