@@ -531,10 +531,61 @@ void update_accumulator_refresh_cache(Color                     perspective,
     entry.pieceBB = pos.pieces();
     entry.pieces  = pos.piece_array();
 
+    // --- cache del refresh per i blocchi PEDONI (PawnPair + PassedPawns) ----------------
+    // La finny table copre solo HalfKAv2_hm: gli altri blocchi si ricostruivano da zero a
+    // OGNI refresh. Threats no (dipendono dalla posizione intera), ma PawnPair e PassedPawns
+    // dipendono ESATTAMENTE da (pedoni bianchi, pedoni neri, orientation) — verificato nelle
+    // rispettive make_index. E i refresh sono scatenati da mosse di RE, che i pedoni non li
+    // toccano: fra due refresh consecutivi la chiave e' quasi sempre la stessa.
+    // La chiave e' i due bitboard PER INTERO, non un hash: nessuna collisione possibile.
+    // `orientation` (non ksq) perche' e' l'unico modo in cui il re entra negli indici, e ha
+    // due soli valori per prospettiva (OrientTBL dipende dalla meta' di scacchiera del re).
+    const Bitboard wpBB   = pos.pieces(WHITE, PAWN);
+    const Bitboard bpBB   = pos.pieces(BLACK, PAWN);
+    const int      orient = int(Features::FullThreats::OrientTBL[ksq]) ^ (56 * int(perspective));
+
+    struct PawnRefreshEntry {
+        Bitboard wp = ~Bitboard(0), bp = ~Bitboard(0);  // stato iniziale impossibile => miss
+        int      orient = -1;
+        alignas(64) std::int16_t acc[FeatureTransformer::OutputDimensions];
+        alignas(64) std::int32_t psqt[PSQTBuckets];
+    };
+    // 8 entry = 16 KB per thread: resta in L1/L2. Piu' grande peggiorerebbe cio' che
+    // stiamo ottimizzando, che e' traffico di memoria, non conto di istruzioni.
+    static constexpr int  PawnCacheMask = 7;
+    static thread_local PawnRefreshEntry pawnCache[PawnCacheMask + 1];
+
+    PawnRefreshEntry& pe = pawnCache[(unsigned(wpBB ^ bpBB) ^ unsigned((wpBB ^ bpBB) >> 29)
+                                      ^ unsigned(orient)) & PawnCacheMask];
+#if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && !defined(USE_AVX512)
+    const bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient);
+#else
+    // Misurato 3/08/2026, interleaved, 60 posizioni depth 19, nodi identici:
+    //   AVX2    +1,37%  (40/60 posizioni, test del segno p≈0,009)  -> ATTIVA
+    //   AVX-512 -0,11%  (18/60 posizioni, stessa significativita' a rovescio) -> SPENTA
+    // Su AVX-512 i tile sono piu' larghi e il `pv[NumRegs]` in piu' preme sui registri nel
+    // percorso di miss, mentre il vantaggio della lettura contigua e' minore perche' il
+    // percorso sparso era gia' piu' efficiente. E' l'AVX2 a darci il rating (CCRL compila
+    // AVX2), ma non c'e' motivo di tenersi una regressione misurata dove non serve.
+    // TRIUMV_NO_PAWN_CACHE = baseline per la misura A/B; il percorso scalare non ha cache.
+    constexpr bool pawnHit = false;
+#endif
+
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
-    PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
-    PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
+    const int nThreat = active.ssize();
+    if (!pawnHit)
+    {
+        // Miss: si enumera come prima. Il hit salta anche QUESTO, non solo le somme.
+        PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
+        PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
+        pe.wp = wpBB, pe.bp = bpBB, pe.orient = orient;
+    }
+#ifdef TRIUMV_PROFILE
+    prof_cols_thr += nThreat;
+    prof_cols_pawn += active.size() - nThreat;
+    ++prof_n_refresh_calls;
+#endif
 #ifdef TRIUMV_PROFILE
     // Quanto si avvicina la lista al suo MaxActiveDimensions (288)? `push_back_if_lt` scrive
     // PRIMA di controllare e in Release l'assert sparisce: arrivarci = overflow silenzioso.
@@ -578,7 +629,7 @@ void update_accumulator_refresh_cache(Color                     perspective,
         for (IndexType k = 0; k < Tiling::NumRegs; k++)
             vec_store(&entryTile[k], acc[k]);
 
-        for (int i = 0; i < active.ssize(); ++i)
+        for (int i = 0; i < nThreat; ++i)
         {
             auto* column =
               reinterpret_cast<const vec_i8_t*>(&threatWeights[active[i] * Dimensions + tileOff]);
@@ -593,6 +644,46 @@ void update_accumulator_refresh_cache(Color                     perspective,
             for (IndexType k = 0; k < Tiling::NumRegs; ++k)
                 acc[k] = vec_add_16(acc[k], vec_convert_8_16(column[k]));
     #endif
+        }
+
+        // Blocchi pedoni. Hit = UNA lettura contigua di 2 KB al posto di N colonne sparse
+        // da 2 KB l'una: e' il traffico di memoria che si taglia, non le istruzioni.
+        auto* pawnTile = reinterpret_cast<vec_t*>(&pe.acc[tileOff]);
+        if (pawnHit)
+        {
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_add_16(acc[k], pawnTile[k]);
+        }
+        else
+        {
+            // Miss: si somma in un vettore SEPARATO (non su acc) perche' quel vettore va
+            // memorizzato da solo — sommarlo su acc non lo renderebbe riusabile.
+            vec_t pv[Tiling::NumRegs];
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                pv[k] = vec_zero();
+
+            for (int i = nThreat; i < active.ssize(); ++i)
+            {
+                auto* column = reinterpret_cast<const vec_i8_t*>(
+                  &threatWeights[active[i] * Dimensions + tileOff]);
+
+    #ifdef USE_NEON
+                for (IndexType k = 0; k < Tiling::NumRegs; k += 2)
+                {
+                    pv[k]     = vaddw_s8(pv[k], vget_low_s8(column[k / 2]));
+                    pv[k + 1] = vaddw_high_s8(pv[k + 1], column[k / 2]);
+                }
+    #else
+                for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                    pv[k] = vec_add_16(pv[k], vec_convert_8_16(column[k]));
+    #endif
+            }
+
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+            {
+                vec_store(&pawnTile[k], pv[k]);
+                acc[k] = vec_add_16(acc[k], pv[k]);
+            }
         }
 
         for (IndexType k = 0; k < Tiling::NumRegs; k++)
@@ -627,12 +718,41 @@ void update_accumulator_refresh_cache(Color                     perspective,
         for (IndexType k = 0; k < Tiling::NumPsqtRegs; ++k)
             vec_store_psqt(&entryTilePsqt[k], psqt[k]);
 
-        for (int i = 0; i < active.ssize(); ++i)
+        for (int i = 0; i < nThreat; ++i)
         {
             auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
               &featureTransformer.threatPsqtWeights[active[i] * PSQTBuckets + psqtTileOff]);
             for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
                 psqt[k] = vec_add_psqt_32(psqt[k], columnPsqt[k]);
+        }
+
+        // I blocchi pedoni contribuiscono ANCHE al PSQT (threatPsqtWeights): la cache deve
+        // coprire tutti e due gli accumulatori, o al hit il PSQT resta indietro in silenzio.
+        auto* pawnTilePsqt = reinterpret_cast<psqt_vec_t*>(&pe.psqt[psqtTileOff]);
+        if (pawnHit)
+        {
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_add_psqt_32(psqt[k], pawnTilePsqt[k]);
+        }
+        else
+        {
+            psqt_vec_t pq[Tiling::NumPsqtRegs];
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                pq[k] = vec_zero_psqt();
+
+            for (int i = nThreat; i < active.ssize(); ++i)
+            {
+                auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+                  &featureTransformer.threatPsqtWeights[active[i] * PSQTBuckets + psqtTileOff]);
+                for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                    pq[k] = vec_add_psqt_32(pq[k], columnPsqt[k]);
+            }
+
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+            {
+                vec_store_psqt(&pawnTilePsqt[k], pq[k]);
+                psqt[k] = vec_add_psqt_32(psqt[k], pq[k]);
+            }
         }
 
         for (IndexType k = 0; k < Tiling::NumPsqtRegs; ++k)

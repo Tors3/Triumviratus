@@ -907,6 +907,7 @@ void uci_loop()
             prof_n_cols = prof_n_upd = 0;
             prof_n_thr_seen = prof_n_thr_dead = 0;
             prof_max_active = prof_max_inc = 0;
+            prof_cols_thr = prof_cols_pawn = prof_n_refresh_calls = 0;
             unsigned long long prof_wall = 0;
 #endif
             for (int bi = 0; bi < 8; bi++) {
@@ -1002,9 +1003,21 @@ void uci_loop()
                     printf("  tuple threat     : %llu generate, %llu BUTTATE (%.1f%%)\n",
                            (unsigned long long)prof_n_thr_seen, (unsigned long long)prof_n_thr_dead,
                            100.0 * (double)prof_n_thr_dead / (double)prof_n_thr_seen);
+                  { static const char* PT = "?PNBRQK";
+                    for (int a = 1; a <= 6; a++) for (int b = 1; b <= 6; b++)
+                      if (prof_dead_pair[a][b])
+                        printf("      %c->%c : %llu\n", PT[a], PT[b], (unsigned long long)prof_dead_pair[a][b]); }
                   printf("  MAX riempimento  : refresh %llu/288   incrementale %llu/288  %s\n",
                          (unsigned long long)prof_max_active, (unsigned long long)prof_max_inc,
                          (prof_max_active >= 260 || prof_max_inc >= 260) ? "<<< VICINO AL BOUND" : "");
+                  if (prof_n_refresh_calls) {
+                      const double tot = (double)(prof_cols_thr + prof_cols_pawn);
+                      printf("  COLONNE @refresh : threat %.1f/chiamata   pedoni %.1f/chiamata   "
+                             "pedoni = %.1f%% del totale  (tetto della cache di refresh)\n",
+                             (double)prof_cols_thr / (double)prof_n_refresh_calls,
+                             (double)prof_cols_pawn / (double)prof_n_refresh_calls,
+                             tot > 0 ? 100.0 * (double)prof_cols_pawn / tot : 0.0);
+                  }
                 }
               } }
 #endif

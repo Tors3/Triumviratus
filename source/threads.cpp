@@ -41,6 +41,8 @@ unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
 unsigned long long prof_n_cols = 0, prof_n_upd = 0;
 unsigned long long prof_n_thr_seen = 0, prof_n_thr_dead = 0;
 unsigned long long prof_max_active = 0, prof_max_inc = 0;
+unsigned long long prof_cols_thr = 0, prof_cols_pawn = 0, prof_n_refresh_calls = 0;
+unsigned long long prof_dead_pair[8][8] = {};
 #endif
 #include "defs.h"
 

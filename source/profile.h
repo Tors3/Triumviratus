@@ -31,6 +31,11 @@
   extern unsigned long long prof_n_thr_seen, prof_n_thr_dead;
   // Massimo riempimento delle IndexList, contro MaxActiveDimensions = 288.
   extern unsigned long long prof_max_active, prof_max_inc;
+  // Al REFRESH: colonne attive per blocco. I due blocchi pedoni dipendono solo dalla
+  // struttura di pedoni => sono gli unici cachabili fra refresh consecutivi (che sono
+  // scatenati da mosse di RE). Il rapporto pawn/(pawn+threat) e' il tetto del guadagno.
+  extern unsigned long long prof_cols_thr, prof_cols_pawn, prof_n_refresh_calls;
+  extern unsigned long long prof_dead_pair[8][8];
   inline unsigned long long prof_now() { return __rdtsc(); }
   struct ProfGuard {
       unsigned long long& c; unsigned long long t;
