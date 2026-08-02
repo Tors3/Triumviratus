@@ -209,3 +209,51 @@ at depth 18, three PGO binaries built from the same recipe. About +0.4 Elo.
 capture is a `pop_lsb`, a test, an encode and a store. On an out-of-order core with the data in L1
 that hides in the shadow of the memory-bound network evaluation, which is ~58% of node time. The
 move generator was not the bottleneck, and micro-optimising it does not become one.</sub>
+
+### Where the time actually goes
+
+That last note was a guess. It has now been measured, with per-phase cycle counters compiled into
+a profiling build. On the AVX2 binary:
+
+| | share of search wall time |
+|---|---|
+| **NNUE forward** | **52%** |
+| — feature transformer | 38.0% |
+| —— incremental accumulator update | 26.9% |
+| —— full refresh | 7.3% (8.5% of calls) |
+| —— final transform | 2.1% |
+| — `fc_0` (sparse affine) | 4.6% |
+| — remaining layers | 0.9% |
+| move scoring | 6.5% |
+| make + unmake | 4.9% |
+| move generation | 2.9% |
+| transposition table | 2.0% |
+| rest of search | 31% |
+
+Two things follow. First, `fc_0` is 4.6%, which closes a question left open in the 6.0 audit: it had
+archived the feature-transformer permutation work with the explicit condition *"if `fc_0` is under
+5% of the time, this is closed"*, and the measurement was never taken.
+
+Second, and more useful: the accumulator update is **memory-bound, not compute-bound**. It touches
+10.5 weight columns per update, 2 KB each, drawn at effectively random offsets from a **170 MB**
+table — 1330 cycles measured against ~337 if the data were in cache. Vector instructions are not
+the constraint; they are waiting.
+
+### Dead threat tuples — +3.54% NPS
+
+When the threat feature set dropped pawn→pawn relations and pushes (60,720 → 59,808 inputs), the
+refresh path was updated to match but the incremental path was not. It kept generating those
+tuples: each one took a slot in the dirty list, went through index computation and a prefetch, and
+was then discarded by the bounds filter. **12.6% of every threat tuple the engine produced was
+thrown away** — 178,975 of 1,416,458 in a bench run. Now 3.8%.
+
+> **+3.54% NPS**, measured paired-interleaved over 40 book positions at depth 19, faster in 28 of
+> them, with node counts identical on both sides (31,135,764). About +2.8 Elo.
+
+<sub>Two notes on method. The gain is **+1.68% on AVX-512 and +3.54% on AVX2** — the AVX2 path
+tiles the accumulator in 8 passes rather than 2, so removing work upstream is worth more there.
+Since rating lists compile AVX2, that is the number that counts, and profiling on AVX-512 would
+have understated it by half. And a companion change — rewriting the `PawnPair` refresh from an
+O(n²) double loop to the precomputed file band its own incremental path already used — measured
+**−0.10%: nothing**. Both results point the same way: on a memory-bound path, removing instructions
+does not pay, removing memory traffic does.</sub>
