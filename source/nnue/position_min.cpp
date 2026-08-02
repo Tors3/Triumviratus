@@ -160,8 +160,13 @@ void Position::update_piece_threats(Piece               pc,
         Bitboard whiteAttacks = PawnPushOrAttacks[WHITE][s];
         Bitboard blackAttacks = PawnPushOrAttacks[BLACK][s];
 
-        threatened |= (color_of(pc) == WHITE ? whiteAttacks : blackAttacks) & pieces(PAWN);
-
+        // (era qui: `threatened |= pushOrAttacks & pieces(PAWN)`) Le relazioni
+        // pedone->pedone e le spinte NON sono piu' nel feature set: `map[PAWN][PAWN]`
+        // e' -1 (full_threats.h:61) e il refresh usa `pawnTargets = pieces(KNIGHT, ROOK)`
+        // (full_threats.cpp:244). Le tuple prodotte qui arrivavano fino a make_index,
+        // consumavano uno slot di DirtyThreatList e un prefetch, e venivano poi scartate
+        // da `push_back_if_lt(index, Dimensions)`: 12,6% di tutte le tuple generate
+        // (178.975 su 1.416.458 nel bench). Residuo del taglio 60.720 -> 59.808.
         pawnThreats = whiteAttacks & blackPawns;
         pawnThreats |= blackAttacks & whitePawns;
     }
@@ -171,13 +176,15 @@ void Position::update_piece_threats(Piece               pc,
           (attacks_bb<PAWN>(s, WHITE) & blackPawns) | (attacks_bb<PAWN>(s, BLACK) & whitePawns);
     }
 
-    if (type_of(pc) == PAWN || type_of(pc) == KNIGHT || type_of(pc) == ROOK)
+    // `pc` e' qui il BERSAGLIO: un pedone attaccato (o spinto contro) da un altro pedone
+    // e' la stessa relazione morta di sopra, vista dall'altro lato. Restano cavallo e torre.
+    if (type_of(pc) == KNIGHT || type_of(pc) == ROOK)
         incoming_threats |= pawnThreats;
 
     switch (type_of(pc))
     {
     case PAWN :
-        threatened &= pieces(PAWN, KNIGHT, ROOK);
+        threatened &= pieces(KNIGHT, ROOK);  // era pieces(PAWN, KNIGHT, ROOK)
         break;
     case BISHOP :
     case ROOK :

@@ -27,6 +27,7 @@
 #include <iosfwd>
 #include <iterator>
 
+#include "../../profile.h"
 #include "../position.h"
 #include "../types.h"
 #include "nnue_accumulator.h"
@@ -309,7 +310,13 @@ class FeatureTransformer {
                   NNZInfo<OutputDimensions>& nnzInfo) const {
 
         using namespace SIMD;
+#ifdef TRIUMV_PROFILE
+        prof_n_eval++;
+#endif
         accumulatorStack.evaluate(pos, *this, cache);
+        // Da qui in giu' e' la sola trasformazione (clipped ReLU + pairwise mult):
+        // il tempo dell'accumulatore e' gia' stato contato sopra.
+        PROF_GUARD(prof_ft_out);
         const auto& accumulatorState = accumulatorStack.latest();
 
         const Color perspectives[2]  = {pos.side_to_move(), ~pos.side_to_move()};

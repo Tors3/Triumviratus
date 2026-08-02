@@ -516,6 +516,18 @@ void uci_loop()
             printf("option name ContHist36Weight type spin default 37 min 0 max 400\n");  // /100 peso 3/6-ply; co-tunabile
             printf("option name PriorBonus type check default true\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)
             printf("option name PriorBonusScale type spin default 189 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
+            // R-PB (porting da Reckless search.rs:1123) — due meccanismi INDIPENDENTI, da misurare uno per volta.
+            printf("option name PriorBonusGate type check default false\n");    // premia solo gli all-node INATTESI (cut_node||pv). Audit B7
+            printf("option name PriorBonusFactor type check default false\n");  // scala il bonus su quanto il fail-low e' stato una sorpresa
+            printf("option name PriorBonusFactorScale type spin default 50 min 0 max 200\n"); // tarato per preservare il bonus MEDIO di oggi
+            printf("option name PBBase type spin default 88 min 0 max 400\n");
+            printf("option name PBMoveCount type spin default 17 min 0 max 100\n");
+            printf("option name PBMoveCountCap type spin default 229 min 0 max 600\n");
+            printf("option name PBTTMove type spin default 110 min 0 max 400\n");
+            printf("option name PBEval type spin default 144 min 0 max 600\n");
+            printf("option name PBEvalMargin type spin default 97 min 0 max 400\n");
+            printf("option name PBSwing type spin default 306 min 0 max 800\n");
+            printf("option name PBSwingMargin type spin default 136 min 0 max 500\n");
             printf("option name LowPlyHistory type check default true\n");    // #5: history per-ply near-root nell'ordering quiet
             printf("option name LowPlyWeight type spin default 179 min 0 max 200\n");  // contributo lowply; co-tunabile
             printf("option name StatEvalDiffMult type spin default 27 min 0 max 60\n");  // SF static-eval-diff ordering. A2 FIX 2026-07-25: annunciava 8 mentre il valore vivo e' 14 (threads.cpp:1431, ripristinato dopo il fix SEO) -> una GUI/tuner che rimanda i default espliciti spegneva il 15.4% dell'albero (bench 275063 -> 232681)
@@ -882,6 +894,11 @@ void uci_loop()
             int bench_t0 = get_time_ms();
 #ifdef TRIUMV_PROFILE
             prof_eval = prof_mg = prof_make = prof_tt = prof_score = 0;
+            prof_ft = prof_fc0 = prof_layers = 0;
+            prof_acc_inc = prof_acc_refresh = prof_ft_out = 0;
+            prof_n_inc = prof_n_refresh = prof_n_eval = 0;
+            prof_n_cols = prof_n_upd = 0;
+            prof_n_thr_seen = prof_n_thr_dead = 0;
             unsigned long long prof_wall = 0;
 #endif
             for (int bi = 0; bi < 8; bi++) {
@@ -936,7 +953,49 @@ void uci_loop()
               printf("  make+unmake     : %5.1f%%\n", 100.0 * (double)prof_make  / (double)pw);
               printf("  tt probe+store  : %5.1f%%\n", 100.0 * (double)prof_tt    / (double)pw);
               printf("  move scoring    : %5.1f%%\n", 100.0 * (double)prof_score / (double)pw);
-              printf("  other (search)  : %5.1f%%\n", 100.0 * (double)(pw - acc) / (double)pw); }
+              printf("  other (search)  : %5.1f%%\n", 100.0 * (double)(pw - acc) / (double)pw);
+              // Scomposizione del forward NNUE. La domanda che blocca il lavoro sulla
+              // sparsita' di L1: `ft_optimize` fu archiviato con la condizione "se fc_0
+              // e' sotto il 5% del tempo, chiuso", e quella misura non fu mai fatta.
+              unsigned long long nn = prof_ft + prof_fc0 + prof_layers;
+              if (nn) {
+                printf("--- NNUE forward (%% del wall / %% del forward) ---\n");
+                printf("  feature transf. : %5.1f%% / %5.1f%%\n",
+                       100.0 * (double)prof_ft     / (double)pw, 100.0 * (double)prof_ft     / (double)nn);
+                printf("  fc_0 (sparse)   : %5.1f%% / %5.1f%%\n",
+                       100.0 * (double)prof_fc0    / (double)pw, 100.0 * (double)prof_fc0    / (double)nn);
+                printf("  altri layer     : %5.1f%% / %5.1f%%\n",
+                       100.0 * (double)prof_layers / (double)pw, 100.0 * (double)prof_layers / (double)nn);
+                printf("  (fc_0 sotto il 5%% del wall => ft_optimize e' chiuso)\n");
+                // Dentro il FT: dove va davvero il tempo.
+                unsigned long long ftsum = prof_acc_inc + prof_acc_refresh + prof_ft_out;
+                if (ftsum) {
+                  printf("--- dentro il feature transformer ---\n");
+                  printf("  acc. incrementale: %5.1f%% del wall  (%llu chiamate)\n",
+                         100.0 * (double)prof_acc_inc / (double)pw, (unsigned long long)prof_n_inc);
+                  printf("  acc. refresh     : %5.1f%% del wall  (%llu chiamate, %4.1f%% del totale)\n",
+                         100.0 * (double)prof_acc_refresh / (double)pw, (unsigned long long)prof_n_refresh,
+                         (prof_n_inc + prof_n_refresh) ? 100.0 * (double)prof_n_refresh / (double)(prof_n_inc + prof_n_refresh) : 0.0);
+                  printf("  transform finale : %5.1f%% del wall\n",
+                         100.0 * (double)prof_ft_out / (double)pw);
+                  printf("  eval NNUE totali : %llu\n", (unsigned long long)prof_n_eval);
+                  if (prof_n_inc)
+                    printf("  cicli/update inc.: %llu\n", (unsigned long long)(prof_acc_inc / prof_n_inc));
+                  if (prof_n_refresh)
+                    printf("  cicli/refresh    : %llu\n", (unsigned long long)(prof_acc_refresh / prof_n_refresh));
+                  if (prof_n_upd) {
+                    printf("  update effettivi : %llu  (colonne/update: %.1f)\n",
+                           (unsigned long long)prof_n_upd, (double)prof_n_cols / (double)prof_n_upd);
+                    printf("  costo teorico    : %.0f cicli/update a 1 col = %d int16 = %d vettori AVX512\n",
+                           (double)prof_n_cols / (double)prof_n_upd * (1024.0 / 32.0),
+                           1024, 1024 / 32);
+                  }
+                  if (prof_n_thr_seen)
+                    printf("  tuple threat     : %llu generate, %llu BUTTATE (%.1f%%)\n",
+                           (unsigned long long)prof_n_thr_seen, (unsigned long long)prof_n_thr_dead,
+                           100.0 * (double)prof_n_thr_dead / (double)prof_n_thr_seen);
+                }
+              } }
 #endif
             fflush(stdout);
             parse_fen(start_position);
@@ -1545,6 +1604,16 @@ void uci_loop()
         }
         // V2 PriorBonus + #5 LowPlyHistory: A/B toggle. Gli spin (PriorBonusScale/LowPlyWeight)
         // cadono nel gestore generico (25esimo/22esimo char != ' ' di " value ").
+        else if (strncmp(input, "setoption name PriorBonusGate value ", 36) == 0)
+        {
+            const char* v = input + 36;
+            set_prior_bonus_gate(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name PriorBonusFactor value ", 38) == 0)
+        {
+            const char* v = input + 38;
+            set_prior_bonus_factor(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
         else if (strncmp(input, "setoption name PriorBonus value ", 32) == 0)
         {
             const char* v = input + 32;

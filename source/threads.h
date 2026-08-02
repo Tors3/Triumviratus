@@ -134,6 +134,10 @@ struct ThreadData {
     // F-018.6b (SingularDECap): lunghezza della catena di double-extension singular sul
     // path fino a questo ply (Berserk ss->de). Slot figlio scritto al make.
     int de_stack[max_ply + 8] = {0};
+    // R-PB (PriorBonusFactor): mossa TT del nodo a ogni ply, scritta una volta prima del
+    // move loop. Serve al figlio per sapere se la mossa che l'ha generato era la TT-move
+    // del padre — uno dei quattro segnali con cui Reckless scala il prior bonus.
+    int ttmove_stack[max_ply + 8] = {0};
 
     // P4 TroubleMaking: se != 0, alla root si cerca SOLO questa mossa (verifica
     // null-window del candidato "trouble"). Per-thread -> SMP-safe.
@@ -479,6 +483,8 @@ extern void set_qs_tt_quiets(int mode);        // QSTTQuiets: 0=off · 1=tutte l
 extern void set_check_ordering(bool enabled);  // CheckOrdering: bonus quiet che danno scacco diretto, filtrati SEE>=-75 (SF-style)
 extern void set_conthist36(bool enabled);      // ContHist36: aggiunge conthist 3-ply e 6-ply all'ordering quiet (SF #4)
 extern void set_prior_bonus(bool enabled);     // PriorBonus (V2): su fail-low, bonus alla mossa precedente (conthist/main + capture-hist se cattura)
+extern void set_prior_bonus_gate(bool enabled);   // R-PB: solo sugli all-node INATTESI (cut_node||pv) -- audit B7
+extern void set_prior_bonus_factor(bool enabled); // R-PB: bonus scalato su quanto il fail-low e' stato una sorpresa
 extern void set_lowply(bool enabled);          // LowPlyHistory (#5): history per-ply near-root nell'ordering quiet
 
 // SPSA-tunable search parameters: set one by name (UCI spin option). Returns true

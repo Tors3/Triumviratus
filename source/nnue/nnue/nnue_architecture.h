@@ -26,6 +26,7 @@
 #include <sstream>
 #include <iosfwd>
 
+#include "../../profile.h"
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
 #include "features/passed_pawns.h"
@@ -142,7 +143,10 @@ struct NetworkArchitecture {
 
         Buffer buffer;
 
-        fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo);
+        // PROF_GUARD e' un no-op senza TRIUMV_PROFILE: nessun costo nel binario spedito.
+        { PROF_GUARD(prof_fc0);
+          fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo); }
+        { PROF_GUARD(prof_layers);
         // ⛔ propagate_pair (attivazione fusa) MISURATA PIU' LENTA e non usata: vedi il commento
         // in layers/sqr_clipped_relu.h. Le due attivazioni separate restano la via veloce.
         ac_sqr_0.propagate(buffer.fc_0_out, buffer.concat);
@@ -150,7 +154,7 @@ struct NetworkArchitecture {
         fc_1.propagate(buffer.concat, buffer.fc_1_out);
         ac_sqr_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2);
         ac_1.propagate(buffer.fc_1_out, buffer.concat + FC_0_OUTPUTS * 2 + FC_1_OUTPUTS);
-        fc_2.propagate(buffer.concat, buffer.fc_2_out);
+        fc_2.propagate(buffer.concat, buffer.fc_2_out); }
 
         // Skip L1->output (SFNNv15): non c'e' piu' un neurone forwarded in slot extra; si prende la
         // DIFFERENZA degli ultimi due output di fc_0, che sarebbero comunque zero-paddati per il SIMD

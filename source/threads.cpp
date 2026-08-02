@@ -35,6 +35,11 @@
 #ifdef TRIUMV_PROFILE
 unsigned long long prof_eval = 0, prof_mg = 0, prof_make = 0, prof_tt = 0,
                    prof_score = 0;
+unsigned long long prof_ft = 0, prof_fc0 = 0, prof_layers = 0;
+unsigned long long prof_acc_inc = 0, prof_acc_refresh = 0, prof_ft_out = 0;
+unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
+unsigned long long prof_n_cols = 0, prof_n_upd = 0;
+unsigned long long prof_n_thr_seen = 0, prof_n_thr_dead = 0;
 #endif
 #include "defs.h"
 
@@ -1495,6 +1500,37 @@ static bool g_prior_bonus = true;
 void set_prior_bonus(bool v) { g_prior_bonus = v; }
 int g_prior_bonus_scale =
     189; // /100 del td_stat_bonus(depth). Spin PriorBonusScale.
+// ---- R-PB: il prior bonus di Reckless (src/search.rs:1123) in due pezzi separabili.
+// Oggi noi premiamo la mossa precedente su OGNI all-node e con un bonus PIATTO. Loro
+// fanno due cose diverse, e sono indipendenti, quindi qui sono due toggle distinti da
+// misurare uno per volta. Entrambi default OFF = byte-identico.
+//
+// (1) g_prior_bonus_gate — premia solo gli all-node INATTESI (`cut_node || pv_node`).
+//     Se il nodo doveva fallire basso e ha fallito basso, la mossa precedente non ci ha
+//     detto niente di nuovo: il bonus e' rumore. E' anche il finding B7 del nostro audit
+//     ("PriorBonus non gated"), rimasto aperto.
+//
+// (2) g_prior_bonus_factor — scala il bonus su QUANTO il fail-low e' stato una sorpresa:
+//     quante mosse aveva gia' provato il padre, se la mossa era la sua TT-move, e due
+//     misure di quanto lo score e' crollato sotto l'eval.
+//     ⚠️ La scala non e' la loro: applicare `factor/128` sopra il nostro bonus attuale
+//     (~5568 su HISTORY_MAX 7000) manderebbe OGNI update contro il clamp, cancellando
+//     proprio la scalatura che si vuole introdurre. `g_pb_scale` e' tarato perche' il
+//     bonus MEDIO resti quello di oggi: fattore medio ~480, 480*50/(100*128) = 1,88 volte
+//     td_stat_bonus contro le 1,89 attuali. Cambia la FORMA, non il livello.
+static bool g_prior_bonus_gate = false;
+void set_prior_bonus_gate(bool v) { g_prior_bonus_gate = v; }
+static bool g_prior_bonus_factor = false;
+void set_prior_bonus_factor(bool v) { g_prior_bonus_factor = v; }
+int g_pb_scale = 50;       // /100, poi /128 col fattore: preserva il bonus medio
+int g_pb_base = 88;        // termine costante del fattore
+int g_pb_mc = 17;          // per mossa gia' esaminata dal padre
+int g_pb_mc_cap = 229;     // cap del termine sopra
+int g_pb_ttm = 110;        // la mossa precedente era la TT-move del padre
+int g_pb_ev = 144;         // score crollato sotto la nostra eval
+int g_pb_ev_marg = 97;     // di quanto
+int g_pb_swing = 306;      // score crollato sotto l'eval NEGATA del padre (swing grosso)
+int g_pb_swing_marg = 136; // di quanto
 // ---- #5: low-ply history (SF)
 // ----------------------------------------------------- History per-ply usata
 // SOLO nei primi LOW_PLY_MAX ply (vicino alla radice): cattura "questa mossa e'
@@ -2793,6 +2829,42 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "PriorBonusScale")) {
     g_prior_bonus_scale = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PriorBonusFactorScale")) {
+    g_pb_scale = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBBase")) {
+    g_pb_base = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBMoveCount")) {
+    g_pb_mc = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBMoveCountCap")) {
+    g_pb_mc_cap = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBTTMove")) {
+    g_pb_ttm = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBEval")) {
+    g_pb_ev = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBEvalMargin")) {
+    g_pb_ev_marg = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBSwing")) {
+    g_pb_swing = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "PBSwingMargin")) {
+    g_pb_swing_marg = value < 0 ? 0 : value;
     return true;
   }
   if (!strcmp(name, "LowPlyWeight")) {
@@ -7063,6 +7135,11 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   ThreadData::NCEntry *nc = nullptr;
   if (g_node_cache && td.ply < ThreadData::NC_MAX_PLY && !excluded_move)
     nc = nc_get(td, td.hash_key);
+  // R-PB: la TT-move di QUESTO nodo, letta dal figlio come "la mossa che mi ha
+  // generato era la TT-move di mio padre?". Scritta una volta sola qui, non nel
+  // move loop: non dipende dalla mossa in corso.
+  td.ttmove_stack[td.ply] = tt_move;
+
   int moves_searched = 0;
   int quiets_searched = 0;
   LmpChkCtx
@@ -8140,11 +8217,28 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // (quella che ci ha portato qui) era forte -> bonus alla sua history. Quiet:
   // main + 1-ply continuation; cattura: capture-hist (vittima da
   // captured_stack, mv1 e' gia' stata fatta = via dal board).
-  if (g_prior_bonus && hash_flag == hash_flag_alpha) {
+  if (g_prior_bonus && hash_flag == hash_flag_alpha &&
+      (!g_prior_bonus_gate || is_cut_node || pv_node)) {
     int mv1 = td.move_stack[td.ply];
     if (mv1) {
       int p1 = get_move_piece(mv1), t1 = get_move_target(mv1);
       int pbonus = g_prior_bonus_scale * td_stat_bonus(depth) / 100;
+      if (g_prior_bonus_factor && td.ply >= 1) {
+        int mc = td.seen_stack[td.ply - 1];
+        int mc_term = g_pb_mc * mc;
+        if (mc_term > g_pb_mc_cap)
+          mc_term = g_pb_mc_cap;
+        int pev = td.eval_stack[td.ply - 1];
+        int factor =
+            g_pb_base + mc_term +
+            (mv1 == td.ttmove_stack[td.ply - 1] ? g_pb_ttm : 0) +
+            (!in_check && best_score <= static_eval - g_pb_ev_marg ? g_pb_ev
+                                                                   : 0) +
+            (pev != EVAL_NONE && best_score <= -pev - g_pb_swing_marg
+                 ? g_pb_swing
+                 : 0);
+        pbonus = factor * g_pb_scale * td_stat_bonus(depth) / (100 * 128);
+      }
       if (!get_move_capture(mv1)) {
         td_update_history(td.history_moves[td.hbucket_stack[td.ply]][p1][t1],
                           pbonus);

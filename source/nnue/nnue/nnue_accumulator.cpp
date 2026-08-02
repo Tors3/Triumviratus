@@ -21,6 +21,7 @@
 #include <cassert>
 #include <new>
 
+#include "../../profile.h"
 #include "../bitboard.h"
 #include "../misc.h"
 #include "../position.h"
@@ -92,10 +93,20 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
     const auto last_usable_accum = find_last_usable_accumulator(perspective);
 
     if (accumulators[last_usable_accum].computed[perspective])
+    {
+#ifdef TRIUMV_PROFILE
+        prof_n_inc++;
+#endif
+        PROF_GUARD(prof_acc_inc);
         forward_update_incremental(perspective, pos, featureTransformer, last_usable_accum);
+    }
 
     else
     {
+#ifdef TRIUMV_PROFILE
+        prof_n_refresh++;
+#endif
+        PROF_GUARD(prof_acc_refresh);
         update_accumulator_refresh_cache(perspective, featureTransformer, pos, mut_latest(), cache);
         backward_update_incremental(perspective, pos, featureTransformer, last_usable_accum);
     }
@@ -379,6 +390,14 @@ void update_accumulator_incremental(Color                     perspective,
     // PROVATO e MISURATO -12.9% NPS su Zen4 (bisect interleaved, nodi identici:
     // pessimizzazione di codegen del template caldo, non volume di prefetch).
     // Il prefetch resta SOLO sui threat rows dentro append_changed_indices.
+
+#ifdef TRIUMV_PROFILE
+    // Quante colonne da HalfDimensions elementi vengono sommate/sottratte per UN
+    // aggiornamento. E' il numero che distingue "il codice e' lento" da "le feature
+    // sono tante": il costo dell'incrementale e' (colonne) x (L1) e nient'altro.
+    prof_n_cols += psqAdded.size() + psqRemoved.size() + thrAdded.size() + thrRemoved.size();
+    prof_n_upd++;
+#endif
 
     apply_combined(perspective, featureTransformer, computed, target_state, psqAdded, psqRemoved,
                    thrAdded, thrRemoved);

@@ -20,6 +20,8 @@
 
 #include "full_threats.h"
 
+#include "../../../profile.h"
+
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -318,6 +320,13 @@ void FullThreats::append_changed_indices(Color                   perspective,
         auto&           insert = add ? added : removed;
         const IndexType index  = make_index(perspective, attacker, from, to, attacked, ksq);
 
+#ifdef TRIUMV_PROFILE
+        // Quante tuple vengono generate e poi BUTTATE (map < 0 => index == Dimensions).
+        // Il prefetch qui sotto parte comunque: in regime memory-bound e' traffico sprecato.
+        prof_n_thr_seen++;
+        if (index >= Dimensions)
+            prof_n_thr_dead++;
+#endif
         if (prefetchBase)
             prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
               reinterpret_cast<uintptr_t>(prefetchBase) + index * prefetchStride));

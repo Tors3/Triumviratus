@@ -28,6 +28,7 @@
 #define INCBIN_SILENCE_BITCODE_WARNING
 #include "../incbin/incbin.h"
 
+#include "../../profile.h"
 #include "../evaluate.h"
 #include "../misc.h"
 #include "../position.h"
@@ -166,11 +167,19 @@ NetworkOutput Network::evaluate(const Position&    pos,
 
     NNZInfo<L1> nnzInfo;
 
-    const int  bucket     = (pos.count<ALL_PIECES>() - 1) / 4;
-    const auto psqt       = featureTransformer.transform(pos, accumulatorStack, cache,
-                                                         transformedFeatures, bucket, nnzInfo);
-    const auto positional = network[bucket].propagate(transformedFeatures, nnzInfo);
-    return {static_cast<Value>(psqt / OutputScale), static_cast<Value>(positional / OutputScale)};
+    const int bucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    Value     psqt_v, pos_v;
+    {
+        PROF_GUARD(prof_ft);
+        const auto psqt = featureTransformer.transform(pos, accumulatorStack, cache,
+                                                       transformedFeatures, bucket, nnzInfo);
+        psqt_v = static_cast<Value>(psqt / OutputScale);
+    }
+    {
+        const auto positional = network[bucket].propagate(transformedFeatures, nnzInfo);
+        pos_v = static_cast<Value>(positional / OutputScale);
+    }
+    return {psqt_v, pos_v};
 }
 
 
