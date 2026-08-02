@@ -61,6 +61,8 @@ void nn_set_lazy_mirror(int on);
 // this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.
 void nn_set_eval_scale(int pct);
 int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
+int  nn_last_opt_base(void);    // EvalCacheOptSplit: eval con optimism=0 (pre-rule50, post-scale)
+int  nn_last_opt_coeff(void);   // EvalCacheOptSplit: coefficiente in MILLESIMI dell'optimism
 int  nn_last_unadjusted(void);  // unadjusted (pre-rule50/scale) dell'ultima nn_scale (thread-local)
 int  nn_finalize(int unadjusted, int rule50);  // ricostruisce l'eval finale dall'unadjusted
 

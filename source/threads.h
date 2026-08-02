@@ -261,7 +261,11 @@ struct ThreadData {
     static constexpr int EVAL_CACHE_BITS = 16;          // 65536 entries
     static constexpr int EVAL_CACHE_SIZE = 1 << EVAL_CACHE_BITS;
     static constexpr U64 EVAL_CACHE_MASK = EVAL_CACHE_SIZE - 1;
-    struct EvalCacheEntry { U64 key; int eval; };
+    // `opt`: valore di g_optimism[stm] con cui questa eval e' stata calcolata. Serve
+    // perche' nn_scale mescola l'optimism DENTRO il valore ritornato (nnue_bridge.cpp:153)
+    // e g_optimism viene riscritto a ogni iterazione ID (threads.cpp:8667): senza tag, la
+    // cache serve valutazioni calcolate con un contempt diverso da quello corrente.
+    struct EvalCacheEntry { U64 key; int eval; int opt; int coeff; };
     EvalCacheEntry eval_cache[EVAL_CACHE_SIZE];          // ~1 MB / thread
 };
 
@@ -363,6 +367,11 @@ extern int  g_tmv2_pred_hit, g_tmv2_pred_miss;
 extern U64  g_tm_pred_hash;   // hash della posizione prevista (0 = nessuna predizione)
 // Gate per-TC del blocco TMv2 (definiti in threads.cpp, settati in parse_go).
 extern bool g_tmv2_tc_ok;
+extern bool g_tmv2_inc_gate;
+extern void set_tmv2_inc_gate(bool v);  // false = TMv2 attivo anche a inc=0 (regime CCRL 40/15)
+extern void set_evalcache_opt_split(bool v);  // tag della eval-cache con l'optimism (bug: hit con contempt stantio)
+extern bool g_tmv2_inc_gate;
+extern void set_tmv2_inc_gate(bool v);  // false = TMv2 attivo anche a incremento zero (regime CCRL)
 
 // "Improving" heuristic on/off (UCI option "Improving") — A/B the eval-trend
 // based pruning/reduction. Default on.

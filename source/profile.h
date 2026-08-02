@@ -29,6 +29,8 @@
   extern unsigned long long prof_n_cols, prof_n_upd;
   // Tuple threat generate vs BUTTATE dal filtro (map<0 => pedone->pedone, escluse dal set).
   extern unsigned long long prof_n_thr_seen, prof_n_thr_dead;
+  // Massimo riempimento delle IndexList, contro MaxActiveDimensions = 288.
+  extern unsigned long long prof_max_active, prof_max_inc;
   inline unsigned long long prof_now() { return __rdtsc(); }
   struct ProfGuard {
       unsigned long long& c; unsigned long long t;

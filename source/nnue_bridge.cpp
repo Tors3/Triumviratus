@@ -126,6 +126,10 @@ static int g_eval_scale_pct = 60;   // BAKE 2026-07-16: vettore iter1800 (era 56
 // su QUESTO thread = lo "unadjustedStaticEval" di SF, fifty-independent -> si cacha questo e si
 // ri-finalizza col fifty corrente (hit su TUTTE le trasposizioni, sempre esatto).
 static thread_local int g_last_unadjusted = 0;
+// EvalCacheOptSplit: i due termini invarianti della decomposizione lineare
+// v = base + optimism*coeff/1000 (coeff in millesimi). Vedi nn_scale.
+static thread_local int g_last_opt_base = 0;
+static thread_local int g_last_opt_coeff = 0;
 
 // Stockfish's eval cp scaling (evaluate.cpp), inlined here with optimism=0 (the
 // engine's static eval is unbiased; optimism is a search-only blend in SF). psqt
@@ -158,6 +162,19 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
                  + std::int64_t(optimism) * (7191 + material)) / 77871);
     } else
         v = int(std::int64_t(nnue) * (77871 + material) / 77871);
+
+    // --- Scomposizione per la eval-cache (EvalCacheOptSplit) ------------------
+    // L'optimism entra LINEARMENTE: v = base + optimism * coeff, dove base e coeff
+    // dipendono solo dalla POSIZIONE (nnue, material, complessita') e optimism cambia
+    // a ogni iterazione. Esportandoli, la cache puo' memorizzare i due termini
+    // invarianti e ricomporre il valore con l'optimism CORRENTE alla lettura:
+    // eval esatta e nessun hit perso. E' l'alternativa a invalidare la entry, che
+    // costava −9,42 Elo perche' buttava via il 52% del tempo in forward NNUE.
+    // Il coeff include GIA' EvalScale, cosi' il consumatore lo somma direttamente a un
+    // valore gia' scalato. Resta fuori solo il rule50, che la cache smorza per conto suo.
+    g_last_opt_base  = int(std::int64_t(nnue) * (77871 + material) / 77871);
+    g_last_opt_coeff = int(std::int64_t(476 + nnueComplexity) * (7191 + material) * 1000
+                           * g_eval_scale_pct / (476LL * 77871LL * 100LL));
     g_last_unadjusted = v;   // PRE rule50/EvalScale: SF unadjustedStaticEval (fifty-independent)
     v -= v * rule50 / 199;
     if (g_eval_scale_pct != 100)
@@ -255,6 +272,8 @@ void        nn_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
 int         nn_get_eval_scale(void) { return g_eval_scale_pct; }   // per normalizzare 'score cp' in stampa (undo EvalScale, SF-style)
 // 5.1 EvalTTWrite (SF-style): l'unadjusted dell'ultima nn_scale su questo thread (fifty-indep).
 int         nn_last_unadjusted(void) { return g_last_unadjusted; }
+int         nn_last_opt_base(void)  { return g_last_opt_base; }
+int         nn_last_opt_coeff(void) { return g_last_opt_coeff; }
 // Ri-finalizza l'unadjusted col rule50 corrente: IDENTICO a un td_evaluate fresco (stesse op di
 // nn_scale 111-114) per QUALSIASI fifty -> la cache eval e' esatta su ogni trasposizione.
 int         nn_finalize(int unadjusted, int rule50) {

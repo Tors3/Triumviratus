@@ -231,7 +231,12 @@ void parse_go(char* command)
     // regressione a nessun TC -> il vecchio cliff -22.94 Elo @10+0.1 non si riproduce
     // col codice attuale). Resta solo il gate sull'incremento (mai testato, prudenza
     // invariata: TMv2 usa formule pool-increment che presuppongono inc>0).
-    g_tmv2_tc_ok = (inc > 0);
+    // 🔴 2026-08-02: questo gate spegne TMv2 (+23,8 Elo) in TUTTO il regime a incremento
+    // zero — cioe' in CCRL 40/15, che e' "40 mosse in 15 minuti ripetuto" e quindi inc=0.
+    // Il rating che ci misurano non gira sul time management che abbiamo scritto.
+    // Il commento sopra ammetteva "mai testato": nessuno dei 24 script .ps1 del progetto usa
+    // movestogo, tutti i TC hanno incremento. TMv2IncGate=false lo tiene acceso comunque.
+    g_tmv2_tc_ok = g_tmv2_inc_gate ? (inc > 0) : true;
 
     if (time_uci != -1)
     {
@@ -517,6 +522,8 @@ void uci_loop()
             printf("option name PriorBonus type check default true\n");       // V2: su fail-low bonus alla mossa precedente (conthist/main + capture-hist)
             printf("option name PriorBonusScale type spin default 189 min 0 max 400\n");  // /100 del td_stat_bonus; co-tunabile
             // R-PB (porting da Reckless search.rs:1123) — due meccanismi INDIPENDENTI, da misurare uno per volta.
+            printf("option name EvalCacheOptSplit type check default false\n");   // invalida gli hit di eval-cache calcolati con un optimism diverso (nnue_bridge.cpp:153 lo mescola nel valore)
+            printf("option name TMv2IncGate type check default false\n");       // BAKATO 2026-08-02: false = TMv2 attivo anche a inc=0. true = vecchio comportamento (spento in CCRL 40/15)
             printf("option name PriorBonusGate type check default false\n");    // premia solo gli all-node INATTESI (cut_node||pv). Audit B7
             printf("option name PriorBonusFactor type check default false\n");  // scala il bonus su quanto il fail-low e' stato una sorpresa
             printf("option name PriorBonusFactorScale type spin default 50 min 0 max 200\n"); // tarato per preservare il bonus MEDIO di oggi
@@ -899,6 +906,7 @@ void uci_loop()
             prof_n_inc = prof_n_refresh = prof_n_eval = 0;
             prof_n_cols = prof_n_upd = 0;
             prof_n_thr_seen = prof_n_thr_dead = 0;
+            prof_max_active = prof_max_inc = 0;
             unsigned long long prof_wall = 0;
 #endif
             for (int bi = 0; bi < 8; bi++) {
@@ -994,6 +1002,9 @@ void uci_loop()
                     printf("  tuple threat     : %llu generate, %llu BUTTATE (%.1f%%)\n",
                            (unsigned long long)prof_n_thr_seen, (unsigned long long)prof_n_thr_dead,
                            100.0 * (double)prof_n_thr_dead / (double)prof_n_thr_seen);
+                  printf("  MAX riempimento  : refresh %llu/288   incrementale %llu/288  %s\n",
+                         (unsigned long long)prof_max_active, (unsigned long long)prof_max_inc,
+                         (prof_max_active >= 260 || prof_max_inc >= 260) ? "<<< VICINO AL BOUND" : "");
                 }
               } }
 #endif
@@ -1223,7 +1234,7 @@ void uci_loop()
         // ---- Bundle 3.9: toggle A/B (gli spin cadono nel gestore generico) ----
         else if (strncmp(input, "setoption name MateDistPruning value ", 37) == 0)
         {
-            const char* v = input + 37;
+            const char* v = input + 39;
             set_mate_dist(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name DrawDither value ", 32) == 0)
@@ -1298,7 +1309,7 @@ void uci_loop()
         }
         else if (strncmp(input, "setoption name EvalCacheUndamp value ", 37) == 0)
         {
-            const char* v = input + 37;
+            const char* v = input + 39;
             set_evalcache_undamp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name ProbCutTT value ", 31) == 0)
@@ -1604,6 +1615,16 @@ void uci_loop()
         }
         // V2 PriorBonus + #5 LowPlyHistory: A/B toggle. Gli spin (PriorBonusScale/LowPlyWeight)
         // cadono nel gestore generico (25esimo/22esimo char != ' ' di " value ").
+        else if (strncmp(input, "setoption name EvalCacheOptSplit value ", 39) == 0)
+        {
+            const char* v = input + 39;
+            set_evalcache_opt_split(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name TMv2IncGate value ", 33) == 0)
+        {
+            const char* v = input + 33;
+            set_tmv2_inc_gate(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
         else if (strncmp(input, "setoption name PriorBonusGate value ", 36) == 0)
         {
             const char* v = input + 36;

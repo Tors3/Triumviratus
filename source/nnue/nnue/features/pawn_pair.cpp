@@ -33,28 +33,32 @@ static constexpr auto PPBand = [] {
 void PawnPair::append_active_indices(Color perspective, const Position& pos, IndexList& active) {
     const Square ksq = pos.square<KING>(perspective);
 
-    Square sqs[16];
-    Color  cols[16];
-    int    n = 0;
-    for (Color c : {WHITE, BLACK})
+    // Era un doppio ciclo O(n^2) su fino a 16 pedoni (120 iterazioni) con un test di
+    // distanza-colonna e un branch per coppia. Il percorso INCREMENTALE della stessa classe
+    // (sotto) usava gia' `PPBand`, la banda precalcolata delle colonne adiacenti: qui si fa
+    // lo stesso, e il numero di iterazioni scende ai soli partner effettivi.
+    // Ogni coppia va emessa UNA volta sola: dopo `pop_lsb(bb)` il bitboard residuo contiene
+    // per costruzione solo le case MAGGIORI di `s`, quindi basta intersecarlo con la banda —
+    // niente maschere di confronto e niente rischio di doppioni.
+    // `make_index` e' simmetrico (ordina i due pawn_id in hi/lo), quindi cambiare l'ordine di
+    // enumerazione non cambia nessun indice: il refresh resta bit-identico.
+    const Bitboard whitePawns = pos.pieces(WHITE, PAWN);
+    const Bitboard allPawns   = whitePawns | pos.pieces(BLACK, PAWN);
+
+    Bitboard bb = allPawns;
+    while (bb)
     {
-        Bitboard b = pos.pieces(c, PAWN);
-        while (b)
+        const Square s = pop_lsb(bb);
+        const Color  c = (whitePawns & square_bb(s)) ? WHITE : BLACK;
+
+        Bitboard partners = bb & PPBand[s];
+        while (partners)
         {
-            sqs[n]  = pop_lsb(b);
-            cols[n] = c;
-            n++;
+            const Square p  = pop_lsb(partners);
+            const Color  pc = (whitePawns & square_bb(p)) ? WHITE : BLACK;
+            active.push_back(FoldOffset + make_index(perspective, ksq, s, c, p, pc));
         }
     }
-
-    for (int i = 0; i < n; i++)
-        for (int j = i + 1; j < n; j++)
-        {
-            int df = int(file_of(sqs[i])) - int(file_of(sqs[j]));
-            if (df < -1 || df > 1)
-                continue;
-            active.push_back(FoldOffset + make_index(perspective, ksq, sqs[i], cols[i], sqs[j], cols[j]));
-        }
 }
 
 // Incremental: expand the pair-diff of a move from the DirtyPawns snapshot.

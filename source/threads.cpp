@@ -40,6 +40,7 @@ unsigned long long prof_acc_inc = 0, prof_acc_refresh = 0, prof_ft_out = 0;
 unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
 unsigned long long prof_n_cols = 0, prof_n_upd = 0;
 unsigned long long prof_n_thr_seen = 0, prof_n_thr_dead = 0;
+unsigned long long prof_max_active = 0, prof_max_inc = 0;
 #endif
 #include "defs.h"
 
@@ -292,6 +293,18 @@ int g_check_ext_depth = 0;
 // N1 (UCI "EvalCacheUndamp", default ON): eval-cache con chiave senza fifty e
 // valore undamped (vedi td_evaluate). Piu' hit nei finali; OFF = legacy.
 static bool g_evalcache_undamp = true;
+// EvalCacheOptTag (2026-08-02) — default OFF = byte-identico.
+// L'optimism entra DENTRO il valore ritornato da nn_scale (nnue_bridge.cpp:153) e
+// g_optimism viene riscritto dal thread 0 a OGNI iterazione ID (threads.cpp:8667+).
+// La cache e' pero' indicizzata solo su hash_key: un hit puo' quindi servire una eval
+// calcolata con un contempt diverso da quello corrente. Non e' rumore innocuo — a score
+// ±2000 l'optimism vale ~68 unita' sulla static eval, piu' di un passo di RFPMargin (53),
+// e static_eval alimenta RFP, futility, razoring, improving e la correction history.
+// Con il tag, un hit con optimism diverso diventa un miss e si ricalcola.
+// ⚠️ E' un tradeoff: meno hit (piu' forward NNUE, che e' il 52% del wall) contro eval
+// corrette. Per questo e' un toggle e non una correzione secca.
+static bool g_evalcache_opt_split = false;
+void set_evalcache_opt_split(bool v) { g_evalcache_opt_split = v; }
 void set_evalcache_undamp(bool v) { g_evalcache_undamp = v; }
 
 // N2 (UCI "ProbCutTT", default ON): il fail-high di ProbCut viene SALVATO in TT
@@ -815,6 +828,16 @@ int g_tmv2_mate_iters = 7;
 // sull'incremento (mai testato separatamente, prudenza invariata: TMv2 usa
 // formule pool-increment che presuppongono un inc>0).
 bool g_tmv2_tc_ok = true; // ricalcolato ogni parse_go (in uci_mt.cpp)
+// TMv2IncGate (2026-08-02): se true (default storico) TMv2 e' spento a incremento zero.
+// CCRL 40/15 e' 40 mosse in 15 minuti RIPETUTO, cioe' inc=0: il rating che ci misurano
+// gira quindi sul TM v1 additivo, non sul TMv2 che vale +23,8 Elo. False = sempre attivo.
+// BAKATO 2026-08-02 true -> false: TMv2 resta attivo anche a incremento zero.
+// Misura: +27,55 ± 18,22 su 278 partite @40/40 inc=0 Hash 128 (regime CCRL), LLR 0,66
+// in salita, intervallo [+9,3, +45,8] tutto sopra lo zero. SPRT non chiuso, ma il prior
+// e' fortissimo: non e' una feature nuova, e' TMv2 (+23,8 Elo misurati nel regime con
+// incremento) che questo gate spegneva in TUTTO il regime a inc=0, cioe' in CCRL 40/15.
+bool g_tmv2_inc_gate = false;
+void set_tmv2_inc_gate(bool v) { g_tmv2_inc_gate = v; }
 
 // ---- Quarto audit, correttezza §D — BAKATI default-ON 2026-07-10
 // ---------------- Giustificati su CORRETTEZZA (lettura + matetrack spot-check
@@ -4427,21 +4450,37 @@ static inline int td_evaluate(ThreadData &td) {
       // di arrotondamento sul roundtrip; il valore fresco resta esatto.
       ThreadData::EvalCacheEntry &ce =
           td.eval_cache[td.hash_key & ThreadData::EVAL_CACHE_MASK];
-      if (ce.key == td.hash_key)
-        return tt_eval_redamp(ce.eval, td.fifty);
+      // EvalCacheOptTag: l'optimism entra DENTRO il valore (nnue_bridge.cpp:153) e cambia
+      // a ogni iterazione ⇒ un hit con opt diverso serve una eval calcolata con un altro
+      // contempt. Con il tag quell'hit diventa un miss e si ricalcola.
+      const int opt_now = g_optimism[td.side];
+      if (ce.key == td.hash_key) {
+        // EvalCacheOptSplit: l'optimism entra LINEARMENTE nell'eval, quindi invece di
+        // buttare l'entry si CORREGGE il delta. `ce.coeff` e' d(eval)/d(optimism) in
+        // millesimi (gia' comprensivo di EvalScale), invariante della posizione.
+        int e = ce.eval;
+        if (g_evalcache_opt_split)
+          e += (opt_now - ce.opt) * ce.coeff / 1000;
+        return tt_eval_redamp(e, td.fifty);
+      }
       const int v = nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
       ce.key = td.hash_key;
       ce.eval = tt_eval_undamp(v, td.fifty);
+      ce.opt = opt_now;
+      ce.coeff = nn_last_opt_coeff();
       return v;
     }
     const U64 ck = td.hash_key ^ (0x9E3779B97F4A7C15ULL * (U64)(td.fifty + 1));
     ThreadData::EvalCacheEntry &ce =
         td.eval_cache[ck & ThreadData::EVAL_CACHE_MASK];
+    const int opt_now = g_optimism[td.side];
     if (ce.key == ck)
-      return ce.eval;
+      return g_evalcache_opt_split ? ce.eval + (opt_now - ce.opt) * ce.coeff / 1000 : ce.eval;
     const int v = nn_pos_eval(td.nnpos, td.bitboards, td.occupancies);
     ce.key = ck;
     ce.eval = v;
+    ce.opt = opt_now;
+    ce.coeff = nn_last_opt_coeff();
     return v;
   }
   // Incremental: the accumulator is updated only for the pieces that changed
@@ -6222,9 +6261,21 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
     return;
   if (get_move_capture(best_move) || get_move_promoted(best_move))
     return; // quiet best only
-  if (best_score >= mate_score || best_score <= -mate_score)
+  // 🔴 FIX 2026-08-02 — la soglia era `mate_score` (30000), ma uno score da tablebase vale
+  // `TB_VALUE_WIN - ply` = **29873..29936** (syzygy.cpp:29): la banda TB passava INTERA.
+  // Un verdetto Syzygy non e' una valutazione, e' una certezza: entrava in `diff` come se
+  // fosse un errore di eval da ~29.900, saturava il bucket a ±CorrCap e ci restava,
+  // avvelenando OGNI posizione con la stessa pawn key (14 bit ⇒ anche per collisione).
+  // In piu' `decay = cv * abs_bonus / lim` a riga 6249 andava in **overflow di int**
+  // (5,5e9 > INT32_MAX ⇒ UB, non semplice wrap).
+  // Invisibile in tutti i nostri test, che girano SENZA tablebase — ed e' attivo nelle
+  // partite di rating, che usano 6 pezzi. Stesso schema del gate TMv2 a incremento zero.
+  // Nessun toggle: e' correttezza, e senza tablebase configurate e' un no-op esatto
+  // (nessuno score cade fra 29873 e 30000 se non viene da Syzygy).
+  constexpr int corr_max = mate_score - max_ply;   // 29936 = TB_VALUE_WIN
+  if (best_score >= corr_max || best_score <= -corr_max)
     return;
-  if (static_eval >= mate_score || static_eval <= -mate_score)
+  if (static_eval >= corr_max || static_eval <= -corr_max)
     return;
   int diff = best_score - static_eval;
   if (bound == hash_flag_beta && diff < 0)

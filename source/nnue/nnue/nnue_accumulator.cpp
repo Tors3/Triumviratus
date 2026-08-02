@@ -397,6 +397,10 @@ void update_accumulator_incremental(Color                     perspective,
     // sono tante": il costo dell'incrementale e' (colonne) x (L1) e nient'altro.
     prof_n_cols += psqAdded.size() + psqRemoved.size() + thrAdded.size() + thrRemoved.size();
     prof_n_upd++;
+    if ((unsigned long long) thrAdded.size() > prof_max_inc)
+        prof_max_inc = thrAdded.size();
+    if ((unsigned long long) thrRemoved.size() > prof_max_inc)
+        prof_max_inc = thrRemoved.size();
 #endif
 
     apply_combined(perspective, featureTransformer, computed, target_state, psqAdded, psqRemoved,
@@ -531,6 +535,12 @@ void update_accumulator_refresh_cache(Color                     perspective,
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
     PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
     PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
+#ifdef TRIUMV_PROFILE
+    // Quanto si avvicina la lista al suo MaxActiveDimensions (288)? `push_back_if_lt` scrive
+    // PRIMA di controllare e in Release l'assert sparisce: arrivarci = overflow silenzioso.
+    if ((unsigned long long) active.size() > prof_max_active)
+        prof_max_active = active.size();
+#endif
 
     accumulator.computed[perspective] = true;
 
