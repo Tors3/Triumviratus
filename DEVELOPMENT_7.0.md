@@ -373,15 +373,107 @@ three times that** here, because our refresh is a larger share of the wall (8.0%
 replacing it — that one covers the remaining 40.4%, and still applies when the hybrid path cannot
 (king crossing the centre, castling, few pieces, previous accumulator not computed).</sub>
 
-### NPS work, cumulative
+### Prefetch the HalfKA weight rows — +1.3% NPS
 
-Three independent changes in one day, each verified with identical node counts on PGO binaries:
-refresh cache **+1.37%**, mailbox **+2.13%**, hybrid update **+2.13%** — compounding to about
-**+5.8%**, or roughly +4.6 Elo. A paired measurement of the whole engine against the 31 July build
-put the cumulative gain since then at about **+4%** before the hybrid landed.
+The incremental accumulator update reads about 10.5 weight rows per call, at random offsets in a
+table of roughly 110 MB: it is latency-bound, not arithmetic-bound. Threat rows were already
+prefetched; the **HalfKA rows were not** — and they are the largest (int16 × 1024 = 2048 bytes,
+twice a threat row) and the first ones `apply_combined` consumes, so their latency was fully
+exposed.
+
+The prefetch only pays if something covers the latency, so the PSQ index list is now built
+**before** the threat lists — the lists are disjoint, so the order is functionally irrelevant —
+and the whole threat-list construction sits between the prefetch and its use.
+
+> **+1.3% NPS**, two independent 150-position samples: 89/150 with median +0.59% and 105/150 with
+> +1.98% — **194/300 won, z = 5.02, p ≈ 5e-7**, node counts identical in both runs.
+
+<sub>The first sample alone was p ≈ 0.02 and would not have justified anything; the second decided
+it. The median moved between +0.6% and +2.0% while the *fraction of positions won* stayed put —
+which is why the fraction is the number that counts, not the median.</sub>
+
+### Where prefetching stops paying — two rejected variants
+
+Two more prefetch changes on the same code path were measured and rejected, and together with the
+one above they give a rule rather than three anecdotes.
+
+| change | result |
+|---|---|
+| prefetch all four SIMD tiles of a threat row instead of only the first line | **−5.92%**, 23/150 |
+| prefetch the PSQT rows (one cache line each, ~10.5 per update) | **−1.04%**, 52/150, p = 0.0002 |
+
+The first fails because the remaining lines of a row are **sequential**: the L2 streamer already
+had them, so the extra prefetches bought no coverage and cost load slots and fill-buffer entries.
+One line per row is the optimum, not a compromise.
+
+The second fails on size. The FT weight tables are ~61 MB (threats) and ~46 MB (HalfKA) — misses
+are guaranteed. The PSQT tables are **2.6 MB in total**: they live in L2/L3 and were already hits,
+so the prefetch was a pure instruction cost in the hottest loop of the engine.
+
+> Before writing a prefetch: *does the table fit in cache?* and *is this line reachable by
+> sequentiality from one already touched?* Either answer being yes means the prefetch is dead
+> weight.
+
+<sub>This front had been closed since 15 July by a **−12.9%** figure for prefetching HalfKA rows.
+That measurement predates the interleaved harness and was taken with the sequential one — the same
+tool that read −0.34% on the FT permutation, which is really worth +1.62%. The note in the source
+attributed the loss to "codegen pessimisation of the hot template", an explanation invented after
+the fact for a number the instrument could not produce reliably.</sub>
+
+### NPS work, cumulative — +4.80% against the 31 July build
+
+Four independent changes, each verified with identical node counts on PGO binaries: refresh cache
+**+1.37%**, mailbox **+2.13%**, hybrid update **+2.13%**, HalfKA prefetch **+1.3%**.
+
+Measured end to end, the whole engine against the 31 July release binary — both AVX2, both PGO,
+both `bench 207259`, so the search tree is identical and the comparison is pure speed:
+
+> **+4.80% NPS**, paired-interleaved over 150 positions at depth 19, faster in **113 of them**
+> (75.3%, sign test z = 6.12), node counts identical (121,575,142 on both sides). About **+3.8
+> Elo** at roughly 55 Elo per doubling.
 
 <sub>Method note that cost us two near-misses: the sample has to be sized to the effect. At 60
 positions the mailbox measured 35/60 (p ≈ 0.12) and was written off as noise; at 150 it is
 102/150 (p ≈ 7e-6) and worth 2.13%. And measurements must be taken on PGO builds — the same patch
 read +0.64% on a plain -O3 build. Sixty positions were enough for a +3.5% effect and are not
 enough for +2%.</sub>
+
+### Build targets: `avx512` no longer requires VBMI2
+
+"AVX-512" is a family, not a switch. Skylake-X, Cascade Lake and Cooper Lake have F/BW/DQ/VL
+(and VNNI from Cascade Lake on) but **not** VBMI/VBMI2/BITALG; Ice Lake and later, and AMD Zen 4/5,
+have them.
+
+The 7.0 build script defined `USE_AVX512ICL` inside the `avx512` target, together with
+`-mavx512vbmi -mavx512vbmi2 -mavx512bitalg`. It had been set up for the GCP machines used for
+testing — Sapphire Rapids and Zen 4, both of which have VBMI2 — but that is the binary shipped as
+"avx512", and on a Skylake-X or Cascade Lake it dies on an illegal instruction at startup.
+
+Verified on the binaries rather than the scripts, counting ICL instructions with `llvm-objdump`:
+
+| binary | ICL instructions |
+|---|---|
+| `Triumviratus_6.0_avx512.exe` (shipped) | **0** — unaffected |
+| `Triumviratus_7.0_avx512.exe` (pre-fix) | 44 |
+| `avx512` target after the fix | **0** |
+| `avx512icl` target | 44 |
+
+The 6.0 release is clean: its project file never defined the macro, so the flags were inert. The
+defect appeared with 7.0, where the script sets the macros explicitly, and was caught before
+release.
+
+The targets are now separate, as in Stockfish: `avx512` (F/BW/DQ/VL/VNNI, scalar threat emission)
+and `avx512icl` (+ VBMI/VBMI2/BITALG, vectorised `write_multiple_dirties`).
+
+> And the ICL path is worth **+0.04%** — 75/150 positions exactly, z ≈ 0, on Zen 4. So `avx512`
+> ships **without** ICL: broader compatibility at no measurable cost.
+
+<sub>That zero also says where the mirror-position catch-up cost is *not*. Replaying moves onto the
+mirror `Position` and generating the threat diff is 6.5% of the wall — more than `fc_0`, more than
+movegen and TT combined. Vectorising the emission loop buys nothing, so the cost is in the magic
+lookups and bitboard work of `update_piece_threats`, not in writing the tuples out.</sub>
+
+<sub>Profiling note: `prof_n_eval` was incremented twice per `transform()` call, so the recorded
+"0.91 accumulator updates per evaluation" was really **1.83**. The conclusion is unchanged —
+intermediate updates are mandatory steps towards the current node, not wasted work — but the
+figure now reflects reality.</sub>
