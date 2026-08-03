@@ -49,6 +49,13 @@ void update_accumulator_refresh_cache(Color                     perspective,
                                       const Position&           pos,
                                       AccumulatorState&         accumulatorState,
                                       AccumulatorCaches&        cache);
+
+void update_accumulator_hybrid(Color                     perspective,
+                               const Position&           pos,
+                               const FeatureTransformer& featureTransformer,
+                               AccumulatorState&         target,
+                               const AccumulatorState&   computed,
+                               AccumulatorCaches&        cache);
 }
 
 const AccumulatorState& AccumulatorStack::latest() const noexcept { return accumulators[size - 1]; }
@@ -103,6 +110,34 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
 
     else
     {
+#ifndef TRIUMV_NO_HYBRID_ACC
+        // Percorso HYBRID (SF db98633b): una mossa di re che NON attraversa la
+        // colonna d/e lascia validi tutti gli indici di threat/PawnPair/PassedPawns,
+        // perche' quelli dipendono da OrientTBL[ksq] che ha due soli valori. In quel
+        // caso si riusa l'accumulatore precedente invece di ricostruire il 59,6%
+        // delle colonne da zero.
+        //   - `add_sq == SQ_NONE` esclude l'arrocco (muoverebbe anche la torre)
+        //   - sotto i 15 pezzi le feature attive sono poche e ricostruirle costa
+        //     meno che ricavare l'HalfKA precedente dalla cache
+        constexpr int MIN_PC_COUNT_HYBRID = 15;
+        const auto&   dp                  = latest().dirtyPiece;
+        if (size >= 2 && dp.pc == make_piece(perspective, KING) && dp.to != SQ_NONE
+            && accumulators[size - 2].computed[perspective]
+            && pos.count<ALL_PIECES>() >= MIN_PC_COUNT_HYBRID
+            && ((int(dp.from) & 0b100) == (int(dp.to) & 0b100)) && dp.add_sq == SQ_NONE)
+        {
+    #ifdef TRIUMV_PROFILE
+            prof_refresh_same_orient++;
+    #endif
+            PROF_GUARD(prof_acc_refresh);
+            update_accumulator_hybrid(perspective, pos, featureTransformer, mut_latest(),
+                                      accumulators[size - 2], cache);
+            return;
+        }
+    #ifdef TRIUMV_PROFILE
+        prof_refresh_cross_orient++;
+    #endif
+#endif
 #ifdef TRIUMV_PROFILE
         prof_n_refresh++;
 #endif
@@ -490,6 +525,286 @@ Bitboard get_changed_pieces(const std::array<Piece, SQUARE_NB>& oldPieces,
         changed |= static_cast<Bitboard>(oldPieces[sq] != newPieces[sq]) << sq;
 
     return changed;
+#endif
+}
+
+// ============================================================================
+//  update_accumulator_hybrid — porting di Stockfish db98633b (26/07/2026)
+//
+//  IL PROBLEMA. `HalfKAv2_hm::requires_refresh` e' vero per OGNI mossa del
+//  proprio re, quindi ogni mossa di re costa un refresh completo. Ma gli indici
+//  di threat / PawnPair / PassedPawns dipendono da `OrientTBL[ksq]`, che ha due
+//  soli valori e cambia SOLO se il re attraversa la colonna d/e. Per tutte le
+//  altre mosse di re quelle feature restano valide, e le stiamo ricostruendo da
+//  zero: sono il 59,6% delle colonne del refresh (10,4 threat su 17,4 totali).
+//
+//  L'IDEA.  acc_nuovo = acc_precedente − halfKA_precedente + halfKA_nuovo + Δ(threat/pp)
+//  Nessuno dei due accumulatori HalfKA va memorizzato: si ricostruiscono
+//  entrambi dalla finny table, quello nuovo come fa gia' il refresh, quello
+//  precedente dalla entry del vecchio ksq applicando i diff verso la posizione
+//  PRIMA della mossa — ricostruita qui dal dirtyPiece.
+//
+//  Da SF: +0,60%. Da noi il refresh pesa l'8,0% del wall e la cache dei blocchi
+//  pedoni (3/08) copre gia' il 40,4% delle colonne: questo copre il resto.
+// ============================================================================
+void update_accumulator_hybrid(Color                     perspective,
+                               const Position&           pos,
+                               const FeatureTransformer& featureTransformer,
+                               AccumulatorState&         target,
+                               const AccumulatorState&   computed,
+                               AccumulatorCaches&        cache) {
+    constexpr IndexType Dimensions = FeatureTransformer::OutputDimensions;
+    using Tiling [[maybe_unused]]  = SIMDTiling<Dimensions, Dimensions, PSQTBuckets>;
+
+    const auto& dirtyPiece = target.dirtyPiece;
+    const Square oldKsq    = dirtyPiece.from;
+    const Square newKsq    = dirtyPiece.to;
+
+    // Ricostruzione della posizione PRECEDENTE: si rimette il re su oldKsq e si
+    // ripristina l'eventuale pezzo catturato su newKsq. L'arrocco NON passa di
+    // qui (escluso dal gate): muoverebbe anche la torre.
+    const auto& currentPieces  = pos.piece_array();
+    auto        previousPieces = currentPieces;
+    Bitboard    previousPieceBB = pos.pieces();
+
+    if (dirtyPiece.remove_sq != SQ_NONE)
+        previousPieces[newKsq] = dirtyPiece.remove_pc;
+    else
+    {
+        previousPieces[newKsq] = NO_PIECE;
+        previousPieceBB &= ~square_bb(newKsq);
+    }
+    previousPieces[oldKsq] = dirtyPiece.pc;
+    previousPieceBB |= square_bb(oldKsq);
+
+    const auto& oldEntry = cache[oldKsq][perspective];
+    auto&       newEntry = cache[newKsq][perspective];
+
+    // "Remove"/"Add" = cosa togliere/aggiungere ALLA ENTRY per ottenere
+    // l'accumulatore HalfKA voluto.
+    PSQFeatureSet::IndexList oldRemove, oldAdd, newRemove, newAdd;
+
+    Bitboard oldChangedBB = get_changed_pieces(oldEntry.pieces, previousPieces);
+    Bitboard oldRemovedBB = oldChangedBB & oldEntry.pieceBB;
+    Bitboard oldAddedBB   = oldChangedBB & previousPieceBB;
+
+    Bitboard newChangedBB = get_changed_pieces(newEntry.pieces, currentPieces);
+    Bitboard newRemovedBB = newChangedBB & newEntry.pieceBB;
+    Bitboard newAddedBB   = newChangedBB & pos.pieces();
+
+    while (oldRemovedBB)
+    {
+        Square sq = pop_lsb(oldRemovedBB);
+        oldRemove.push_back(PSQFeatureSet::make_index(perspective, sq, oldEntry.pieces[sq], oldKsq));
+    }
+    while (oldAddedBB)
+    {
+        Square sq = pop_lsb(oldAddedBB);
+        oldAdd.push_back(PSQFeatureSet::make_index(perspective, sq, previousPieces[sq], oldKsq));
+    }
+    while (newRemovedBB)
+    {
+        Square sq = pop_lsb(newRemovedBB);
+        newRemove.push_back(PSQFeatureSet::make_index(perspective, sq, newEntry.pieces[sq], newKsq));
+    }
+    while (newAddedBB)
+    {
+        Square sq = pop_lsb(newAddedBB);
+        newAdd.push_back(PSQFeatureSet::make_index(perspective, sq, currentPieces[sq], newKsq));
+    }
+
+    // Delta dei tre blocchi non-HalfKA. Gli indici di PawnPair/PassedPawns sono
+    // "folded" nelle stesse liste (gia' offsettati), come nel percorso incrementale.
+    ThreatFeatureSet::IndexList thrRemoved, thrAdded;
+    const auto*                 pfBase   = &featureTransformer.threatWeights[0];
+    IndexType                   pfStride = Dimensions;
+    ThreatFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyThreats, thrRemoved,
+                                             thrAdded, pfBase, pfStride);
+    PawnFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
+                                           thrAdded);
+    PassedFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
+                                             thrAdded);
+
+    const auto& fromAcc     = computed.accumulation[perspective];
+    auto&       toAcc       = target.accumulation[perspective];
+    const auto& fromPsqtAcc = computed.psqtAccumulation[perspective];
+    auto&       toPsqtAcc   = target.psqtAccumulation[perspective];
+
+    target.computed[perspective] = true;
+
+#ifdef VECTOR
+    vec_t      acc[Tiling::NumRegs];
+    psqt_vec_t psqt[Tiling::NumPsqtRegs];
+
+    const auto* weights       = &featureTransformer.weights[0];
+    const auto* threatWeights = &featureTransformer.threatWeights[0];
+
+    for (IndexType j = 0; j < Dimensions / Tiling::TileHeight; ++j)
+    {
+        const usize tileOff      = j * Tiling::TileHeight;
+        auto*       fromTile     = reinterpret_cast<const vec_t*>(&fromAcc[tileOff]);
+        auto*       oldEntryTile = reinterpret_cast<const vec_t*>(&oldEntry.accumulation[tileOff]);
+        auto*       newEntryTile = reinterpret_cast<vec_t*>(&newEntry.accumulation[tileOff]);
+        auto*       toTile       = reinterpret_cast<vec_t*>(&toAcc[tileOff]);
+
+        // 1) HalfKA NUOVO, esatto, a partire dalla finny entry del nuovo ksq.
+        for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+            acc[k] = newEntryTile[k];
+        for (int i = 0; i < newRemove.ssize(); ++i)
+        {
+            auto* column =
+              reinterpret_cast<const vec_t*>(&weights[newRemove[i] * Dimensions + tileOff]);
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_sub_16(acc[k], column[k]);
+        }
+        for (int i = 0; i < newAdd.ssize(); ++i)
+        {
+            auto* column =
+              reinterpret_cast<const vec_t*>(&weights[newAdd[i] * Dimensions + tileOff]);
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_add_16(acc[k], column[k]);
+        }
+
+        for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+        {
+            // La finny entry del NUOVO ksq e' ora aggiornata (HalfKA puro).
+            vec_store(&newEntryTile[k], acc[k]);
+            // 2) Sommando l'accumulatore precedente entrano threat e pp gia' pronte,
+            //    ma anche l'HalfKA del VECCHIO king bucket, che va tolto.
+            acc[k] = vec_add_16(acc[k], fromTile[k]);
+            acc[k] = vec_sub_16(acc[k], oldEntryTile[k]);
+        }
+        // 3) ...e si corregge con i diff della entry vecchia, a segno INVERTITO:
+        //    stiamo togliendo l'HalfKA precedente, non aggiungendolo.
+        for (int i = 0; i < oldRemove.ssize(); ++i)
+        {
+            auto* column =
+              reinterpret_cast<const vec_t*>(&weights[oldRemove[i] * Dimensions + tileOff]);
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_add_16(acc[k], column[k]);
+        }
+        for (int i = 0; i < oldAdd.ssize(); ++i)
+        {
+            auto* column =
+              reinterpret_cast<const vec_t*>(&weights[oldAdd[i] * Dimensions + tileOff]);
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_sub_16(acc[k], column[k]);
+        }
+
+        // 4) Delta di threat/PawnPair/PassedPawns (pesi int8 -> convert).
+        for (int i = 0; i < thrRemoved.ssize(); ++i)
+        {
+            auto* column = reinterpret_cast<const vec_i8_t*>(
+              &threatWeights[thrRemoved[i] * Dimensions + tileOff]);
+    #ifdef USE_NEON
+            for (IndexType k = 0; k < Tiling::NumRegs; k += 2)
+            {
+                acc[k]     = vsubw_s8(acc[k], vget_low_s8(column[k / 2]));
+                acc[k + 1] = vsubw_high_s8(acc[k + 1], column[k / 2]);
+            }
+    #else
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_sub_16(acc[k], vec_convert_8_16(column[k]));
+    #endif
+        }
+        for (int i = 0; i < thrAdded.ssize(); ++i)
+        {
+            auto* column =
+              reinterpret_cast<const vec_i8_t*>(&threatWeights[thrAdded[i] * Dimensions + tileOff]);
+    #ifdef USE_NEON
+            for (IndexType k = 0; k < Tiling::NumRegs; k += 2)
+            {
+                acc[k]     = vaddw_s8(acc[k], vget_low_s8(column[k / 2]));
+                acc[k + 1] = vaddw_high_s8(acc[k + 1], column[k / 2]);
+            }
+    #else
+            for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+                acc[k] = vec_add_16(acc[k], vec_convert_8_16(column[k]));
+    #endif
+        }
+
+        for (IndexType k = 0; k < Tiling::NumRegs; ++k)
+            vec_store(&toTile[k], acc[k]);
+    }
+
+    // PSQT: stesso schema. ⚠️ Le feature attive alimentano ANCHE threatPsqtWeights —
+    // dimenticarlo qui darebbe un PSQT stantio in silenzio (lezione del 3/08: bench
+    // 262736 invece di 207259).
+    for (IndexType j = 0; j < PSQTBuckets / Tiling::PsqtTileHeight; ++j)
+    {
+        const usize psqtTileOff = j * Tiling::PsqtTileHeight;
+        auto*       fromTilePsqt =
+          reinterpret_cast<const psqt_vec_t*>(&fromPsqtAcc[psqtTileOff]);
+        auto* oldEntryTilePsqt =
+          reinterpret_cast<const psqt_vec_t*>(&oldEntry.psqtAccumulation[psqtTileOff]);
+        auto* newEntryTilePsqt =
+          reinterpret_cast<psqt_vec_t*>(&newEntry.psqtAccumulation[psqtTileOff]);
+        auto* toTilePsqt = reinterpret_cast<psqt_vec_t*>(&toPsqtAcc[psqtTileOff]);
+
+        for (IndexType k = 0; k < Tiling::NumPsqtRegs; ++k)
+            psqt[k] = newEntryTilePsqt[k];
+        for (int i = 0; i < newRemove.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.psqtWeights[newRemove[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_sub_psqt_32(psqt[k], columnPsqt[k]);
+        }
+        for (int i = 0; i < newAdd.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.psqtWeights[newAdd[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_add_psqt_32(psqt[k], columnPsqt[k]);
+        }
+
+        for (IndexType k = 0; k < Tiling::NumPsqtRegs; ++k)
+        {
+            vec_store_psqt(&newEntryTilePsqt[k], psqt[k]);
+            psqt[k] = vec_add_psqt_32(psqt[k], fromTilePsqt[k]);
+            psqt[k] = vec_sub_psqt_32(psqt[k], oldEntryTilePsqt[k]);
+        }
+        for (int i = 0; i < oldRemove.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.psqtWeights[oldRemove[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_add_psqt_32(psqt[k], columnPsqt[k]);
+        }
+        for (int i = 0; i < oldAdd.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.psqtWeights[oldAdd[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_sub_psqt_32(psqt[k], columnPsqt[k]);
+        }
+
+        for (int i = 0; i < thrRemoved.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.threatPsqtWeights[thrRemoved[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_sub_psqt_32(psqt[k], columnPsqt[k]);
+        }
+        for (int i = 0; i < thrAdded.ssize(); ++i)
+        {
+            auto* columnPsqt = reinterpret_cast<const psqt_vec_t*>(
+              &featureTransformer.threatPsqtWeights[thrAdded[i] * PSQTBuckets + psqtTileOff]);
+            for (usize k = 0; k < Tiling::NumPsqtRegs; ++k)
+                psqt[k] = vec_add_psqt_32(psqt[k], columnPsqt[k]);
+        }
+
+        for (IndexType k = 0; k < Tiling::NumPsqtRegs; ++k)
+            vec_store_psqt(&toTilePsqt[k], psqt[k]);
+    }
+
+    // Le entry della finny ora riflettono le rispettive posizioni HalfKA.
+    newEntry.pieceBB = pos.pieces();
+    newEntry.pieces  = currentPieces;
+#else
+    (void) fromAcc, (void) toAcc, (void) fromPsqtAcc, (void) toPsqtAcc;
+    (void) oldEntry, (void) newEntry;
+    assert(false && "update_accumulator_hybrid richiede il percorso VECTOR");
 #endif
 }
 

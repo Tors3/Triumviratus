@@ -38,6 +38,12 @@
   // Cache del refresh dei blocchi pedoni: quante volte la chiave e' gia' in cache.
   // Un tasso basso dice che conviene ingrandirla, uno alto che il tetto e' raggiunto.
   extern unsigned long long prof_pawn_hit, prof_pawn_miss;
+  // Tetto di `update_accumulator_hybrid` (SF db98633b). HalfKAv2_hm::requires_refresh
+  // e' vero per OGNI mossa del proprio re, ma gli indici di threat/PawnPair/PassedPawns
+  // dipendono da OrientTBL[ksq], che ha due soli valori e cambia SOLO se il re
+  // attraversa la colonna d/e. Ogni refresh in cui l'orientamento NON cambia sta
+  // ricostruendo da zero feature che sarebbero rimaste valide.
+  extern unsigned long long prof_refresh_same_orient, prof_refresh_cross_orient;
   extern unsigned long long prof_dead_pair[8][8];
   inline unsigned long long prof_now() { return __rdtsc(); }
   struct ProfGuard {

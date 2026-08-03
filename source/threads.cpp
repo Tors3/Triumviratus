@@ -43,6 +43,7 @@ unsigned long long prof_n_thr_seen = 0, prof_n_thr_dead = 0;
 unsigned long long prof_max_active = 0, prof_max_inc = 0;
 unsigned long long prof_cols_thr = 0, prof_cols_pawn = 0, prof_n_refresh_calls = 0;
 unsigned long long prof_pawn_hit = 0, prof_pawn_miss = 0;
+unsigned long long prof_refresh_same_orient = 0, prof_refresh_cross_orient = 0;
 unsigned long long prof_dead_pair[8][8] = {};
 #endif
 #include "defs.h"

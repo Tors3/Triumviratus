@@ -342,3 +342,46 @@ and promotions included. And the first two measurements both said "noise" — +0
 non-PGO build, +1.19% at 35/60 on PGO. Only 150 positions resolved it. Sixty positions were enough
 for the +3.54% of the dead threat tuples and are not enough for +2%: the sample has to be sized to
 the effect being looked for, or a real gain gets discarded as noise.</sub>
+
+### Hybrid accumulator update — +2.13% NPS
+
+`HalfKAv2_hm::requires_refresh` returns true for **every** move of one's own king, so every king
+move costs a full refresh. For HalfKA that is cheap — the finny table covers it — but threats,
+pawn pairs and passed pawns were rebuilt from scratch each time. They did not need to be: their
+indices depend on `OrientTBL[ksq]`, which takes **two values only** and changes solely when the
+king crosses the d/e file. Every other king move was discarding still-valid work.
+
+Ported from Stockfish `db98633b`. When the king stays on its half of the board, the previous
+accumulator is reused instead:
+
+```
+new_acc = HalfKA_new + prev_acc − HalfKA_prev + Δ(threat/pp)
+```
+
+Neither HalfKA accumulator has to be stored: both are reconstructed from the finny table — the new
+one as the refresh already does, the previous one from the old king square's entry, applying the
+diffs against the pre-move position rebuilt from the dirty-piece record. Gated on at least 15
+pieces (below that, rebuilding the few active features is cheaper than recovering the previous
+HalfKA) and on non-castling moves.
+
+> **+2.13% NPS**, paired-interleaved over 150 positions at depth 19, faster in 104 of them
+> (sign test p ≈ 1.6e-6), node counts identical. About +1.7 Elo.
+
+<sub>Worth noting against the source: the same patch is worth +0.60% in Stockfish and **more than
+three times that** here, because our refresh is a larger share of the wall (8.0%) and threats are
+59.6% of its columns. It also composes with the pawn-block refresh cache above rather than
+replacing it — that one covers the remaining 40.4%, and still applies when the hybrid path cannot
+(king crossing the centre, castling, few pieces, previous accumulator not computed).</sub>
+
+### NPS work, cumulative
+
+Three independent changes in one day, each verified with identical node counts on PGO binaries:
+refresh cache **+1.37%**, mailbox **+2.13%**, hybrid update **+2.13%** — compounding to about
+**+5.8%**, or roughly +4.6 Elo. A paired measurement of the whole engine against the 31 July build
+put the cumulative gain since then at about **+4%** before the hybrid landed.
+
+<sub>Method note that cost us two near-misses: the sample has to be sized to the effect. At 60
+positions the mailbox measured 35/60 (p ≈ 0.12) and was written off as noise; at 150 it is
+102/150 (p ≈ 7e-6) and worth 2.13%. And measurements must be taken on PGO builds — the same patch
+read +0.64% on a plain -O3 build. Sixty positions were enough for a +3.5% effect and are not
+enough for +2%.</sub>
