@@ -320,3 +320,25 @@ while its quality grows a lot. Our time-to-depth speedup at 4 threads is 1.1–1
 alarming and is not: rating lists show ~40 Elo from 1 to 4 CPU, in line with comparable engines.
 NPS is wrong in the other direction, counting duplicated nodes as progress. For multithreading the
 only honest metric is Elo in games.</sub>
+
+### Mailbox — +2.13% NPS
+
+`ThreadData` carried only bitboards, so finding *which* piece stands on a square meant scanning up
+to six of them with as many unpredictable branches. That loop existed twice: in `td_score_move`,
+for the victim of every capture scored, and in `td_make_move`, for the captured piece. A
+`piece_on[64]` array answers both in one load. It is maintained at the three sites where
+`td_occ_update` is called — make-forward, illegal-move rollback, unmake — which is what makes the
+coverage structural rather than a matter of remembering every branch.
+
+> **+2.13% NPS**, paired-interleaved over 150 positions at depth 19, faster in 102 of them
+> (sign test p ≈ 7e-6), node counts identical. About +1.7 Elo.
+
+<sub>Two method notes, both from getting it wrong first. The engine's `perft` uses the **global**
+`make_move` and never reaches `td_make_move`, so it could not have validated this: a desynchronised
+mailbox gives no crash and no changed bench signature, only move ordering that is occasionally
+wrong. A `-DTRIUMV_MAILBOX_VERIFY` build compares mailbox against bitboards square by square at all
+three sites and aborts on the first mismatch; a full bench passes clean, castling and en passant
+and promotions included. And the first two measurements both said "noise" — +0.64% at 32/60 on a
+non-PGO build, +1.19% at 35/60 on PGO. Only 150 positions resolved it. Sixty positions were enough
+for the +3.54% of the dead threat tuples and are not enough for +2%: the sample has to be sized to
+the effect being looked for, or a real gain gets discarded as noise.</sub>
