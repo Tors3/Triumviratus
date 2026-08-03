@@ -325,8 +325,21 @@ void FullThreats::append_changed_indices(Color                   perspective,
         // Il prefetch qui sotto parte comunque: in regime memory-bound e' traffico sprecato.
         prof_n_thr_seen++;
         if (index >= Dimensions)
+        {
             prof_n_thr_dead++;
+            // Chi sono le tuple ancora scartate? [tipo attaccante][tipo attaccato]
+            prof_dead_pair[type_of(attacker)][type_of(attacked)]++;
+        }
 #endif
+        // ⛔ PROVATO E RIGETTATO il 3/08/2026: prefetchare i 4 tile SIMD della riga
+        // invece della sola prima linea (la riga e' 1024 byte = 16 linee, e
+        // `apply_combined` la consuma in 4 tile da 256 byte) misura **-5,92% NPS**
+        // — 23/150 posizioni vinte, nodi identici (121.575.142), PGO avx2
+        // interlacciato. Il ragionamento "copriamo 16/16 invece di 1/16" e' sbagliato:
+        // le 15 linee restanti sono SEQUENZIALI dentro la riga e lo streamer L2 le
+        // prendeva gia' da solo. I prefetch in piu' non aggiungono copertura, tolgono
+        // slot di load e voci di fill buffer al lavoro vero. UNA linea per riga e'
+        // l'ottimo, non un compromesso.
         if (prefetchBase)
             prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
               reinterpret_cast<uintptr_t>(prefetchBase) + index * prefetchStride));

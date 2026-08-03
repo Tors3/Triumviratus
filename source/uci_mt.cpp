@@ -904,7 +904,7 @@ void uci_loop()
             int bench_t0 = get_time_ms();
 #ifdef TRIUMV_PROFILE
             prof_eval = prof_mg = prof_make = prof_tt = prof_score = 0;
-            prof_ft = prof_fc0 = prof_layers = 0;
+            prof_ft = prof_fc0 = prof_layers = prof_catchup = 0;
             prof_acc_inc = prof_acc_refresh = prof_ft_out = 0;
             prof_n_inc = prof_n_refresh = prof_n_eval = 0;
             prof_n_cols = prof_n_upd = 0;
@@ -979,6 +979,11 @@ void uci_loop()
                 printf("  altri layer     : %5.1f%% / %5.1f%%\n",
                        100.0 * (double)prof_layers / (double)pw, 100.0 * (double)prof_layers / (double)nn);
                 printf("  (fc_0 sotto il 5%% del wall => ft_optimize e' chiuso)\n");
+                // Il divario fra `eval` e il forward: replay specchio + resto del bridge.
+                printf("  catch-up specchio: %5.1f%% del wall  (replay mosse + diff threat)\n",
+                       100.0 * (double)prof_catchup / (double)pw);
+                printf("  bridge/cache/scal: %5.1f%% del wall  (eval - forward - catch-up)\n",
+                       100.0 * (double)(prof_eval - nn - prof_catchup) / (double)pw);
                 // Dentro il FT: dove va davvero il tempo.
                 unsigned long long ftsum = prof_acc_inc + prof_acc_refresh + prof_ft_out;
                 if (ftsum) {

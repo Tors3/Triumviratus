@@ -36,6 +36,7 @@
 unsigned long long prof_eval = 0, prof_mg = 0, prof_make = 0, prof_tt = 0,
                    prof_score = 0;
 unsigned long long prof_ft = 0, prof_fc0 = 0, prof_layers = 0;
+unsigned long long prof_catchup = 0;
 unsigned long long prof_acc_inc = 0, prof_acc_refresh = 0, prof_ft_out = 0;
 unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
 unsigned long long prof_n_cols = 0, prof_n_upd = 0;
@@ -581,7 +582,11 @@ int g_ttpv_amount = 1;
 //     beta di molto (più sopra beta = potatura più aggressiva). SF-standard.
 static bool g_nmp_eval_scale = false;
 void set_nmp_eval_scale(bool v) { g_nmp_eval_scale = v; }
-int g_nmp_eval_div = 100; // R += min((static_eval - beta)/div, 3)
+// 3/08/2026: allineato alla forma che SF ha fatto PASSARE (356d7c5c),
+//   R = 7 + depth/3 + max((ss->staticEval - beta) / 256, 0)
+// Prima era /100 CON cap a 3 e sulla `eval` corretta dalla TT: cioe' la variante
+// che SF aveva REVERTATO per mate-finding dopo 290k partite verdi.
+int g_nmp_eval_div = 256;
 
 // (2) RFPDepth8: estende la reverse-futility da depth<=6 a depth<=8.
 static bool g_rfp_depth8 = false;
@@ -7103,9 +7108,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       // (1) NMPEvalScale: più sopra beta = riduzione maggiore (cap +3). OFF =
       // invariato.
       if (g_nmp_eval_scale) {
-        int e = (eval - beta) / g_nmp_eval_div;
-        if (e > 3)
-          e = 3;
+        // 🔴 `static_eval`, NON `eval`: SF usa ss->staticEval, e la variante sulla
+        // eval TT-corretta e' quella che avevano revertato. E nessun cap: il loro
+        // max(...,0) taglia solo sotto. Con /256 la riduzione extra cresce piano.
+        int e = (static_eval - beta) / g_nmp_eval_div;
         if (e > 0)
           R += e;
       }

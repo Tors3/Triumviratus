@@ -19,6 +19,8 @@
 
 #include "nnue_bridge.h"
 
+#include "profile.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -589,7 +591,12 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
     if (!g_incremental)
         return eval_full_from_bb(bb, p->stm, p->rule50, p->pos, p->si, *p->accStack, *p->caches);
 
-    nn_catch_up(p);  // N-1: replay any moves nn_pos_do left pending before evaluating
+    {
+        // Il replay specchio (piazzamento pezzi + diff delle threat) e' dentro prof_eval
+        // ma fuori dal forward: e' il primo sospetto per il ~9% del wall non attribuito.
+        PROF_GUARD(prof_catchup);
+        nn_catch_up(p);  // N-1: replay any moves nn_pos_do left pending before evaluating
+    }
     // Incremental: the maintained pos + accumulator chain are walked by Network::evaluate.
     auto [psqt, positional] = g_net->evaluate(p->pos, *p->accStack, *p->caches);
     int  inc                = nn_scale(p->pos, psqt, positional, p->rule50);

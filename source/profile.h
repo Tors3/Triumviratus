@@ -16,6 +16,11 @@
   //   prof_fc0    = il solo AffineTransformSparseInput 1024->16
   //   prof_layers = tutto il resto (attivazioni + fc_1 + fc_2)
   extern unsigned long long prof_ft, prof_fc0, prof_layers;
+  // prof_catchup = `nn_catch_up`: replay pigro delle mosse sulla Position SPECCHIO di
+  // SF (piazzamento pezzi + generazione di DirtyThreats/DirtyPawns). E' dentro
+  // prof_eval ma FUORI da prof_ft/fc0/layers: serve a spiegare il divario fra
+  // eval (56,2%) e forward (47,1%) misurato il 3/08, ~9% del wall mai attribuito.
+  extern unsigned long long prof_catchup;
   // Scomposizione del feature transformer (prof_ft), che il primo giro di misure ha
   // rivelato essere il 39,3% del wall e il 91,2% del forward: il collo di bottiglia
   // numero uno del motore. Qui si separa DOVE va quel tempo.

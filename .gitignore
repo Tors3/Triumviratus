@@ -1,3 +1,6 @@
 # local fastchess / tuning artifacts (do not belong in the repo)
 config.json
 *.pgn
+
+# internal working notes: private working copy only, never published
+BACKLOG_*.md

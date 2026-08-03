@@ -310,18 +310,18 @@ class FeatureTransformer {
                   NNZInfo<OutputDimensions>& nnzInfo) const {
 
         using namespace SIMD;
-#ifdef TRIUMV_PROFILE
-        prof_n_eval++;
-#endif
         accumulatorStack.evaluate(pos, *this, cache);
         // Da qui in giu' e' la sola trasformazione (clipped ReLU + pairwise mult):
         // il tempo dell'accumulatore e' gia' stato contato sopra.
         PROF_GUARD(prof_ft_out);
 #ifdef TRIUMV_PROFILE
         // Una volta per VALUTAZIONE vera. Confrontato con prof_n_inc dice quanti
-        // aggiornamenti di accumulatore vengono fatti per nodi che poi non valutano:
-        // quello sarebbe lavoro sprecato. Misurato 3/08/2026: 0,91 update per eval,
-        // cioe' NON ce n'e'. (prof_n_eval era dichiarato e mai incrementato.)
+        // aggiornamenti di accumulatore servono per arrivare al nodo corrente.
+        // ⚠️ 3/08: l'incremento era scritto DUE volte in questa stessa funzione
+        // (una in cima, una qui) -> il conteggio delle eval usciva DOPPIO e il
+        // rapporto update/eval letto come "0,91" e' in realta' ~1,83. La lettura
+        // non cambia (gli update intermedi sono tappe obbligate verso il nodo
+        // corrente, non lavoro buttato), ma il numero stampato ora e' quello vero.
         ++prof_n_eval;
 #endif
         const auto& accumulatorState = accumulatorStack.latest();

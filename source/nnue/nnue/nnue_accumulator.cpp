@@ -88,6 +88,58 @@ void AccumulatorStack::evaluate(const Position&           pos,
                                 const FeatureTransformer& featureTransformer,
                                 // Silence spurious warning on GCC 10
                                 [[maybe_unused]] AccumulatorCaches& cache) noexcept {
+#ifdef TRIUMV_PERSP_TOGETHER
+    // ⛔ MISURATO −0,70% IL 3/08/2026 — default OFF, tenuto solo come punto di
+    // partenza per il porting COMPLETO. Questa e' meta' del commit di Stockfish:
+    // riordina le prospettive ma NON condivide la decodifica delle tuple, che e'
+    // da dove viene il loro guadagno. Cosi' si prende solo il lato negativo —
+    // alternando le prospettive a ogni transizione il working set attivo passa da
+    // un accumulatore (2 KB + colonne) a due, e su un percorso memory-bound la
+    // localita' della struttura GRANDE conta piu' di quella della dirty list.
+    // Per farlo rendere serve riscrivere `append_changed_indices` in modo che
+    // decodifichi i bitfield una volta sola producendo le liste di ENTRAMBE le
+    // prospettive (indici e push restano separati: l'orientamento e' diverso).
+    //
+    // Porting di Stockfish 7b550409 "Update NNUE perspectives together".
+    // Quando ENTRAMBE le prospettive sono aggiornabili in modo incrementale, si
+    // percorre il suffisso comune una volta sola, facendo per ogni transizione
+    // prima una prospettiva e poi l'altra. Prima si completava tutta la catena
+    // per il BIANCO e poi tutta per il NERO: la stessa `dirtyThreats` di ogni
+    // stato veniva letta due volte a distanza di un intero aggiornamento di
+    // accumulatore (~1024 int16 per prospettiva), quindi fuori dalla cache.
+    // Ora le due letture sono adiacenti. Nessun cambio funzionale: indici,
+    // ordine delle liste e aritmetica restano per prospettiva.
+    {
+        const auto lastW = find_last_usable_accumulator(WHITE);
+        const auto lastB = find_last_usable_accumulator(BLACK);
+
+        if (accumulators[lastW].computed[WHITE] && accumulators[lastB].computed[BLACK])
+        {
+#ifdef TRIUMV_PROFILE
+            prof_n_inc += 2;
+#endif
+            PROF_GUARD(prof_acc_inc);
+            const Square ksqW  = pos.square<KING>(WHITE);
+            const Square ksqB  = pos.square<KING>(BLACK);
+            const usize  start = lastW < lastB ? lastW : lastB;
+
+            for (usize next = start + 1; next < size; next++)
+            {
+                // `next > lastX` garantisce che accumulators[next-1] sia gia'
+                // calcolato per quella prospettiva: o e' l'ancora lastX, o e'
+                // stato prodotto al giro precedente di questo stesso ciclo.
+                if (next > lastW)
+                    update_accumulator_incremental<true>(WHITE, featureTransformer, ksqW,
+                                                         accumulators[next], accumulators[next - 1]);
+                if (next > lastB)
+                    update_accumulator_incremental<true>(BLACK, featureTransformer, ksqB,
+                                                         accumulators[next], accumulators[next - 1]);
+            }
+            return;
+        }
+    }
+#endif
+
     evaluate_side(WHITE, pos, featureTransformer, cache);
     evaluate_side(BLACK, pos, featureTransformer, cache);
 }
@@ -226,6 +278,18 @@ void apply_combined(Color                              perspective,
 
     const auto* psqWeights    = &featureTransformer.weights[0];
     const auto* threatWeights = &featureTransformer.threatWeights[0];
+
+    // ⛔ PROVATO E RIGETTATO il 3/08/2026: prefetchare le righe PSQT (una linea di
+    // cache ciascuna, ~10,5 per update, consumate nel secondo ciclo qui sotto) misura
+    // **-1,04% NPS** — 52/150 posizioni, z = 3,67, p = 0,0002, nodi identici. Negativo
+    // e significativo, non rumore.
+    // 🔑 Regola che ne esce, e che spiega anche perche' il prefetch delle righe HalfKA
+    // vale +1,3%: **il prefetch paga solo dove la tabella non ci sta in cache.**
+    //   pesi FT   : threatWeights ~61 MB + weights ~46 MB  -> miss garantiti, prefetch OK
+    //   pesi PSQT : psqtWeights 0,7 MB + threatPsqt 1,9 MB -> 2,6 MB, stanno in L2/L3
+    //                                                         ed erano gia' hit
+    // Su una riga gia' in cache il prefetch e' solo un'istruzione in piu' nel percorso
+    // piu' caldo del motore. Prima di prefetchare qualcosa: quanto e' grande la tabella?
 
     for (IndexType j = 0; j < Dimensions / Tiling::TileHeight; ++j)
     {
@@ -379,6 +443,45 @@ void apply_combined(Color                              perspective,
 #endif
 }
 
+#ifndef TRIUMV_NO_PF_PSQ
+// ✅ BAKATO 3/08/2026: **+1,3% NPS** — 194/300 posizioni vinte su due campioni
+// indipendenti (89/150 seed 42 con mediana +0,59%, 105/150 seed 7 con +1,98%),
+// z = 5,02, p ~ 5e-7, nodi identici in entrambi (121.575.142 / 122.855.971),
+// PGO avx2 interlacciato. Il primo campione da solo era p = 0,02: troppo debole,
+// ed e' stato il secondo a decidere. La mediana oscilla (+0,6 / +2,0), la
+// FRAZIONE no — e' la frazione il numero che conta.
+//
+// 🔑 Perche' questo fronte era chiuso per sbaglio: la nota del 15/07 diceva
+// "prefetch su HalfKA = -12,9%, non farlo". Quella misura e' anteriore a
+// `nps_ab_interleaved.py` ed e' stata fatta con lo strumento non interlacciato,
+// lo stesso che ha dichiarato -0,34% la permutazione FT (vale +1,62%).
+//
+// Prefetch delle righe di pesi HalfKA. Sono le piu' GROSSE del transformer
+// (i16 x OutputDimensions = 2048 byte, il doppio di una riga threat che e' i8) e fino
+// al 3/08 erano le uniche a non essere prefetchate affatto — mentre `apply_combined`
+// le consuma per PRIME, quindi la loro latenza era interamente scoperta.
+// Perche' funziona solo insieme al riordino: la lista PSQ si costruisce PRIMA di
+// quelle threat (le liste sono disgiunte, l'ordine non cambia nulla di funzionale),
+// cosi' fra il prefetch e l'uso c'e' tutta la costruzione delle liste threat a
+// coprire la latenza. Emessa in cima, senza riordino, non coprirebbe niente.
+// 🔴 UNA linea per riga, non di piu': prefetchare i 4 tile della riga e' stato provato
+// sulle threat lo stesso giorno e misura -5,92% (vedi full_threats.cpp). Le linee
+// successive sono sequenziali e le prende lo streamer L2; i prefetch in piu' rubano
+// solo slot di load. Qui si replica ESATTAMENTE la forma che funziona sulle threat,
+// applicata alle righe che oggi non ne hanno nessuna.
+inline void prefetch_psq_rows(const FeatureTransformer&       featureTransformer,
+                              const PSQFeatureSet::IndexList& a,
+                              const PSQFeatureSet::IndexList& b) {
+    constexpr usize RowBytes = usize(FeatureTransformer::OutputDimensions) * sizeof(WeightType);
+    const char*     base     = reinterpret_cast<const char*>(&featureTransformer.weights[0]);
+
+    for (int i = 0; i < a.ssize(); ++i)
+        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(a[i]) * RowBytes);
+    for (int i = 0; i < b.ssize(); ++i)
+        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(b[i]) * RowBytes);
+}
+#endif
+
 template<bool Forward>
 void update_accumulator_incremental(Color                     perspective,
                                     const FeatureTransformer& featureTransformer,
@@ -405,26 +508,44 @@ void update_accumulator_incremental(Color                     perspective,
 
     if constexpr (Forward)
     {
+#ifndef TRIUMV_NO_PF_PSQ
+        PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
+        prefetch_psq_rows(featureTransformer, psqRemoved, psqAdded);
+#endif
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrRemoved,
                                                  thrAdded, pfBase, pfStride);
         // TRANN1: gli indici PawnPair/PassedPawns (folded, gia' offsettati)
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
+#ifdef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
+#endif
     }
     else
     {
+#ifndef TRIUMV_NO_PF_PSQ
+        PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
+        prefetch_psq_rows(featureTransformer, psqRemoved, psqAdded);
+#endif
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrAdded,
                                                  thrRemoved, pfBase, pfStride);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
+#ifdef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
+#endif
     }
-    // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh e' stato
-    // PROVATO e MISURATO -12.9% NPS su Zen4 (bisect interleaved, nodi identici:
-    // pessimizzazione di codegen del template caldo, non volume di prefetch).
-    // Il prefetch resta SOLO sui threat rows dentro append_changed_indices.
+    // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh aveva
+    // MISURATO -12.9% NPS su Zen4, e per due settimane quel numero ha tenuto
+    // chiuso il fronte.
+    // 🔴 RITIRATO il 3/08/2026: a quella data `nps_ab_interleaved.py` NON ESISTEVA
+    // ancora. La misura fu fatta con `nps_ab_binaries.py`, che esegue TUTTE le
+    // posizioni di A e poi tutte quelle di B — lo stesso strumento che ha
+    // dichiarato -0,34% la permutazione FT, che interlacciata vale +1,62%. Su un
+    // laptop la deriva termica fra le due meta' del run finisce dritta nella
+    // differenza A-B. Quel -12,9% non e' un risultato: e' l'artefatto noto.
+    // Il fronte va riaperto e rimisurato interlacciato (vedi prefetch_psq_rows).
 
 #ifdef TRIUMV_PROFILE
     // Quante colonne da HalfDimensions elementi vengono sommate/sottratte per UN
