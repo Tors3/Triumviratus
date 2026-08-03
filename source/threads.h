@@ -20,6 +20,12 @@ struct ThreadData {
     // Board state copy
     U64 bitboards[12];
     U64 occupancies[3];
+    // Mailbox: pezzo su ogni casa (P..k), -1 = vuota. Init in copy_board_to_thread,
+    // mantenuta nei TRE siti di td_occ_update (make-forward, rollback della mossa
+    // illegale, unmake). Toglie i due cicli che cercavano il pezzo catturato
+    // scandendo fino a 6 bitboard con altrettanti branch imprevedibili, uno in
+    // td_score_move e uno in td_make_move.
+    int piece_on[64];
     int side;
     int enpassant;
     int castle;

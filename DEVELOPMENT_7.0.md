@@ -257,3 +257,66 @@ have understated it by half. And a companion change — rewriting the `PawnPair`
 O(n²) double loop to the precomputed file band its own incremental path already used — measured
 **−0.10%: nothing**. Both results point the same way: on a memory-bound path, removing instructions
 does not pay, removing memory traffic does.</sub>
+
+### Pawn-block refresh cache — +1.37% NPS
+
+The finny table covers only `HalfKAv2_hm`: 22,528 of 86,992 inputs. The other three blocks — the
+other 74% of the feature space — were rebuilt from scratch on every full refresh, which is 8% of
+search wall time.
+
+`FullThreats` cannot be cached, it depends on the whole position. But `PawnPair` and `PassedPawns`
+depend on exactly `(white pawns, black pawns, orientation)` — verified in their `make_index` — and
+refreshes are triggered by **king** moves, which leave pawns untouched. Between consecutive
+refreshes the key is almost always unchanged. The cache is direct-mapped, 8 entries per thread,
+keyed on the full pawn bitboards rather than a hash, so a collision is impossible by construction.
+A hit skips both the enumeration and the sparse column reads, replacing them with one contiguous
+2 KB load.
+
+> **+1.37% NPS on AVX2**, paired-interleaved over 60 positions at depth 19, faster in 40 of them
+> (sign test p ≈ 0.009), node counts identical. About +1.1 Elo.
+> On AVX-512 the same patch measured **−0.11%** and is compiled out there: the wider tiles leave
+> less to gain and the extra vector array costs more. Rating lists build AVX2.
+
+<sub>The bug worth recording is what it took to get there. Caching the feature-transformer vector
+alone left the bench at 262,736 instead of 207,259, and three plausible theories about the key were
+all wrong. The cause was that active features also feed the **PSQT accumulator** through
+`threatPsqtWeights`, in a second loop further down the same function — so a hit produced a correct
+feature-transformer vector and a silently stale PSQT. Bisection found it in three builds where
+reasoning had failed in three attempts: force a miss (bench correct → the miss path is fine), then
+recompute on hit and compare against the cached vector (no mismatch → the key is fine), which left
+only the code the hit path skipped.</sub>
+
+### What is *not* worth doing, measured
+
+Two candidates were killed by measurement before any of them cost a day of work.
+
+**Lazy accumulator updates.** Stockfish defers accumulator work and walks the chain when an
+evaluation is finally needed; we update eagerly, so any update made for a node that never evaluates
+is pure waste — and the incremental update is ~31% of wall time. Instrumenting it gives **0.91
+updates per evaluation** (185,992 against 203,286). There are *fewer* updates than evaluations: the
+eval cache and the refresh path already absorb the difference, and there is nothing to reclaim.
+
+**Micro-optimising the rest.** With per-phase counters on the current binary: move generation 2.3%,
+transposition table 2.3%, make+unmake 4.3%, `fc_0` 3.7%. Zeroing any one of them entirely would
+return less than the refresh cache above.
+
+### Multithreading
+
+Rating lists run 4 CPU in the upper part of the 40/15 list and 8 CPU in Blitz, so this is not
+academic. Two SMP options had never been tested: `ThreadVoting`, a Stockfish-style weighted vote
+that had never been switched **on**, and `DiverseSMP`, which had been switched on *without* a test.
+
+> Gauntlet at 4 threads, 5,598 games at 12+0.12: `ThreadVoting=true` **−4.10 ± 6.17**,
+> `DiverseSMP=false` **−4.09 ± 6.18**. Both defaults hold.
+
+The vote implementation was then checked line by line against Stockfish and is faithful — same
+`(score − minScore + 14) × depth` weighting, and `depth` is assigned only on a *completed*
+iteration, which is the easy thing to get wrong. It simply does not pay here.
+
+<sub>A note on measuring SMP at all, since we got it wrong first. Time-to-depth is the metric for
+split-point schemes, where threads divide the tree; under lazy SMP threads search the *same* tree
+with different orderings and trade work through the shared table, so nominal depth grows little
+while its quality grows a lot. Our time-to-depth speedup at 4 threads is 1.1–1.6x, which looks
+alarming and is not: rating lists show ~40 Elo from 1 to 4 CPU, in line with comparable engines.
+NPS is wrong in the other direction, counting duplicated nodes as progress. For multithreading the
+only honest metric is Elo in games.</sub>

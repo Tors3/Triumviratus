@@ -42,6 +42,7 @@ unsigned long long prof_n_cols = 0, prof_n_upd = 0;
 unsigned long long prof_n_thr_seen = 0, prof_n_thr_dead = 0;
 unsigned long long prof_max_active = 0, prof_max_inc = 0;
 unsigned long long prof_cols_thr = 0, prof_cols_pawn = 0, prof_n_refresh_calls = 0;
+unsigned long long prof_pawn_hit = 0, prof_pawn_miss = 0;
 unsigned long long prof_dead_pair[8][8] = {};
 #endif
 #include "defs.h"
@@ -797,6 +798,13 @@ int g_tmv2_opt_pct = 124; // optimum = pool/mtg * questo/100
 bool g_tmv2_pred = true;
 int g_tmv2_pred_hit = 945;   // per-mille
 int g_tmv2_pred_miss = 1157; // per-mille
+// TMPredBestThread: la predizione TM prende la PV dal thread CHE HA VINTO invece che
+// sempre dal thread 0. A 1 thread e' identico (il vincitore e' sempre lo 0); a >1 thread
+// riaccende una parte di TMv2 che oggi si spegne da sola ogni volta che vince un helper
+// (536 volte su 5598 partite a 4 thread, misurato il 3/08/2026). Default OFF finche' non
+// e' misurato: e' un cambio di comportamento nel regime multi-thread, che e' quello di
+// CCRL (4 CPU nella 40/15 alta, 8 nella Blitz).
+bool g_tm_pred_best_thread = false;
 U64 g_tm_pred_hash = 0;
 // Q-07 root-singularity stop (Caissa, search-based — NON il PolicyEasyMove
 // bocciato): dopo timefrac% dell'optimum, a fine iterazione (depth>=9,
@@ -2723,6 +2731,10 @@ bool set_search_param(const char *name, int value) {
       g_tm_pred_hash = 0;
     return true;
   }
+  if (!strcmp(name, "TMPredBestThread")) {
+    g_tm_pred_best_thread = value != 0;
+    return true;
+  }
   if (!strcmp(name, "TMv2PredHit")) {
     g_tmv2_pred_hit = value < 100 ? 100 : value;
     return true;
@@ -3395,6 +3407,20 @@ void init_threads(int thread_count) {
 void copy_board_to_thread(ThreadData &td) {
   memcpy(td.bitboards, bitboards, sizeof(bitboards));
   memcpy(td.occupancies, occupancies, sizeof(occupancies));
+#ifndef TRIUMV_NO_MAILBOX
+  // Mailbox: full init dalla root, poi mantenuta in make/unmake — stesso schema di
+  // pawn_key e np_key qui sotto. Unico punto di inizializzazione della board di thread.
+  for (int sq = 0; sq < 64; sq++)
+    td.piece_on[sq] = -1;
+  for (int pc = P; pc <= k; pc++) {
+    U64 bb = td.bitboards[pc];
+    while (bb) {
+      int sq = get_ls1b_index(bb);
+      td.piece_on[sq] = pc;
+      pop_bit(bb, sq);
+    }
+  }
+#endif
   td.side = side;
   td.enpassant = enpassant;
   td.castle = castle;
@@ -3593,6 +3619,82 @@ static inline void td_occ_update(ThreadData &td, int us, int source, int target,
   td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
 }
 
+#ifndef TRIUMV_NO_MAILBOX
+// Casa di partenza/arrivo della TORRE nell'arrocco, dedotte dalla casa d'arrivo del
+// re. Stessa tabella implicita gia' usata da td_occ_update e dai due rollback.
+static inline void td_castle_rook(int target, int &rook_pc, int &rf, int &rt) {
+  switch (target) {
+  case g1: rook_pc = R; rf = h1; rt = f1; break;
+  case c1: rook_pc = R; rf = a1; rt = d1; break;
+  case g8: rook_pc = r; rf = h8; rt = f8; break;
+  default: rook_pc = r; rf = a8; rt = d8; break;  // c8
+  }
+}
+
+#ifdef TRIUMV_MAILBOX_VERIFY
+// Verifica esaustiva mailbox<->bitboard, per la validazione. Il perft del motore usa
+// make_move GLOBALE e non passa mai di qui, quindi senza questo controllo non ci
+// sarebbe modo di provare che i rami arrocco/e.p./promozione siano coperti: un
+// disallineamento non da' crash ne' firma diversa, solo un ordinamento che sbaglia.
+//   build:  -DTRIUMV_MAILBOX_VERIFY   poi   echo bench | motore
+static inline void td_mailbox_verify(ThreadData &td, const char *where) {
+  for (int sq = 0; sq < 64; sq++) {
+    int expect = -1;
+    for (int pc = P; pc <= k; pc++)
+      if (get_bit(td.bitboards[pc], sq)) { expect = pc; break; }
+    if (td.piece_on[sq] != expect) {
+      fprintf(stderr, "[MAILBOX] %s: sq=%d mailbox=%d bitboards=%d\n", where, sq,
+              td.piece_on[sq], expect);
+      fflush(stderr);
+      abort();
+    }
+  }
+}
+  #define MB_VERIFY(td, where) td_mailbox_verify((td), (where))
+#else
+  #define MB_VERIFY(td, where) ((void) 0)
+#endif
+
+// MAILBOX — le due meta' NON sono self-inverse come td_occ_update (che e' uno XOR):
+// qui si scrivono valori, quindi servono andata e ritorno distinti. Vanno chiamate
+// negli STESSI TRE SITI di td_occ_update, o la mailbox si disallinea dai bitboard
+// e l'ordinamento sbaglia in silenzio (nessun crash, nessuna firma diversa).
+static inline void td_mailbox_apply(ThreadData &td, int piece, int source, int target,
+                                    int promoted, int captured_piece,
+                                    int captured_square, int castling) {
+  // La vittima PRIMA del pezzo che arriva: nell'e.p. `captured_square` != target,
+  // in una cattura normale coincidono e deve vincere il pezzo che arriva.
+  if (captured_piece != -1)
+    td.piece_on[captured_square] = -1;
+  td.piece_on[source] = -1;
+  td.piece_on[target] = promoted ? promoted : piece;
+  if (castling) {
+    int rook_pc, rf, rt;
+    td_castle_rook(target, rook_pc, rf, rt);
+    td.piece_on[rf] = -1;
+    td.piece_on[rt] = rook_pc;
+  }
+}
+
+static inline void td_mailbox_revert(ThreadData &td, int piece, int source, int target,
+                                     int promoted, int captured_piece,
+                                     int captured_square, int castling) {
+  (void) promoted;  // in uscita il pezzo torna quello di partenza, promosso o no
+  // Ordine speculare: si svuota target e POI si rimette la vittima, cosi' quando
+  // captured_square == target (cattura normale) la vittima riprende il suo posto.
+  td.piece_on[target] = -1;
+  td.piece_on[source] = piece;
+  if (captured_piece != -1)
+    td.piece_on[captured_square] = captured_piece;
+  if (castling) {
+    int rook_pc, rf, rt;
+    td_castle_rook(target, rook_pc, rf, rt);
+    td.piece_on[rt] = -1;
+    td.piece_on[rf] = rook_pc;
+  }
+}
+#endif
+
 // ============================================================================
 // MAKE MOVE (returns 1 if legal)
 // ============================================================================
@@ -3693,12 +3795,21 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
       undo.captured_square = target;
       int start = (td.side == white) ? p : P;
       int end = (td.side == white) ? k : K;
+#ifndef TRIUMV_NO_MAILBOX
+      // La mailbox e' ancora quella PRE-mossa qui: si aggiorna piu' sotto, insieme
+      // a td_occ_update. Il test di range replica esattamente il ciclo sostituito,
+      // che cercava solo fra i pezzi AVVERSARI e lasciava -1 se non trovava nulla.
+      const int mb_pc = td.piece_on[target];
+      if (mb_pc >= start && mb_pc <= end)
+        undo.captured_piece = mb_pc;
+#else
       for (int pc = start; pc <= end; pc++) {
         if (get_bit(td.bitboards[pc], target)) {
           undo.captured_piece = pc;
           break;
         }
       }
+#endif
     }
 
     if (undo.captured_piece != -1) {
@@ -3773,6 +3884,11 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
                        undo.captured_square);
   td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
+#ifndef TRIUMV_NO_MAILBOX
+  td_mailbox_apply(td, piece, source, target, promoted, undo.captured_piece,
+                   undo.captured_square, castling);  // sito 1/3: make-forward
+  MB_VERIFY(td, "make-forward");
+#endif
 
   td.side ^= 1;
   td.hash_key ^= side_key;
@@ -3827,6 +3943,11 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
                          undo.captured_piece, undo.captured_square);
     td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
                      undo.captured_square, castling);
+#ifndef TRIUMV_NO_MAILBOX
+    td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
+                      undo.captured_square, castling);  // sito 2/3: mossa illegale
+    MB_VERIFY(td, "rollback-illegale");
+#endif
 
     return 0;
   }
@@ -3955,6 +4076,11 @@ static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
                        undo.captured_square);
   td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
+#ifndef TRIUMV_NO_MAILBOX
+  td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
+                    undo.captured_square, castling);  // sito 3/3: unmake
+  MB_VERIFY(td, "unmake");
+#endif
 }
 
 // ============================================================================
@@ -4881,12 +5007,21 @@ static inline int td_score_move(ThreadData &td, int move, int tt_move) {
     int victim = P;
     int start = (td.side == white) ? p : P;
     int end = (td.side == white) ? k : K;
+#ifndef TRIUMV_NO_MAILBOX
+    // Il test di range replica il ciclo sostituito: cercava solo fra i pezzi
+    // AVVERSARI, e se non trovava nulla lasciava il default P. Succede all'e.p.,
+    // dove la casa d'arrivo e' VUOTA e la vittima sta altrove.
+    const int mb_pc = td.piece_on[target];
+    if (mb_pc >= start && mb_pc <= end)
+      victim = mb_pc;
+#else
     for (int pc = start; pc <= end; pc++) {
       if (get_bit(td.bitboards[pc], target)) {
         victim = pc;
         break;
       }
     }
+#endif
 
     int caphist = g_capture_hist
                       ? td.capture_history[piece][target][victim]
@@ -9282,19 +9417,29 @@ void search_position_mt(int depth) {
   // parte di TMv2 e' di fatto spenta. Farla puntare al thread vincitore
   // cambierebbe il comportamento a >1 thread e va misurato, non fatto qui.
   // A 1 thread la condizione non scatta mai -> byte-identico.
-  if (best_move && thread_data[0].pv_table[0][0] != best_move) {
-    int src = -1;
+  // Quale thread ha davvero esplorato la variante che stiamo per giocare, cioe' la cui
+  // PV comincia con la bestmove. Serve DUE volte: per stampare una PV coerente con la
+  // mossa (sotto) e per la predizione TM (piu' giu'). Prima era calcolato solo dentro
+  // il ramo della stampa, e la predizione restava incollata al thread 0.
+  int pv_src = (thread_data[0].pv_length[0] > 0 &&
+                thread_data[0].pv_table[0][0] == best_move)
+                 ? 0
+                 : -1;
+  if (pv_src < 0) {
     for (int i = 1; i < num_threads; i++) {
       if (thread_data[i].pv_length[0] > 0 &&
           thread_data[i].pv_table[0][0] == best_move) {
-        src = i;
+        pv_src = i;
         break;
       }
     }
-    if (src >= 0) {
-      print_search_info(thread_data[src], best_depth, best_score, 0,
-                        thread_data[src].pv_table[0],
-                        thread_data[src].pv_length[0]);
+  }
+
+  if (best_move && pv_src != 0) {
+    if (pv_src > 0) {
+      print_search_info(thread_data[pv_src], best_depth, best_score, 0,
+                        thread_data[pv_src].pv_table[0],
+                        thread_data[pv_src].pv_length[0]);
     } else {
       // FALLBACK (2026-07-26, seconda passata): puo' non esserci NESSUN thread
       // la cui pv_table[0][0] sia la bestmove. `td.best_move` e `pv_table[0][0]`
@@ -9319,7 +9464,21 @@ void search_position_mt(int depth) {
   // codificati. Stato pulito su ucinewgame.
   if (g_tmv2_pred && g_tmv2_tc_ok) {
     g_tm_pred_hash = 0;
-    ThreadData &tdp = thread_data[0];
+    // FIX 3/08/2026 (dietro TMPredBestThread). La condizione qui sotto vuole che la PV
+    // cominci con la mossa scelta: col thread 0 fisso fallisce OGNI VOLTA che vince un
+    // helper, e la predizione si spegne da sola. A 4 thread e' successo 536 volte su
+    // 5598 partite, cioe' una fetta di TMv2 (+23,8 Elo) e' inattiva proprio nel regime
+    // in cui CCRL ci misura. Qui si prende la PV dal thread vincitore.
+    // 🔴 SICUREZZA: sotto si fanno make/unmake su `tdp`, quindi la sua posizione DEVE
+    // essere la root. Un helper interrotto potrebbe non esserci tornato, e l'hash
+    // predetto sarebbe di un'ALTRA posizione — un errore silenzioso che si vedrebbe
+    // solo come predizione che non scatta mai. Si confronta l'hash con quello del
+    // thread 0 e, se non coincide, si ricade sul comportamento attuale.
+    int tsrc = 0;
+    if (g_tm_pred_best_thread && pv_src > 0 &&
+        thread_data[pv_src].hash_key == thread_data[0].hash_key)
+      tsrc = pv_src;
+    ThreadData &tdp = thread_data[tsrc];
     if (best_move && tdp.pv_length[0] >= 2 && tdp.pv_table[0][0] == best_move) {
       int mv0 = tdp.pv_table[0][0], mv1 = tdp.pv_table[0][1];
       UndoInfo u0, u1;

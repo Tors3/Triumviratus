@@ -317,6 +317,13 @@ class FeatureTransformer {
         // Da qui in giu' e' la sola trasformazione (clipped ReLU + pairwise mult):
         // il tempo dell'accumulatore e' gia' stato contato sopra.
         PROF_GUARD(prof_ft_out);
+#ifdef TRIUMV_PROFILE
+        // Una volta per VALUTAZIONE vera. Confrontato con prof_n_inc dice quanti
+        // aggiornamenti di accumulatore vengono fatti per nodi che poi non valutano:
+        // quello sarebbe lavoro sprecato. Misurato 3/08/2026: 0,91 update per eval,
+        // cioe' NON ce n'e'. (prof_n_eval era dichiarato e mai incrementato.)
+        ++prof_n_eval;
+#endif
         const auto& accumulatorState = accumulatorStack.latest();
 
         const Color perspectives[2]  = {pos.side_to_move(), ~pos.side_to_move()};

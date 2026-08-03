@@ -35,6 +35,9 @@
   // struttura di pedoni => sono gli unici cachabili fra refresh consecutivi (che sono
   // scatenati da mosse di RE). Il rapporto pawn/(pawn+threat) e' il tetto del guadagno.
   extern unsigned long long prof_cols_thr, prof_cols_pawn, prof_n_refresh_calls;
+  // Cache del refresh dei blocchi pedoni: quante volte la chiave e' gia' in cache.
+  // Un tasso basso dice che conviene ingrandirla, uno alto che il tetto e' raggiunto.
+  extern unsigned long long prof_pawn_hit, prof_pawn_miss;
   extern unsigned long long prof_dead_pair[8][8];
   inline unsigned long long prof_now() { return __rdtsc(); }
   struct ProfGuard {

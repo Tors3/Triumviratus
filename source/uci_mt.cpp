@@ -445,6 +445,9 @@ void uci_loop()
             printf("option name FastRepScan type check default true\n");       // P2.2 repetition scan a finestra
             printf("option name EvasionGen type check default true\n");        // P2.3 evasioni mascherate (node-identical)
             printf("option name ThreadVoting type check default false\n");     // P1.12 selezione SMP per voto pesato (SF-style)
+            // spin 0/1 e NON check: il gestore generico fa atoi(), e atoi("true") e' 0 —
+            // una check nuova qui non si accenderebbe mai (stessa ragione di IID).
+            printf("option name TMPredBestThread type spin default 0 min 0 max 1\n"); // predizione TM dal thread VINCITORE (a 1 thread: identico)
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
             printf("option name QSChecks type check default false\n");         // P1.3 scacchi quieti alla prima ply di qsearch. BAKED OFF 2026-07-25: spegnerli vale +9.71 +/- 5.99 Elo, LOS 99.93%, LLR 2.96 @3294g 20+0.2 (SF li ha rimossi, PR #5498)
             printf("option name QSTTQuiets type spin default 0 min 0 max 2\n"); // condizione TT di Stormphrax (search.cpp:1557: !PvNode && ttMove && flag!=UpperBound && ttMove quieta). 0=off (byte-identico) · 1=porta fedele, TUTTE le quiete (bench 371449, +80.7%: troppo caro) · 2=solo quiete che danno SCACCO, cioe' QSChecks TT-gated = la forma stretta che recupera le sequenze forzate senza ricomprare l'albero
@@ -1010,6 +1013,15 @@ void uci_loop()
                   printf("  MAX riempimento  : refresh %llu/288   incrementale %llu/288  %s\n",
                          (unsigned long long)prof_max_active, (unsigned long long)prof_max_inc,
                          (prof_max_active >= 260 || prof_max_inc >= 260) ? "<<< VICINO AL BOUND" : "");
+                  if (prof_n_eval) {
+                      printf("  UPDATE vs EVAL   : %llu update incrementali, %llu valutazioni  "
+                             "=> %.2f update per eval  %s\n",
+                             (unsigned long long) prof_n_inc, (unsigned long long) prof_n_eval,
+                             (double) prof_n_inc / (double) prof_n_eval,
+                             prof_n_inc > prof_n_eval * 12 / 10
+                               ? "<<< update SPRECATI (nodi che non valutano)"
+                               : "");
+                  }
                   if (prof_n_refresh_calls) {
                       const double tot = (double)(prof_cols_thr + prof_cols_pawn);
                       printf("  COLONNE @refresh : threat %.1f/chiamata   pedoni %.1f/chiamata   "
