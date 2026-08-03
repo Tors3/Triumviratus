@@ -27,6 +27,7 @@
 #include <iosfwd>
 
 #include "../../profile.h"
+#include "features/feat_perm.h"
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
 #include "features/passed_pawns.h"

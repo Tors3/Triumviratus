@@ -37,6 +37,8 @@ unsigned long long prof_eval = 0, prof_mg = 0, prof_make = 0, prof_tt = 0,
                    prof_score = 0;
 unsigned long long prof_ft = 0, prof_fc0 = 0, prof_layers = 0;
 unsigned long long prof_catchup = 0;
+unsigned long long prof_feat_hist[PROF_FEAT_N] = {};
+unsigned long long prof_psq_hist[PROF_PSQ_N]   = {};
 unsigned long long prof_acc_inc = 0, prof_acc_refresh = 0, prof_ft_out = 0;
 unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
 unsigned long long prof_n_cols = 0, prof_n_upd = 0;

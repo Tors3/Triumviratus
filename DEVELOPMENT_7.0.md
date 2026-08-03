@@ -420,6 +420,57 @@ tool that read −0.34% on the FT permutation, which is really worth +1.62%. The
 attributed the loss to "codegen pessimisation of the hot template", an explanation invented after
 the fact for a number the instrument could not produce reliably.</sub>
 
+### Permuting the weight rows for locality — +1.5 to 2% NPS
+
+The incremental accumulator update is memory-latency bound: 1423 cycles per update against
+337 of actual arithmetic. The question nobody had asked was *how the accesses are
+distributed*. Instrumented, over 150 book positions at depth 16 — 404 million row accesses:
+
+```
+rows 64,464 total, 46,023 ever touched
+  top    644 rows (1.0%) = 49.0% of accesses   [0.63 MB]
+  top  3,223 rows (5.0%) = 83.0%               [3.15 MB]
+  90% of accesses -> 5,108 rows                [4.99 MB]
+```
+
+**Five megabytes carry 90% of the traffic, and they are scattered over 63 MB.** That is the
+whole story: with 4 KB pages the weights span 16,116 pages, no TLB maps that, and every
+access is a DRAM miss on a region that would fit in L3 if it were packed. Large pages would
+be the hardware answer, but they need a Windows privilege no tester enables — a permutation
+is the software substitute, and it ships inside the binary.
+
+So the rows of `threatWeights` are reordered by access frequency at load time, hot ones
+first and contiguous, and the indices are remapped through a 130 KB lookup table that stays
+in L2. **The evaluation is unchanged** — this only moves rows around.
+
+> **+1.5 to 2% NPS**, three independent 150-position samples at Hash 256: 84/150 (+1.19%),
+> 83/150 (+1.42%), 113/150 (+3.40%) — **280/450 won, z = 5.14, p ≈ 3e-7**, node counts
+> identical in every run.
+
+<sub>Two things this measurement taught, both expensive. **First: sample size scales with the
+inverse of the effect.** 60 positions resolve +3.5%, 150 resolve +2%, and +1.5% needs 450 —
+the first two samples here each reported "not significant" (p = 0.17 and p = 0.22) on an
+effect that is real at p ≈ 3e-7 once pooled. Reading either one alone would have killed it.
+**Second: measure in the regime you are judged in.** These runs use Hash 256, like CCRL, not
+the Hash 64 the harness defaulted to; with a small transposition table there is far less
+pressure on L3, and a locality optimisation measured there is measured where it matters
+least.</sub>
+
+<sub>Two design questions were settled by measurement rather than intuition, each for the
+price of one build. Permuting at *block* granularity would have cost nothing at runtime —
+the index is a sum of three constant tables, so reassigning them needs no lookup — but the
+heat is spread *within* blocks (90% of accesses touch 108 of 252 blocks), so block reordering
+would still span 27 MB. And the whole thing was first built with the **identity** permutation
+as a safety net: bench had to stay 207259 before the real table was generated, so that a
+change in the bench could only mean the data was wrong, never the wiring.</sub>
+
+<sub>The trap, worth recording because it does not announce itself: for an excluded feature
+`FullThreats::make_index` does not return a constant — it returns `base + offsets + lut2`, a
+*variable* value above the threshold. The marker was `Dimensions` (59808), which is exactly
+the first valid row of the folded PawnPair segment; under a permutation those dead indices
+would have landed on real rows. Relocated to `FeatRows` with a sentinel tail in the table, so
+the filter stays a single branchless read.</sub>
+
 ### NPS work, cumulative — +4.80% against the 31 July build
 
 Four independent changes, each verified with identical node counts on PGO binaries: refresh cache

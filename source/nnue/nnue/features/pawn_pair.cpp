@@ -5,6 +5,8 @@
 
 #include "pawn_pair.h"
 
+#include "feat_perm.h"
+
 #include <array>
 
 #include "../../bitboard.h"
@@ -56,7 +58,7 @@ void PawnPair::append_active_indices(Color perspective, const Position& pos, Ind
         {
             const Square p  = pop_lsb(partners);
             const Color  pc = (whitePawns & square_bb(p)) ? WHITE : BLACK;
-            active.push_back(FoldOffset + make_index(perspective, ksq, s, c, p, pc));
+            active.push_back(feat_row(FoldOffset + make_index(perspective, ksq, s, c, p, pc)));
         }
     }
 }
@@ -86,8 +88,8 @@ void PawnPair::append_changed_indices(Color           perspective,
         {
             Square p  = pop_lsb(partners);
             Color  pc = (diff.pawnsBefore[WHITE] & square_bb(p)) ? WHITE : BLACK;
-            removed.push_back(
-              FoldOffset + make_index(perspective, ksq, diff.removedSq[i], diff.removedC[i], p, pc));
+            removed.push_back(feat_row(
+              FoldOffset + make_index(perspective, ksq, diff.removedSq[i], diff.removedC[i], p, pc)));
         }
     }
 
@@ -102,7 +104,8 @@ void PawnPair::append_changed_indices(Color           perspective,
         {
             Square p  = pop_lsb(partners);
             Color  pc = (afterW & square_bb(p)) ? WHITE : BLACK;
-            added.push_back(FoldOffset + make_index(perspective, ksq, diff.addedSq, diff.addedC, p, pc));
+            added.push_back(
+              feat_row(FoldOffset + make_index(perspective, ksq, diff.addedSq, diff.addedC, p, pc)));
         }
     }
 }

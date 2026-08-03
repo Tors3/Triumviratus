@@ -5,6 +5,8 @@
 
 #include "passed_pawns.h"
 
+#include "feat_perm.h"
+
 #include <array>
 
 #include "../../bitboard.h"
@@ -68,11 +70,11 @@ void PassedPawns::append_active_indices(Color perspective, const Position& pos, 
 
     Bitboard pw = passers(WHITE, wp, bp);
     while (pw)
-        active.push_back(FoldOffset + make_index(perspective, ksq, WHITE, pop_lsb(pw)));
+        active.push_back(feat_row(FoldOffset + make_index(perspective, ksq, WHITE, pop_lsb(pw))));
 
     Bitboard pb = passers(BLACK, bp, wp);
     while (pb)
-        active.push_back(FoldOffset + make_index(perspective, ksq, BLACK, pop_lsb(pb)));
+        active.push_back(feat_row(FoldOffset + make_index(perspective, ksq, BLACK, pop_lsb(pb))));
 }
 
 // Incremental: un evento-pedone puo' cambiare lo status passed anche di ALTRI
@@ -103,9 +105,9 @@ void PassedPawns::append_changed_indices(Color           perspective,
         Bitboard       rem = pb & ~pa;
         Bitboard       add = pa & ~pb;
         while (rem)
-            removed.push_back(FoldOffset + make_index(perspective, ksq, c, pop_lsb(rem)));
+            removed.push_back(feat_row(FoldOffset + make_index(perspective, ksq, c, pop_lsb(rem))));
         while (add)
-            added.push_back(FoldOffset + make_index(perspective, ksq, c, pop_lsb(add)));
+            added.push_back(feat_row(FoldOffset + make_index(perspective, ksq, c, pop_lsb(add))));
     }
 }
 

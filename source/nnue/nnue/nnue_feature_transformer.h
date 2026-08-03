@@ -155,17 +155,53 @@ class FeatureTransformer {
              ^ (OutputDimensions * 2);
     }
 
+#ifndef TRIUMV_NO_FEAT_PERM
+    // Permutazione per LOCALITA' delle RIGHE di threatWeights (asse ortogonale a
+    // PackusEpi16Order, che riordina DENTRO la riga: i due non interferiscono).
+    // Le righe calde finiscono davanti e contigue: il 90% degli accessi passa da
+    // 63 MB sparsi a 3,3 MB, che stanno in L3. Vedi features/feat_perm.h.
+    // 🔴 Si permutano ENTRAMBE le tabelle. Dimenticare la PSQT non da' crash: da'
+    // valutazioni sbagliate in silenzio (gia' successo: bench 262736 invece di 207259).
+    void permute_rows(bool inverse) {
+        auto tmpW = std::make_unique<std::array<ThreatWeightType, ThreatPlusPawnDimensions
+                                                                   * HalfDimensions>>();
+        auto tmpP = std::make_unique<
+          std::array<PSQTWeightType, ThreatPlusPawnDimensions * PSQTBuckets>>();
+
+        for (IndexType oldRow = 0; oldRow < ThreatPlusPawnDimensions; ++oldRow)
+        {
+            const IndexType newRow = Features::FeatPerm[oldRow];
+            const IndexType src    = inverse ? newRow : oldRow;
+            const IndexType dst    = inverse ? oldRow : newRow;
+            std::memcpy(tmpW->data() + usize(dst) * HalfDimensions,
+                        threatWeights.data() + usize(src) * HalfDimensions,
+                        HalfDimensions * sizeof(ThreatWeightType));
+            std::memcpy(tmpP->data() + usize(dst) * PSQTBuckets,
+                        threatPsqtWeights.data() + usize(src) * PSQTBuckets,
+                        PSQTBuckets * sizeof(PSQTWeightType));
+        }
+        std::memcpy(threatWeights.data(), tmpW->data(), sizeof(*tmpW));
+        std::memcpy(threatPsqtWeights.data(), tmpP->data(), sizeof(*tmpP));
+    }
+#endif
+
     void permute_weights() {
         permute<16>(biases, PackusEpi16Order);
         permute<16>(weights, PackusEpi16Order);
 
         permute<8>(threatWeights, PackusEpi16Order);  // copre anche il segmento pawn (folded)
+#ifndef TRIUMV_NO_FEAT_PERM
+        permute_rows(false);
+#endif
     }
 
     void unpermute_weights() {
         permute<16>(biases, InversePackusEpi16Order);
         permute<16>(weights, InversePackusEpi16Order);
         permute<8>(threatWeights, InversePackusEpi16Order);
+#ifndef TRIUMV_NO_FEAT_PERM
+        permute_rows(true);
+#endif
     }
 
     // Read network parameters. Block order in the .nnue byte stream MUST match

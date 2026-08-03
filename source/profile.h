@@ -21,6 +21,21 @@
   // prof_eval ma FUORI da prof_ft/fc0/layers: serve a spiegare il divario fra
   // eval (56,2%) e forward (47,1%) misurato il 3/08, ~9% del wall mai attribuito.
   extern unsigned long long prof_catchup;
+  // Istogramma degli accessi alle righe di `threatWeights` (threat + PawnPair +
+  // PassedPawns folded: 59808 + 4560 + 96 = 64464 righe). Serve a rispondere alla
+  // domanda che decide se la PERMUTAZIONE PER LOCALITA' ha senso: gli accessi sono
+  // concentrati su poche feature o distribuiti su tutte?
+  //   - concentrati => impacchettare le calde in una regione contigua riduce pagine
+  //     toccate e pressione sul TLB (110 MB di pesi = 27.000 pagine da 4 KB, e le
+  //     large pages non sono disponibili: nessun tester le abilita)
+  //   - piatti      => non c'e' niente da impacchettare, idea morta
+  static constexpr int PROF_FEAT_N = 64464;
+  extern unsigned long long prof_feat_hist[PROF_FEAT_N];
+  // Stesso istogramma per le righe HalfKA (`weights`): 22.528 righe da 2048 byte = 46 MB,
+  // le PIU' GROSSE del transformer e quelle su cui il prefetch ha reso di piu' (+1,3%).
+  // La loro distribuzione di accesso non e' mai stata guardata.
+  static constexpr int PROF_PSQ_N = 22528;
+  extern unsigned long long prof_psq_hist[PROF_PSQ_N];
   // Scomposizione del feature transformer (prof_ft), che il primo giro di misure ha
   // rivelato essere il 39,3% del wall e il 91,2% del forward: il collo di bottiglia
   // numero uno del motore. Qui si separa DOVE va quel tempo.

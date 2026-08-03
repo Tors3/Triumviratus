@@ -96,6 +96,9 @@
     <ClCompile Include="nnue\nnue\nnue_accumulator.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\</ObjectFileName>
     </ClCompile>
+    <ClCompile Include="nnue\nnue\features\feat_perm.cpp">
+      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="nnue\nnue\features\full_threats.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>

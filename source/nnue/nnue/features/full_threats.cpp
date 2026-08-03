@@ -20,6 +20,8 @@
 
 #include "full_threats.h"
 
+#include "feat_perm.h"
+
 #include "../../../profile.h"
 
 #include <array>
@@ -200,10 +202,15 @@ constexpr auto init_index_luts() {
                               + (color_of(attacked) * (numValidTargets[attacker] / 2) + map)
                                   * helper_offsets[attacker].cumulativePieceOffset;
 
+            // 🔴 Il marcatore delle feature ESCLUSE e' `FeatDeadBase` (= FeatRows), non
+            // piu' `FullThreats::Dimensions`. Motivo: l'indice finale e' base + offsets +
+            // lut2, quindi per un'esclusa vale FeatDeadBase + qualcosa. Ancorandolo a
+            // FeatRows tutti i valori morti cadono nella coda sentinella di FeatPerm e il
+            // filtro resta una lettura senza branch. Con Dimensions (59808) sarebbero
+            // finiti dentro il segmento PawnPair, che e' fatto di righe VALIDE.
             bool excluded                  = map < 0;
-            indices[attacker][attacked][0] = excluded ? FullThreats::Dimensions : feature;
-            indices[attacker][attacked][1] =
-              excluded || semi_excluded ? FullThreats::Dimensions : feature;
+            indices[attacker][attacked][0] = excluded ? FeatDeadBase : feature;
+            indices[attacker][attacked][1] = excluded || semi_excluded ? FeatDeadBase : feature;
         }
     }
 
@@ -262,7 +269,7 @@ void FullThreats::append_active_indices(Color perspective, const Position& pos, 
                     Square from     = to - attkDir;
                     Piece  attacked = pos.piece_on(to);
                     IndexType index = make_index(perspective, attacker, from, to, attacked, ksq);
-                    active.push_back_if_lt(index, Dimensions);
+                    active.push_back_if_lt(feat_row(index), FeatRows);
                 }
             };
 
@@ -292,7 +299,7 @@ void FullThreats::append_active_indices(Color perspective, const Position& pos, 
                     Square    to       = pop_lsb(attacks);
                     Piece     attacked = pos.piece_on(to);
                     IndexType index    = make_index(perspective, attacker, from, to, attacked, ksq);
-                    active.push_back_if_lt(index, Dimensions);
+                    active.push_back_if_lt(feat_row(index), FeatRows);
                 }
             }
         }
@@ -318,13 +325,15 @@ void FullThreats::append_changed_indices(Color                   perspective,
         auto add      = dirty.add();
 
         auto&           insert = add ? added : removed;
-        const IndexType index  = make_index(perspective, attacker, from, to, attacked, ksq);
+        // `feat_row` rimappa alla riga permutata; per le feature morte ritorna la
+        // sentinella FeatRows, che `push_back_if_lt` scarta esattamente come prima.
+        const IndexType index = feat_row(make_index(perspective, attacker, from, to, attacked, ksq));
 
 #ifdef TRIUMV_PROFILE
-        // Quante tuple vengono generate e poi BUTTATE (map < 0 => index == Dimensions).
+        // Quante tuple vengono generate e poi BUTTATE (map < 0 => riga == FeatRows).
         // Il prefetch qui sotto parte comunque: in regime memory-bound e' traffico sprecato.
         prof_n_thr_seen++;
-        if (index >= Dimensions)
+        if (index >= FeatRows)
         {
             prof_n_thr_dead++;
             // Chi sono le tuple ancora scartate? [tipo attaccante][tipo attaccato]
@@ -343,7 +352,7 @@ void FullThreats::append_changed_indices(Color                   perspective,
         if (prefetchBase)
             prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
               reinterpret_cast<uintptr_t>(prefetchBase) + index * prefetchStride));
-        insert.push_back_if_lt(index, Dimensions);
+        insert.push_back_if_lt(index, FeatRows);
     }
 }
 

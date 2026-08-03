@@ -553,6 +553,20 @@ void update_accumulator_incremental(Color                     perspective,
     // sono tante": il costo dell'incrementale e' (colonne) x (L1) e nient'altro.
     prof_n_cols += psqAdded.size() + psqRemoved.size() + thrAdded.size() + thrRemoved.size();
     prof_n_upd++;
+    // Istogramma degli accessi per riga di `threatWeights` (threat+PawnPair+Passed
+    // folded). E' la tabella candidata alla permutazione per localita'.
+    for (int i = 0; i < thrAdded.ssize(); ++i)
+        if (thrAdded[i] < PROF_FEAT_N)
+            prof_feat_hist[thrAdded[i]]++;
+    for (int i = 0; i < thrRemoved.ssize(); ++i)
+        if (thrRemoved[i] < PROF_FEAT_N)
+            prof_feat_hist[thrRemoved[i]]++;
+    for (int i = 0; i < psqAdded.ssize(); ++i)
+        if (psqAdded[i] < PROF_PSQ_N)
+            prof_psq_hist[psqAdded[i]]++;
+    for (int i = 0; i < psqRemoved.ssize(); ++i)
+        if (psqRemoved[i] < PROF_PSQ_N)
+            prof_psq_hist[psqRemoved[i]]++;
     if ((unsigned long long) thrAdded.size() > prof_max_inc)
         prof_max_inc = thrAdded.size();
     if ((unsigned long long) thrRemoved.size() > prof_max_inc)

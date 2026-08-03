@@ -15,6 +15,7 @@
 #include "syzygy.h"
 #include "perft.h"
 #include "nnue_bridge.h"   // nn_acc_stats (diagnostic "accstats" command)
+#include <algorithm>       // std::sort (istogramma accessi, solo TRIUMV_PROFILE)
 #include <thread>
 
 #ifdef CLANG_PGO_GEN
@@ -853,6 +854,34 @@ void uci_loop()
             nn_acc_stats();
         }
 
+#ifdef TRIUMV_PROFILE
+        // "featdump <file>" -> scrive l'istogramma degli accessi per riga di
+        // threatWeights, che alimenta gen_feat_perm.py (permutazione per localita').
+        // ⚠️ I conteggi sono nello spazio degli indici CORRENTE: raccoglierli su un
+        // binario che ha gia' una permutazione non-identita' darebbe una tabella da
+        // COMPORRE con quella, non da usare al suo posto.
+        else if (strncmp(input, "featdump ", 9) == 0)
+        {
+            const char* path = input + 9;
+            FILE*       f    = fopen(path, "w");
+            if (!f)
+                printf("info string featdump: impossibile aprire %s\n", path);
+            else
+            {
+                unsigned long long tot = 0;
+                for (int i = 0; i < PROF_FEAT_N; i++)
+                    if (prof_feat_hist[i])
+                    {
+                        fprintf(f, "%d %llu\n", i, (unsigned long long) prof_feat_hist[i]);
+                        tot += prof_feat_hist[i];
+                    }
+                fclose(f);
+                printf("info string featdump: %s scritto, %llu accessi\n", path, tot);
+            }
+            fflush(stdout);
+        }
+#endif
+
         // M3: incremental NNUE eval toggle (default OFF = M2 full-refresh). The
         // search threads must be idle + re-set; safe to send before a search/bench.
         else if (strncmp(input, "incremental ", 12) == 0)
@@ -980,6 +1009,89 @@ void uci_loop()
                        100.0 * (double)prof_layers / (double)pw, 100.0 * (double)prof_layers / (double)nn);
                 printf("  (fc_0 sotto il 5%% del wall => ft_optimize e' chiuso)\n");
                 // Il divario fra `eval` e il forward: replay specchio + resto del bridge.
+                // --- Concentrazione degli accessi alle righe di threatWeights ---
+                // Decide se la PERMUTAZIONE PER LOCALITA' ha senso. Una riga e' 1024 byte
+                // (int8 x OutputDimensions) => 4 righe per pagina da 4 KB.
+                {
+                    static unsigned long long h[PROF_FEAT_N];
+                    unsigned long long tot = 0;
+                    int used = 0;
+                    for (int i = 0; i < PROF_FEAT_N; i++) {
+                        h[i] = prof_feat_hist[i];
+                        tot += h[i];
+                        if (h[i]) used++;
+                    }
+                    if (tot) {
+                        std::sort(h, h + PROF_FEAT_N,
+                                  [](unsigned long long a, unsigned long long b) { return a > b; });
+                        printf("--- accessi alle righe threatWeights (candidato permutazione) ---\n");
+                        printf("  righe totali %d, TOCCATE %d (%.1f%%), accessi %llu\n",
+                               PROF_FEAT_N, used, 100.0 * used / PROF_FEAT_N, tot);
+                        const double fr[] = {0.01, 0.05, 0.10, 0.25, 0.50};
+                        for (double f : fr) {
+                            int k = (int)(PROF_FEAT_N * f);
+                            unsigned long long c = 0;
+                            for (int i = 0; i < k; i++) c += h[i];
+                            printf("    top %4.0f%% delle righe (%5d) = %5.1f%% degli accessi\n",
+                                   f * 100, k, 100.0 * (double)c / (double)tot);
+                        }
+                        // Quante righe coprono il 90% degli accessi, e quanto spazio
+                        // occuperebbero se fossero CONTIGUE (oggi sono sparse su 63 MB).
+                        unsigned long long acc = 0;
+                        int k90 = 0;
+                        while (k90 < PROF_FEAT_N && acc < tot * 9 / 10) acc += h[k90++];
+                        printf("  il 90%% degli accessi sta in %d righe = %.1f MB se contigue\n",
+                               k90, k90 * 1024.0 / (1024 * 1024));
+                        // Stessa analisi per le righe HalfKA (2048 byte l'una, 46 MB):
+                        // il blocco piu' grosso del transformer, mai guardato.
+                        {
+                            static unsigned long long q[PROF_PSQ_N];
+                            unsigned long long qt = 0;
+                            int qu = 0;
+                            for (int i = 0; i < PROF_PSQ_N; i++) {
+                                q[i] = prof_psq_hist[i];
+                                qt += q[i];
+                                if (q[i]) qu++;
+                            }
+                            if (qt) {
+                                std::sort(q, q + PROF_PSQ_N,
+                                          [](unsigned long long a, unsigned long long b) { return a > b; });
+                                unsigned long long a2 = 0;
+                                int k2 = 0;
+                                while (k2 < PROF_PSQ_N && a2 < qt * 9 / 10) a2 += q[k2++];
+                                printf("--- accessi alle righe HalfKA (2048 B l'una, 46 MB) ---\n");
+                                printf("  righe %d, TOCCATE %d (%.1f%%), accessi %llu\n",
+                                       PROF_PSQ_N, qu, 100.0 * qu / PROF_PSQ_N, qt);
+                                printf("  il 90%% degli accessi sta in %d righe = %.1f MB se contigue\n",
+                                       k2, k2 * 2048.0 / (1024 * 1024));
+                            }
+                        }
+                        // Il calore e' concentrato in POCHE ZONE CONTIGUE o sparso?
+                        // Se e' a zone, la permutazione si fa riassegnando le tabelle
+                        // costanti di make_index => ZERO costo a runtime, niente LUT.
+                        // Granularita' di prova: blocchi da 256 righe (256 KB, 64 pagine).
+                        {
+                            const int BLK = 256, NB = PROF_FEAT_N / BLK + 1;
+                            static unsigned long long b[512];
+                            for (int i = 0; i < NB && i < 512; i++) b[i] = 0;
+                            for (int i = 0; i < PROF_FEAT_N; i++)
+                                if (i / BLK < 512) b[i / BLK] += prof_feat_hist[i];
+                            int nb = NB < 512 ? NB : 512;
+                            std::sort(b, b + nb,
+                                      [](unsigned long long x, unsigned long long y) { return x > y; });
+                            unsigned long long c = 0;
+                            int kb = 0;
+                            while (kb < nb && c < tot * 9 / 10) c += b[kb++];
+                            printf("  a blocchi da %d righe: il 90%% degli accessi sta in %d/%d blocchi\n",
+                                   BLK, kb, nb);
+                            printf("    => %s\n", kb <= nb / 8
+                                   ? "CONCENTRATO a zone: permutazione a BLOCCHI, costo runtime ZERO"
+                                   : "SPARSO dentro i blocchi: serve la permutazione per riga (LUT)");
+                        }
+                        printf("  (oggi quelle righe sono sparse su %.1f MB = %d pagine da 4 KB)\n",
+                               PROF_FEAT_N * 1024.0 / (1024 * 1024), PROF_FEAT_N / 4);
+                    }
+                }
                 printf("  catch-up specchio: %5.1f%% del wall  (replay mosse + diff threat)\n",
                        100.0 * (double)prof_catchup / (double)pw);
                 printf("  bridge/cache/scal: %5.1f%% del wall  (eval - forward - catch-up)\n",
