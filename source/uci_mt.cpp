@@ -876,7 +876,18 @@ void uci_loop()
                         tot += prof_feat_hist[i];
                     }
                 fclose(f);
-                printf("info string featdump: %s scritto, %llu accessi\n", path, tot);
+                // Istogramma HalfKA nello stesso giro, su <path>.psq
+                char p2[1024];
+                snprintf(p2, sizeof(p2), "%s.psq", path);
+                FILE* g = fopen(p2, "w");
+                if (g)
+                {
+                    for (int i = 0; i < PROF_PSQ_N; i++)
+                        if (prof_psq_hist[i])
+                            fprintf(g, "%d %llu\n", i, (unsigned long long) prof_psq_hist[i]);
+                    fclose(g);
+                }
+                printf("info string featdump: %s scritto, %llu accessi (+ %s)\n", path, tot, p2);
             }
             fflush(stdout);
         }

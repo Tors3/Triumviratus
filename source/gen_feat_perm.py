@@ -19,6 +19,7 @@ import argparse, sys
 
 FEAT_ROWS = 64464
 PERM_SIZE = 66560
+PSQ_ROWS  = 22528
 OUT = r"C:\Users\franc\source\repos\Triumviratus_3.0\Triumviratus_7\nnue\nnue\features\feat_perm.cpp"
 
 ap = argparse.ArgumentParser()
@@ -53,6 +54,25 @@ else:
             f"il 90% degli accessi entra nelle prime {3358} righe "
             f"({100.0*hot/tot:.1f}% verificato)")
 
+# --- permutazione HalfKA (nessuna feature morta: indici sempre validi) ---
+psq_hist = (args.hist + ".psq") if args.hist else None
+try:
+    pc = [0] * PSQ_ROWS
+    with open(psq_hist) as f:
+        for line in f:
+            a = line.split()
+            if len(a) == 2 and 0 <= int(a[0]) < PSQ_ROWS:
+                pc[int(a[0])] = int(a[1])
+    porder = sorted(range(PSQ_ROWS), key=lambda i: (-pc[i], i))
+    psq = [0] * PSQ_ROWS
+    for nr, orow in enumerate(porder):
+        psq[orow] = nr
+    psq_note = f"da istogramma: {sum(1 for c in pc if c)} righe HalfKA toccate su {PSQ_ROWS}"
+except Exception:
+    psq = list(range(PSQ_ROWS))
+    psq_note = "IDENTITA' (nessun istogramma HalfKA)"
+assert sorted(psq) == list(range(PSQ_ROWS)), "PsqPerm non e' una permutazione!"
+
 full = perm + [FEAT_ROWS] * (PERM_SIZE - FEAT_ROWS)
 assert len(full) == PERM_SIZE
 assert sorted(perm) == list(range(FEAT_ROWS)), "non e' una permutazione!"
@@ -62,7 +82,8 @@ with open(args.out, "w", encoding="utf-8") as f:
     f.write(f"// {note}\n")
     f.write("// Vedi feat_perm.h per il perche' e per la trappola degli indici morti.\n\n")
     f.write('#include "feat_perm.h"\n\n')
-    f.write('#include "full_threats.h"\n#include "pawn_pair.h"\n#include "passed_pawns.h"\n\n')
+    f.write('#include "full_threats.h"\n#include "pawn_pair.h"\n#include "passed_pawns.h"\n'
+            '#include "half_ka_v2_hm.h"\n\n')
     f.write("namespace Triumviratus::Eval::NNUE::Features {\n\n")
     f.write("// Se questo assert salta, la tabella dei pesi ha cambiato taglia e la\n"
             "// permutazione va rigenerata: usarla com'e' darebbe righe sbagliate IN SILENZIO.\n")
@@ -73,6 +94,19 @@ with open(args.out, "w", encoding="utf-8") as f:
     f.write("const unsigned short FeatPerm[FeatPermSize] = {\n")
     for i in range(0, PERM_SIZE, 16):
         f.write("    " + ",".join(str(v) for v in full[i:i + 16]) + ",\n")
+    f.write("};\n#endif\n\n")
+
+    # --- PsqPerm: stessa idea sulle righe HalfKA (22.528 x 2048 byte = 46 MB) ---
+    # Nessuna feature morta qui: gli indici HalfKA sono sempre validi, quindi la
+    # tabella e' esattamente PsqRows voci e non serve coda sentinella.
+    f.write("// Se questo assert salta, il blocco HalfKA ha cambiato taglia.\n")
+    f.write('static_assert(HalfKAv2_hm::Dimensions == PsqRows,\n'
+            '              "PsqRows non combacia con HalfKAv2_hm");\n\n')
+    f.write("#ifdef TRIUMV_PSQ_PERM_ON\n")
+    f.write(f"// {psq_note}\n")
+    f.write("const unsigned short PsqPerm[PsqRows] = {\n")
+    for i in range(0, PSQ_ROWS, 16):
+        f.write("    " + ",".join(str(v) for v in psq[i:i + 16]) + ",\n")
     f.write("};\n#endif\n\n}  // namespace\n")
 
-print(f"scritto {args.out}\n  {note}")
+print(f"scritto {args.out}\n  threat: {note}\n  halfka: {psq_note}")

@@ -471,6 +471,42 @@ the first valid row of the folded PawnPair segment; under a permutation those de
 would have landed on real rows. Relocated to `FeatRows` with a sentinel tail in the table, so
 the filter stays a single branchless read.</sub>
 
+### The same permutation on HalfKA — rejected, and it explains the first one
+
+HalfKA looked like the better candidate. It is the largest block of the transformer (22,528
+rows of 2048 bytes = 46 MB) and, instrumented, it is *more* concentrated than the threat
+table: **90% of accesses fall in 910 rows = 1.78 MB**, with the top 1% (225 rows, 0.44 MB)
+carrying 59%.
+
+Permuting it measured **−1.15% NPS**: B ahead in 32/150 and 29/150 positions (21.3% and
+19.3%), z ≈ 7 in both samples. Not noise — a clear loss.
+
+The reason is the useful part:
+
+```
+make_index = (s ^ OrientTBL[ksq] ^ flip) + PieceSquareIndex[pc] + KingBuckets[ksq]
+```
+
+For a fixed piece and king, the 64 squares are **64 consecutive rows** — 128 KB contiguous.
+A refresh walks the pieces and touches contiguous blocks: sequential access, which the
+hardware prefetcher already serves perfectly. **HalfKA is laid out optimally by
+construction**, and permuting by frequency destroys that structure, replacing sequential
+accesses with scattered ones.
+
+The threat table has no such property: its index is `base(attacker, attacked) + offsets(from)
++ lut2(to)`, and consecutive rows have nothing to do with each other. There was no structure
+to break, which is why compacting pays there and only there.
+
+> Before permuting anything, the question is not only *how concentrated* the accesses are but
+> *how they are already laid out*. If the hot indices are contiguous by construction, a
+> frequency permutation can only make things worse.
+
+<sub>Kept behind an explicit opt-in as a documented baseline. If it is ever revisited: it is
+not compatible with the ICL target, where HalfKA indices come from the vectorised
+`write_indices` and never pass through `make_index` — permuting the weights without permuting
+those indices would produce wrong evaluations silently, with no crash and no reliably
+different bench.</sub>
+
 ### NPS work, cumulative — +4.80% against the 31 July build
 
 Four independent changes, each verified with identical node counts on PGO binaries: refresh cache

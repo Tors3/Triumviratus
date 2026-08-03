@@ -182,6 +182,32 @@ class FeatureTransformer {
         }
         std::memcpy(threatWeights.data(), tmpW->data(), sizeof(*tmpW));
         std::memcpy(threatPsqtWeights.data(), tmpP->data(), sizeof(*tmpP));
+
+#ifdef TRIUMV_PSQ_PERM_ON
+        // Stessa cosa sulle righe HalfKA: 22.528 righe da 2048 byte = 46 MB, il blocco
+        // piu' grosso del transformer. 90% degli accessi in 1.452 righe = 2,8 MB.
+        // 🔴 Anche qui ENTRAMBE le tabelle: `weights` e `psqtWeights`.
+        {
+            auto tW = std::make_unique<
+              std::array<WeightType, PSQFeatureSet::Dimensions * HalfDimensions>>();
+            auto tP = std::make_unique<
+              std::array<PSQTWeightType, PSQFeatureSet::Dimensions * PSQTBuckets>>();
+            for (IndexType oldRow = 0; oldRow < PSQFeatureSet::Dimensions; ++oldRow)
+            {
+                const IndexType newRow = Features::PsqPerm[oldRow];
+                const IndexType src    = inverse ? newRow : oldRow;
+                const IndexType dst    = inverse ? oldRow : newRow;
+                std::memcpy(tW->data() + usize(dst) * HalfDimensions,
+                            weights.data() + usize(src) * HalfDimensions,
+                            HalfDimensions * sizeof(WeightType));
+                std::memcpy(tP->data() + usize(dst) * PSQTBuckets,
+                            psqtWeights.data() + usize(src) * PSQTBuckets,
+                            PSQTBuckets * sizeof(PSQTWeightType));
+            }
+            std::memcpy(weights.data(), tW->data(), sizeof(*tW));
+            std::memcpy(psqtWeights.data(), tP->data(), sizeof(*tP));
+        }
+#endif
     }
 #endif
 

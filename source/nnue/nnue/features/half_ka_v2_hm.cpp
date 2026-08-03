@@ -20,6 +20,8 @@
 
 #include "half_ka_v2_hm.h"
 
+#include "feat_perm.h"
+
 #include "../../types.h"
 #include "../nnue_common.h"
 
@@ -89,8 +91,12 @@ void HalfKAv2_hm::write_indices(const std::array<Piece, SQUARE_NB>& oldPieces,
 
 IndexType HalfKAv2_hm::make_index(Color perspective, Square s, Piece pc, Square ksq) {
     const IndexType flip = 56 * perspective;
-    return (IndexType(s) ^ OrientTBL[ksq] ^ flip) + PieceSquareIndex[perspective][pc]
-         + KingBuckets[int(ksq) ^ flip];
+    // Unico punto in cui nascono gli indici HalfKA del percorso scalare: refresh,
+    // incrementale, cache di refresh e hybrid passano tutti da qui. `psq_row`
+    // rimappa alla riga permutata per localita' (vedi feat_perm.h); e' l'identita'
+    // sul target ICL, dove `write_indices` produce gli indici in modo vettoriale.
+    return psq_row((IndexType(s) ^ OrientTBL[ksq] ^ flip) + PieceSquareIndex[perspective][pc]
+                   + KingBuckets[int(ksq) ^ flip]);
 }
 
 // Get a list of indices for recently changed features

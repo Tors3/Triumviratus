@@ -55,6 +55,45 @@ inline IndexType feat_row(IndexType raw) { return FeatPerm[raw]; }
 inline IndexType feat_row(IndexType raw) { return raw < FeatRows ? raw : FeatRows; }
 #endif
 
+// ---------------------------------------------------------------------------
+// ⛔ STESSA IDEA SU HalfKA: PROVATA E RIGETTATA il 3/08/2026. **-1,15% NPS**,
+// B avanti in 32/150 e 29/150 posizioni (21,3% e 19,3%), z ~ 7 in ENTRAMBI i
+// campioni. Non e' rumore: e' un peggioramento netto.
+//
+// 🔑 PERCHE', ed e' la lezione che spiega anche perche' sui threat FUNZIONA.
+// L'istogramma diceva che HalfKA e' anche piu' concentrato dei threat (90% degli
+// accessi in 910 righe = 1,78 MB su 46 MB). Sembrava il candidato migliore. Ma
+// guardare la CONCENTRAZIONE non basta: conta come sono DISPOSTE le righe calde.
+//     make_index = (s ^ OrientTBL[ksq] ^ flip) + PieceSquareIndex[pc] + KingBuckets[ksq]
+// A pezzo e re fissi, le 64 CASE sono 64 righe CONSECUTIVE (128 KB contigui). Un
+// refresh percorre i pezzi e tocca blocchi contigui: accesso sequenziale, che il
+// prefetcher hardware serve benissimo da solo.
+// ⇒ **HalfKA e' gia' disposto in modo ottimale per costruzione.** Permutare per
+// frequenza DISTRUGGE quella struttura e sostituisce accessi sequenziali con
+// accessi sparsi.
+// I threat non hanno niente di simile: l'indice e' base(attaccante,attaccato) +
+// offsets(from) + lut2(to), e righe consecutive non hanno alcun rapporto fra loro.
+// Li' non c'era struttura da rompere, e compattare paga (+1,5-2%).
+//
+// ⇒ REGOLA: prima di permutare, chiedersi non solo *quanto e' concentrato* ma
+// *com'e' gia' disposto*. Se gli indici caldi sono gia' contigui per costruzione,
+// una permutazione per frequenza puo' solo peggiorare.
+//
+// Il codice resta, dietro opt-in esplicito, come baseline documentata.
+inline constexpr IndexType PsqRows = 22528;
+
+// ⚠️ Se un giorno si riattiva: NON e' compatibile con il target ICL. Li' gli indici
+// HalfKA li produce `write_indices` in forma vettoriale, che non passa da
+// make_index — permutare i pesi senza permutare QUEGLI indici darebbe valutazioni
+// sbagliate in silenzio, senza crash e senza bench diverso in modo affidabile.
+#if defined(TRIUMV_PSQ_PERM) && !defined(USE_AVX512ICL)
+    #define TRIUMV_PSQ_PERM_ON 1
+extern const unsigned short PsqPerm[PsqRows];
+inline IndexType psq_row(IndexType raw) { return PsqPerm[raw]; }
+#else
+inline IndexType psq_row(IndexType raw) { return raw; }
+#endif
+
 }  // namespace Triumviratus::Eval::NNUE::Features
 
 #endif  // NNUE_FEATURES_FEAT_PERM_INCLUDED
