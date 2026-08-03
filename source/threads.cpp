@@ -39,7 +39,7 @@ unsigned long long prof_ft = 0, prof_fc0 = 0, prof_layers = 0;
 unsigned long long prof_catchup = 0;
 unsigned long long prof_feat_hist[PROF_FEAT_N] = {};
 unsigned long long prof_psq_hist[PROF_PSQ_N]   = {};
-unsigned*          prof_cooc                   = nullptr;
+unsigned short*    prof_cooc                   = nullptr;
 unsigned long long prof_acc_inc = 0, prof_acc_refresh = 0, prof_ft_out = 0;
 unsigned long long prof_n_inc = 0, prof_n_refresh = 0, prof_n_eval = 0;
 unsigned long long prof_n_cols = 0, prof_n_upd = 0;
@@ -1054,6 +1054,10 @@ int g_singular_tmargin =
 // (small-int, calibrated step).
 int g_negext_tt = 2;  // NegExtTT (SF=3): -extension when ttMove fails high over
                       // beta; 0=off, 1=legacy
+// CutNodeProp: propaga il tipo di nodo al primo figlio (`!is_cut_node` sui non-PV,
+// come SF) invece di passare sempre `false`. Spin 0/1 e non `check`: il gestore
+// generico fa `atoi`, quindi una `check` nuova non si accenderebbe mai.
+int g_cutnode_prop = 0;
 int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
                       // fail-high); 0=legacy/off
 static bool g_corrval_margin =
@@ -2243,6 +2247,10 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "NegExtCut")) {
     g_negext_cut = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "CutNodeProp")) {
+    g_cutnode_prop = value != 0;
     return true;
   }
   if (!strcmp(name, "CorrValMargin")) {
@@ -6326,11 +6334,42 @@ static inline int16_t *td_cont_corr_bucket(ThreadData &td) {
 // Correction (cp) to add to the raw static eval for this position. Sums the
 // pawn table with the minor/major material tables when CorrHistMulti is on,
 // then clamps the TOTAL correction to g_corr_cap.
+// ⛔ CACHE DEGLI INDICI minor/major: PROVATA E RIGETTATA il 4/08/2026.
+// **56/150 posizioni (37,3%), z = 3,02, p = 0,0025** = significativamente NEGATIVA
+// (PGO avx2, Hash 256, nodi identici, bench 207259).
+//
+// L'ipotesi era buona sulla carta: ogni indice costa una scansione di 4 bitboard e
+// coi default (CorrHistMulti ON, CorrUncert ON) venivano ricalcolati fino a 6 volte
+// per nodo — 2 in td_corr_value, 2 in td_corr_uncert due righe dopo, 2 all'uscita.
+// 🔑 Ma le 4 bitboard sono 32 byte SEMPRE IN L1 e il ciclo e' un pop_lsb prevedibile:
+// la scansione costa meno del confronto sulla chiave piu' i due campi extra in
+// ThreadData, che allargano una struttura gia' calda. E fra un nodo e l'altro la
+// hash_key cambia sempre, quindi la prima chiamata di ogni nodo e' comunque un miss.
+// Stessa lezione del prefetch PSQT: dove il dato e' gia' vicino, aggiungere un
+// meccanismo per raggiungerlo piu' in fretta toglie invece di dare.
+// Tenuta dietro opt-in come baseline documentata.
+static inline void td_corr_mm(ThreadData &td, int &mi, int &ma) {
+#ifdef TRIUMV_CORR_CACHE
+  if (td.corr_mm_key != td.hash_key) {
+    td.corr_mm_key   = td.hash_key;
+    td.corr_mm_minor = td_corr_index_minor(td);
+    td.corr_mm_major = td_corr_index_major(td);
+  }
+  mi = td.corr_mm_minor;
+  ma = td.corr_mm_major;
+#else
+  mi = td_corr_index_minor(td);
+  ma = td_corr_index_major(td);
+#endif
+}
+
 static inline int td_corr_value(ThreadData &td, int idx) {
   int sum = td.corr_hist[td.side][idx];
   if (g_corr_multi) {
-    sum += td.corr_hist_minor[td.side][td_corr_index_minor(td)];
-    sum += td.corr_hist_major[td.side][td_corr_index_major(td)];
+    int mi, ma;
+    td_corr_mm(td, mi, ma);
+    sum += td.corr_hist_minor[td.side][mi];
+    sum += td.corr_hist_major[td.side][ma];
   }
   if (g_corr_nonpawn) {
     sum += g_corr_np_weight *
@@ -6359,8 +6398,10 @@ static inline int td_corr_value(ThreadData &td, int idx) {
 // Chiamata solo con g_corr_uncert on (paga 2 indici extra minor/major).
 static inline int td_corr_uncert(ThreadData &td, int idx) {
   int p = td.corr_hist[td.side][idx];
-  int mi = td.corr_hist_minor[td.side][td_corr_index_minor(td)];
-  int ma = td.corr_hist_major[td.side][td_corr_index_major(td)];
+  int im, ja;
+  td_corr_mm(td, im, ja);  // hit: td_corr_value l'ha appena calcolata
+  int mi = td.corr_hist_minor[td.side][im];
+  int ma = td.corr_hist_major[td.side][ja];
   int d1 = p - mi;
   if (d1 < 0)
     d1 = -d1;
@@ -6433,10 +6474,10 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
   int lim = g_corr_cap * CORR_GRAIN; // clamp stored value to the cap
   td_corr_bucket_update(td.corr_hist[td.side][idx], target, w, lim);
   if (g_corr_multi) {
-    td_corr_bucket_update(td.corr_hist_minor[td.side][td_corr_index_minor(td)],
-                          target, w, lim);
-    td_corr_bucket_update(td.corr_hist_major[td.side][td_corr_index_major(td)],
-                          target, w, lim);
+    int mi, ma;
+    td_corr_mm(td, mi, ma);  // stessa posizione di td_corr_value all'ingresso nodo
+    td_corr_bucket_update(td.corr_hist_minor[td.side][mi], target, w, lim);
+    td_corr_bucket_update(td.corr_hist_major[td.side][ma], target, w, lim);
   }
   if (g_corr_nonpawn) {
     td_corr_bucket_update(
@@ -7841,7 +7882,30 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     int postlmr_bonus =
         0; // F-018.1: esito della re-search post-LMR (applicato dopo l'unmake)
     if (moves_searched == 0) {
-      score = -td_negamax(td, -beta, -alpha, depth - 1 + extension, false, 0,
+      // 🔴 CutNodeProp (4/08/2026). Qui si passava `false` INCONDIZIONATAMENTE al
+      // primo figlio. Stockfish, per il primo figlio di un nodo NON-PV, passa
+      // `!cutNode` (Step 18: `search<NonPV>(..., !cutNode)`); solo sulla PV passa
+      // `false` (`search<PV>(..., false)`).
+      //
+      // `false` e' GIUSTO quando il nodo e' CUT, ed e' SBAGLIATO quando e' ALL — e i
+      // nodi ALL sono i figli di ogni null move, di ogni probcut e di ogni re-search
+      // a profondita' piena. L'etichetta sbagliata si propaga lungo tutta la spina
+      // sinistra del sotto-albero non-PV.
+      //
+      // Cosa consuma `is_cut_node` e cosa si perde col mislabel:
+      //   :8004  r += g_lmrf_cut (+g_lmrf_cut_nott)  -> fino a 3,6 ply di riduzione
+      //          (5,9 senza TT move). E' il coefficiente PIU' GRANDE di LMRFine.
+      //   :8062  scaling ALL-node applicato dove non va
+      //   :7716  si perde l'estensione negativa g_negext_cut sulla ttMove
+      //   :6686  TTCutRefine rifiuta un cutoff TT valido (is_cut_node != tt_fh)
+      //
+      // ⚠️ Default 0 = comportamento storico. TUTTI i coefficienti LMRF* sono stati
+      // tarati da SPSA CON questo difetto presente: se il fix da solo non rende, non
+      // significa che sia sbagliato, significa che quei coefficienti lo avevano
+      // assorbito e serve il co-tune del blocco (re-basin, non cancellazione secca).
+      const bool child_cut =
+        g_cutnode_prop && !pv_node ? !is_cut_node : false;
+      score = -td_negamax(td, -beta, -alpha, depth - 1 + extension, child_cut, 0,
                           child_follow);
     } else {
       int reduction = 0;

@@ -190,6 +190,16 @@ struct ThreadData {
     int corr_hist_major[2][1 << 14];
     int corr_hist_material[2][1 << 14]; // SF #5556: keyed by material key (piece counts)
 
+    // Cache per-posizione degli indici minor/major. Ricavarli costa una SCANSIONE
+    // di 4 bitboard l'uno (td_corr_index_pieces), e con i default attuali
+    // (CorrHistMulti ON, CorrUncert ON) venivano ricalcolati fino a 6 volte per
+    // nodo: 2 in td_corr_value, 2 in td_corr_uncert due righe dopo, 2 all'uscita.
+    // Le chiavi incrementali esistono per pedoni (pawn_key) e non-pedoni (np_key),
+    // ma proprio le due tabelle ACCESE di default sono quelle senza.
+    // La chiave della cache e' hash_key: dentro un nodo la posizione non cambia.
+    U64 corr_mm_key = 0ULL;
+    int corr_mm_minor = 0, corr_mm_major = 0;
+
     // Non-pawn correction PER-LATO (CorrNonPawn, default OFF — port Pawnocchio/SF
     // nonPawnCorrectionHistory): [colore-della-chiave][side-to-move][bucket], chiave
     // = Zobrist dei non-pedoni (re incluso) di QUEL colore. ~256 KB/thread.

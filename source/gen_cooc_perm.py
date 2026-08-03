@@ -25,14 +25,25 @@ from collections import defaultdict
 FEAT_ROWS = 64464
 PERM_SIZE = 66560
 PSQ_ROWS  = 22528
-COOC_N    = 4096
-ROWS_PER_PAGE = 4          # 4096 byte / 1024 byte per riga
+# ⚠️ DEVE combaciare con PROF_COOC_N della build che ha PRODOTTO il dump, non con
+# quella corrente: usare 8192 su un dump raccolto a 4096 tratterebbe meta' delle
+# righe come prive di co-occorrenza e le impacchetterebbe per sola frequenza.
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--hist", required=True, help="istogramma in spazio ORIGINALE (featdump.txt)")
 ap.add_argument("--cooc", required=True, help="coppie in spazio PERMUTATO (*.cooc)")
+# 🔴 GRANULARITA' MAI TARATA. 4 righe = 4 KB = la pagina del TLB, ed e' la scelta
+# ovvia se il collo e' il TLB. Ma il guadagno misurato (+2,44%) e' stato CINQUE volte
+# la previsione fatta dalla frazione di coppie co-locate: segno che il meccanismo
+# potrebbe non essere (solo) il TLB. Il row buffer della DRAM e' 1-2 KB per banco, e
+# raggruppare piu' largo da' al clustering piu' liberta'. Se 16 batte 4, la pagina
+# non era l'unita' giusta.
+ap.add_argument("--rows-per-page", type=int, default=4)
+ap.add_argument("--cooc-n", type=int, default=4096, help="PROF_COOC_N della build che ha prodotto il dump")
 ap.add_argument("--out", default=r"C:\Users\franc\source\repos\Triumviratus_3.0\Triumviratus_7\nnue\nnue\features\feat_perm.cpp")
 args = ap.parse_args()
+ROWS_PER_PAGE = args.rows_per_page
+COOC_N = args.cooc_n
 
 # --- 1. permutazione per frequenza (quella gia' in produzione) -----------------
 counts = [0] * FEAT_ROWS
@@ -116,7 +127,7 @@ def same_page_frac(mapping):
 
 before = same_page_frac(list(range(COOC_N)))
 after  = same_page_frac(cluster_perm)
-note = (f"clustering co-occorrenza su {COOC_N} righe calde, pagine da {ROWS_PER_PAGE} righe: "
+note = (f"clustering co-occorrenza su {COOC_N} righe calde, gruppi da {ROWS_PER_PAGE} righe ({ROWS_PER_PAGE} KB): "
         f"coppie nella stessa pagina {before:.2f}% -> {after:.2f}%")
 print(note)
 

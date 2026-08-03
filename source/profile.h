@@ -44,8 +44,11 @@
   // nessuna delle due e' fra le piu' calde in assoluto.
   // 🔑 Con la permutazione per frequenza gia' attiva, le righe calde SONO le prime:
   // basta raccogliere le coppie fra gli indici < PROF_COOC_N.
-  static constexpr int PROF_COOC_N = 4096;
-  extern unsigned*     prof_cooc;  // PROF_COOC_N^2, allocata al primo uso (64 MB)
+  // 8192 righe calde coprono ~95% degli accessi (4096 ne coprivano ~87%).
+  // Conteggi a 16 bit CON SATURAZIONE: al clustering serve l'ordine relativo dei
+  // vicini, non il valore esatto, e a 32 bit la matrice sarebbe 268 MB invece di 134.
+  static constexpr int PROF_COOC_N = 8192;
+  extern unsigned short* prof_cooc;  // PROF_COOC_N^2, allocata al primo uso
   // Scomposizione del feature transformer (prof_ft), che il primo giro di misure ha
   // rivelato essere il 39,3% del wall e il 91,2% del forward: il collo di bottiglia
   // numero uno del motore. Qui si separa DOVE va quel tempo.

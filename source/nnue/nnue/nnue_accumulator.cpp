@@ -572,7 +572,7 @@ void update_accumulator_incremental(Color                     perspective,
     // e quindi tocca le stesse pagine.
     {
         if (!prof_cooc)
-            prof_cooc = new unsigned[usize(PROF_COOC_N) * PROF_COOC_N]();
+            prof_cooc = new unsigned short[usize(PROF_COOC_N) * PROF_COOC_N]();
         IndexType hot[64];
         int       nh = 0;
         for (int i = 0; i < thrAdded.ssize() && nh < 64; ++i)
@@ -584,8 +584,11 @@ void update_accumulator_incremental(Color                     perspective,
         for (int a = 0; a < nh; ++a)
             for (int b = a + 1; b < nh; ++b)
             {
-                prof_cooc[usize(hot[a]) * PROF_COOC_N + hot[b]]++;
-                prof_cooc[usize(hot[b]) * PROF_COOC_N + hot[a]]++;
+                // saturazione a 16 bit: al clustering serve l'ordine, non il valore
+                auto& x = prof_cooc[usize(hot[a]) * PROF_COOC_N + hot[b]];
+                auto& y = prof_cooc[usize(hot[b]) * PROF_COOC_N + hot[a]];
+                if (x < 65535) x++;
+                if (y < 65535) y++;
             }
     }
     if ((unsigned long long) thrAdded.size() > prof_max_inc)

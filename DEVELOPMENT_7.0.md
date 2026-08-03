@@ -507,6 +507,34 @@ not compatible with the ICL target, where HalfKA indices come from the vectorise
 those indices would produce wrong evaluations silently, with no crash and no reliably
 different bench.</sub>
 
+### Tuning the clustering: what the co-location proxy is not
+
+Three follow-ups, each one build and one 150-position measurement at Hash 256, node counts
+identical throughout:
+
+| change | co-located pairs | NPS |
+|---|---|---|
+| group rows 16 at a time instead of 4 | 6.79% → 18.02% | **−3.7%**, rejected |
+| extend clustering from 4096 to 8192 hot rows | 6.79% → 5.18% | **+3.13%**, 114/150, z = 6.29 |
+| cache the minor/major correction keys per position | — | **−0%**, 56/150, z = 3.02, rejected |
+
+The first two settle the mechanism: 4 rows is 4 KB is one TLB page, and grouping wider optimises
+a metric the hardware does not use. The second row also shows what the co-location fraction is
+worth as a predictor — it said the wider clustering was *worse* and it was the best of the three.
+
+> Every prediction made from that proxy today was wrong, in both directions: +2.44% where "zero
+> to +0.5%" was expected, negative where it promised the largest gain, and the best result where
+> it promised the worst. It measures that the clustering is doing something, not how much that
+> something is worth. A build costs two minutes and a measurement twenty-five; reasoning about
+> the outcome costs more and gets it wrong.
+
+<sub>Same verdict on caching the minor/major correction keys, which looked like a clear defect:
+each key costs a scan of four bitboards and, with the current defaults, they were recomputed up
+to six times per node. But those four bitboards are 32 bytes that never leave L1, and the key
+comparison plus two extra fields in an already-hot thread struct cost more than the scan they
+save. The same shape as the rejected PSQT prefetch — where the data is already close, adding
+machinery to reach it faster takes away rather than gives.</sub>
+
 ### NPS work, cumulative — +4.80% against the 31 July build
 
 Four independent changes, each verified with identical node counts on PGO binaries: refresh cache
