@@ -887,6 +887,30 @@ void uci_loop()
                             fprintf(g, "%d %llu\n", i, (unsigned long long) prof_psq_hist[i]);
                     fclose(g);
                 }
+                // Co-occorrenza sparsa su <path>.cooc: solo le coppie sopra soglia,
+                // altrimenti il file sarebbe da gigabyte.
+                if (prof_cooc)
+                {
+                    char p3[1024];
+                    snprintf(p3, sizeof(p3), "%s.cooc", path);
+                    FILE* h = fopen(p3, "w");
+                    if (h)
+                    {
+                        long long np = 0;
+                        for (int i = 0; i < PROF_COOC_N; i++)
+                            for (int j = i + 1; j < PROF_COOC_N; j++)
+                            {
+                                unsigned c = prof_cooc[(size_t) i * PROF_COOC_N + j];
+                                if (c >= 16)
+                                {
+                                    fprintf(h, "%d %d %u\n", i, j, c);
+                                    np++;
+                                }
+                            }
+                        fclose(h);
+                        printf("info string coocdump: %s, %lld coppie\n", p3, np);
+                    }
+                }
                 printf("info string featdump: %s scritto, %llu accessi (+ %s)\n", path, tot, p2);
             }
             fflush(stdout);

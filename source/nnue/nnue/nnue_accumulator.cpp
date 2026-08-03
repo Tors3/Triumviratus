@@ -567,6 +567,27 @@ void update_accumulator_incremental(Color                     perspective,
     for (int i = 0; i < psqRemoved.ssize(); ++i)
         if (psqRemoved[i] < PROF_PSQ_N)
             prof_psq_hist[psqRemoved[i]]++;
+    // Co-occorrenza: quali righe calde compaiono nello STESSO update. Si guardano
+    // insieme added e removed, perche' l'update le legge tutte nello stesso ciclo
+    // e quindi tocca le stesse pagine.
+    {
+        if (!prof_cooc)
+            prof_cooc = new unsigned[usize(PROF_COOC_N) * PROF_COOC_N]();
+        IndexType hot[64];
+        int       nh = 0;
+        for (int i = 0; i < thrAdded.ssize() && nh < 64; ++i)
+            if (thrAdded[i] < PROF_COOC_N)
+                hot[nh++] = thrAdded[i];
+        for (int i = 0; i < thrRemoved.ssize() && nh < 64; ++i)
+            if (thrRemoved[i] < PROF_COOC_N)
+                hot[nh++] = thrRemoved[i];
+        for (int a = 0; a < nh; ++a)
+            for (int b = a + 1; b < nh; ++b)
+            {
+                prof_cooc[usize(hot[a]) * PROF_COOC_N + hot[b]]++;
+                prof_cooc[usize(hot[b]) * PROF_COOC_N + hot[a]]++;
+            }
+    }
     if ((unsigned long long) thrAdded.size() > prof_max_inc)
         prof_max_inc = thrAdded.size();
     if ((unsigned long long) thrRemoved.size() > prof_max_inc)

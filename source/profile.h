@@ -36,6 +36,16 @@
   // La loro distribuzione di accesso non e' mai stata guardata.
   static constexpr int PROF_PSQ_N = 22528;
   extern unsigned long long prof_psq_hist[PROF_PSQ_N];
+  // Matrice di CO-OCCORRENZA fra le righe calde: quante volte due righe compaiono
+  // nello STESSO update. E' l'obiettivo che l'ordinamento per frequenza non vede:
+  // la frequenza mette davanti le righe piu' usate, ma cio' che conta e' quante
+  // PAGINE tocca un singolo update. Due feature che compaiono sempre insieme
+  // dovrebbero stare nella stessa pagina da 4 KB (= 4 righe da 1024 byte) anche se
+  // nessuna delle due e' fra le piu' calde in assoluto.
+  // 🔑 Con la permutazione per frequenza gia' attiva, le righe calde SONO le prime:
+  // basta raccogliere le coppie fra gli indici < PROF_COOC_N.
+  static constexpr int PROF_COOC_N = 4096;
+  extern unsigned*     prof_cooc;  // PROF_COOC_N^2, allocata al primo uso (64 MB)
   // Scomposizione del feature transformer (prof_ft), che il primo giro di misure ha
   // rivelato essere il 39,3% del wall e il 91,2% del forward: il collo di bottiglia
   // numero uno del motore. Qui si separa DOVE va quel tempo.
