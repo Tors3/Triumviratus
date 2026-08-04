@@ -163,6 +163,42 @@ static inline int tt_eval_redamp(int v, int fifty) {
     fifty = 100;
   return v * (200 - fifty) / 214;
 }
+
+// TTEvalNoDecay (spin 0/1, default 0 = comportamento attuale).
+// undamp e redamp sono l'una l'inversa dell'altra sui REALI, ma su interi
+// TRONCANO ENTRAMBE verso zero: il round-trip perde modulo, sempre nella stessa
+// direzione. E il valore ri-derivato non viene buttato, viene RISCRITTO nella
+// stessa entry (tt.h:423, e anche nel ramo che conserva l'entry profonda,
+// tt.h:398) -> l'output di un ciclo e' l'input del successivo, la contrazione
+// COMPONE.
+// 🔴 QUANTIFICATO (simulazione dell'aritmetica intera): 1,047 unita' perse per
+// rivisita a fifty 0, 1,280 a fifty 50, 1,570 a fifty 100. Una unita' = 0,425 cp
+// (EvalScale 60), un pedone ~235 unita', RFPMargin = 53 unita'/ply.
+// ⚠️ MA a fifty COSTANTE l'attrattore NON e' zero: e' il multiplo di 107
+// sottostante. Un'eval di 500 perde al piu' 107 unita' (~45 cp) e si FERMA. Va a
+// zero solo sotto 107 unita', o quando il fifty cambia fra le rivisite
+// (trasposizioni: la chiave TT non contiene il fifty). Quindi il difetto e' reale
+// ma piu' piccolo di quanto sembri a prima vista: stima onesta +2..+6 Elo.
+static int g_tt_eval_no_decay = 0;
+
+// Valore da mettere in TT allo store. Le QUATTRO guardie replicano ESATTAMENTE
+// la condizione sotto cui raw_eval e' stato derivato da tt_eval; togliendone una
+// il toggle cambierebbe ANCHE altro, e non sapremmo cosa abbiamo misurato:
+//  - raw_eval != none : il ramo lazy-eval in scacco non calcola nessuna eval e
+//    passa `none` apposta, cosi' store_tt CONSERVA l'ext esistente (tt.h:392).
+//  - g_tt_static_eval : se OFF, raw viene da una td_evaluate() FRESCA mentre
+//    tt_eval e' il valore vecchio -> riscriverlo congelerebbe un'eval stantia.
+//  - tt_eval != none  : non abbiamo letto niente dalla TT.
+//  - flag != none     : le entry eval-only di EvalTTWrite hanno formato
+//    UNADJUSTED (si leggono con nn_finalize, non con redamp): scriverle in
+//    un'entry reale sarebbe corruzione di formato.
+static inline int tt_store_eval(int raw_eval, int tt_eval, int tt_flag,
+                                int fifty) {
+  if (g_tt_eval_no_decay && g_tt_static_eval && raw_eval != tt_eval_none &&
+      tt_eval != tt_eval_none && tt_flag != hash_flag_none)
+    return tt_eval;
+  return tt_eval_undamp(raw_eval, fifty);
+}
 // 5.1 LOSSLESS (EvalTTWrite): l'entry eval-only memorizza l'eval SMORZATA + il
 // fifty di store. La si usa SOLO se fifty_store == fifty_now -> il valore e'
 // ESATTAMENTE quello che td_evaluate darebbe (stessa posizione, stesso fifty,
@@ -1058,6 +1094,56 @@ int g_negext_tt = 2;  // NegExtTT (SF=3): -extension when ttMove fails high over
 // come SF) invece di passare sempre `false`. Spin 0/1 e non `check`: il gestore
 // generico fa `atoi`, quindi una `check` nuova non si accenderebbe mai.
 int g_cutnode_prop = 0;
+// LMRNegative: permette alla riduzione LMR di andare negativa (= estendere le mosse
+// molto ben ordinate), come SF/Hobbes. Spin 0/1: il gestore generico fa atoi.
+int g_lmr_negative = 0;
+// PromoQS — MULTIVALORE (il gestore generico fa atoi, quindi spin, mai check).
+//   0 = spento (comportamento storico)
+//   1 = qsearch (tutte e 4 le promozioni) + MovePicker
+//   2 = qsearch, SOLA DONNA                       <- niente MovePicker
+//   3 = qsearch SOLA DONNA + MovePicker con guardia
+//   4 = SOLO MovePicker con guardia (niente qsearch)   -> misurato NO-OP
+//   5 = qsearch sola Donna, ESENTE dal contatore di QSMoveCap
+//   6 = come 5, ma SOLO se la promozione non regala la Donna (SEE >= 0)  <- best
+//
+// 🔴 PERCHE' IL MODO 5. `td_score_move` da' a OGNI promozione SCORE_GOOD_CAPTURE +
+// 50000 = 750.000, cioe' SOPRA TUTTE LE CATTURE. Con QSMoveCap=3 la qsearch cerca
+// tre mosse per nodo: quindi in ogni posizione con un pedone in settima cercavamo
+// **tre promozioni e ZERO catture**. Non stavamo aggiungendo una mossa, stavamo
+// SOSTITUENDO le tre catture migliori. Il modo 5 esenta la promozione dal
+// contatore, cosi' si aggiunge alle tre catture invece di sfrattarle. E' la stessa
+// forma dell'esenzione-ricattura che manca nello stesso punto, e che quando manco'
+// alla QFutility costo' -17 Elo.
+//
+// ⛔ MODO 4 FALSIFICATO: modi 2 e 3 danno nodi IDENTICI (1.834.041) su sei
+// posizioni di promozione a depth 18. `skip_quiets` viene settato DENTRO il move
+// loop, quando lo stage quieto e' gia' passato: non cancella mai una promozione.
+// Il reperto (b) esisteva nel codice ma non nella pratica.
+//
+// 🔴 IL BISECT (bench, 4/08): 0=207259 · 1=242764 (+17,1%) · 2=241596 (+16,6%) ·
+// 3=241596. Cioe': senza il picker il costo RESTA +16,6%, e la quota del picker e'
+// 1.168 nodi = 0,5% della crescita. Anche togliere le tre sottopromozioni vale gli
+// stessi 1.168 nodi. **Tutto il +17% sono le promozioni di Donna in qsearch**:
+// promuovere crea una Donna nuova e la qsearch ne esplora tutte le catture e tutte
+// le riprese, senza profondita' che la fermi. La mia diagnosi iniziale ("il picker
+// e' la voce dominante") era SBAGLIATA, e il bisect l'ha falsificata in due minuti.
+// Il modo 4 tiene la meta' che costa 0,5% e corregge comunque un difetto vero.
+//
+// 🔴 PERCHE' IL MODO 1 HA MISURATO -11,77 SU 502 PARTITE. L'albero cresce del 17%
+// (bench 207259 -> 242764) e 55*log2(1,17) = -12,4 Elo di velocita' persa: il test
+// ha misurato ESATTAMENTE il costo dei nodi in piu'. Non e' che le mosse non
+// servano, e' che il modo di cercarle e' grossolano in due punti:
+//  (a) generiamo TUTTE E QUATTRO le promozioni. Alfiere non serve mai, Torre quasi
+//      mai: tre mosse su quattro sono zavorra, dentro un nodo che ne cerca 3 in
+//      totale (QSMoveCap=3) -> spingono fuori le catture vere.
+//  (b) nel MovePicker, prima skip_quiets saltava l'INTERA generazione; ora
+//      generiamo tutta la lista quieta per buttarla via e tenere le promozioni.
+//      Il costo non e' una mossa in piu': e' una movegen completa dove prima non
+//      ce n'era nessuna. E' quasi certamente la voce dominante del 17%.
+int g_promo_qs = 0;
+// TTCutExact (spin 0/1, default 0): esenta le entry EXACT dalla coerenza cutnode
+// di TTCutRefine. Un'entry EXACT non ha direzione di bound.
+int g_ttcut_exact = 0;
 int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
                       // fail-high); 0=legacy/off
 static bool g_corrval_margin =
@@ -1718,6 +1804,14 @@ static bool g_killer_reset =
 // aggiungere no" (10 patch, 9 bocciate; l'unica vincente +7.98 toglieva la
 // check-extension obsoleta).
 static bool g_countermove = true;
+// QSCapRecap (spin 0/1, default 0 = byte-identico). Oltre il cap di QSMoveCap la
+// RICATTURA sulla casa appena mossa dall'avversario non viene piu' tagliata.
+// Le altre due potature-per-volume dello stesso move loop hanno gia' questa
+// esenzione (BadNoisy, QFutility); QSMoveCap e' la piu' aggressiva delle tre
+// (3 contro 7) ed e' l'unica senza. Sulla QFutility la sua assenza costava
+// -17 Elo. Ortogonale a PromoQS: quello decide chi CONSUMA uno slot, questo
+// decide chi PASSA a slot esauriti.
+int g_qs_cap_recap = 0;
 int g_qs_move_cap =
     3; // #14 cap mosse esaminate in qsearch non-in-check (0=off; Obsidian 3).
        // BAKED 2026-07-25: era 1, cioe' la qsearch cercava UNA sola mossa per
@@ -1869,6 +1963,26 @@ int g_see_cap_margin = 81; // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
 int g_see_quiet_margin = 116; // [3.7 BAKE 98->96; BAKED #1 era 50]
 int g_see_depth = 3; // gate profondita' del SEE pruning (alzare = potare piu'
                      // in profondita'). UCI SEEPruneDepth, tunabile.
+// BadCapSkipAfter (default 1 = byte-identico): quante bad capture SEE-potate
+// servono, IN QUESTO NODO, prima di spegnere l'intero stage MPS_BAD_TACTICAL.
+// Il commento di quello skip dichiara che le bad capture escono in ordine di
+// SEE decrescente: NON e' vero. td_score_move le ordina per SCORE_BAD_CAPTURE +
+// mvv_lva + caphist e MPS_BAD_TACTICAL fa il max su quello score; mvv_lva +
+// caphist non e' monotono nel SEE. Una DxT difesa (mvv alto, SEE ~-400) esce
+// PRIMA di una CxP difesa (mvv basso, SEE ~-220): la prima fa scattare lo skip
+// e si porta via la seconda, che il test avrebbe fatto passare. 0 = skip
+// disattivato (ogni bad capture paga il proprio td_see_at_least); 1 = storico.
+// Vale solo a depth <= g_see_depth. 2 = servono due prove prima di fidarsi.
+// Max 2 e non 3: il blocco vive solo a depth <= g_see_depth (3) e incrementa
+// solo se la bad capture fallisce SEE < -81*depth (a depth 3: -243). Tre
+// fallimenti cosi' nello STESSO nodo praticamente non capitano -> 3 sarebbe un
+// no-op equivalente a 0.
+// ATTENZIONE al costo: a 0 lo stage non si spegne mai, quindi le bad capture che
+// PASSANO il margine dopo un fallimento precedente non vengono solo ri-testate,
+// vengono CERCATE: sono sottoalberi nuovi. E' il meccanismo che dovrebbe portare
+// l'Elo ed e' anche il motivo per cui il segno puo' essere negativo -> node count
+// a 13/17/20 obbligatorio prima dell'SPRT.
+int g_badcap_skip_after = 1;
 // S-05 (2026-07-06, terzo audit): default OFF. Oggi il gate/margine SEE usa la
 // depth PIENA del nodo -> una mossa tardiva/ridotta-LMR a node-depth alto non
 // viene MAI SEE-potata (depth<=3 non scatta mai oltre il ply 3). `prune_depth`
@@ -2193,6 +2307,10 @@ bool set_search_param(const char *name, int value) {
     g_see_cap_margin = value;
     return true;
   }
+  if (!strcmp(name, "BadCapSkipAfter")) {
+    g_badcap_skip_after = value < 0 ? 0 : (value > 2 ? 2 : value);
+    return true;
+  }
   if (!strcmp(name, "SEEQuietMargin")) {
     g_see_quiet_margin = value;
     return true;
@@ -2251,6 +2369,18 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "CutNodeProp")) {
     g_cutnode_prop = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "LMRNegative")) {
+    g_lmr_negative = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "TTCutExact")) {
+    g_ttcut_exact = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "PromoQS")) {
+    g_promo_qs = value < 0 ? 0 : (value > 6 ? 6 : value);
     return true;
   }
   if (!strcmp(name, "CorrValMargin")) {
@@ -2840,6 +2970,10 @@ bool set_search_param(const char *name, int value) {
     g_ttpv_amount = value < 0 ? 0 : (value > 2 ? 2 : value);
     return true;
   }
+  if (!strcmp(name, "TTEvalNoDecay")) {
+    g_tt_eval_no_decay = value != 0;
+    return true;
+  }
   if (!strcmp(name, "ThreatScale")) {
     g_threat_scale = value < 0 ? 0 : value;
     return true;
@@ -3048,6 +3182,10 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "QSMoveCap")) {
     g_qs_move_cap = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "QSCapRecap")) {
+    g_qs_cap_recap = value > 0 ? 1 : 0;
     return true;
   }
   if (!strcmp(name, "QSDrawCheck")) {
@@ -4146,10 +4284,16 @@ static inline U64 td_attackers_to(ThreadData &td, int sq, int by) {
 // grosse) solo per rispondere "no". E si pagava TRE volte per nodo: una nella search, una per
 // lo stage tattico del movepicker e una per lo stage quieto.
 // ⚠️ Passare un valore SBAGLIATO cambia le mosse generate sotto scacco: il gate e' il bench.
+// promo_quiet: genera anche le promozioni QUIETE quando captures_only e' true.
+// 🔴 Serve SOLO alla qsearch. Il MovePicker NON deve passarlo: il suo stage quieto
+// (MPS_GEN_QUIET) le genera gia', e attivarlo anche sullo stage tattico le
+// DUPLICHEREBBE nella main search. Default false = tutti i chiamanti invariati.
 static void td_generate_moves(ThreadData &td, moves *move_list,
                               bool captures_only = false,
                               bool quiets_only   = false,
-                              int  known_in_check = -1) {
+                              int  known_in_check = -1,
+                              bool promo_quiet   = false,
+                              bool promo_queen_only = false) {
   PROF_GUARD(prof_mg);
   move_list->count = 0;
   int source_square, target_square;
@@ -4209,19 +4353,28 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           // Mosse silenziose dei pedoni: bloccate se captures_only   true
           // (P2.3: ogni approdo deve stare in evasion_mask — sotto scacco
           //  solo i blocchi sul raggio sopravvivono, fuori scacco ~0ULL no-op)
-          if (!captures_only) {
+          // 🔴 ECCEZIONE PromoQS: la promozione quieta e' TATTICA per tutto il
+          // resto del motore (score 750.000 in td_score_move, esente da LMP,
+          // futility, history-prune e SEE) ma nasce SOLO qui dentro. Con
+          // captures_only la qsearch non la vedeva mai. Il ramo interno separa
+          // gia' 7a (promozioni) dal resto (spinte normali): entrando solo con
+          // il pedone in 7a, l'else e' irraggiungibile e non si generano quiete.
+          if (!captures_only ||
+              (promo_quiet && source_square >= a7 && source_square <= h7)) {
             if (!(target_square < a8) &&
                 !get_bit(td.occupancies[both], target_square)) {
               if (source_square >= a7 && source_square <= h7) {
                 if ((evasion_mask >> target_square) & 1) {
                   add_move(move_list, encode_move(source_square, target_square,
                                                   piece, Q, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, R, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, B, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, N, 0, 0, 0, 0));
+                  if (!promo_queen_only) {
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, R, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, B, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, N, 0, 0, 0, 0));
+                  }
                 }
               } else {
                 if ((evasion_mask >> target_square) & 1)
@@ -4299,19 +4452,22 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           source_square = get_ls1b_index(bitboard);
           target_square = source_square + 8;
 
-          if (!captures_only) {
+          if (!captures_only ||
+              (promo_quiet && source_square >= a2 && source_square <= h2)) {
             if (!(target_square > h1) &&
                 !get_bit(td.occupancies[both], target_square)) {
               if (source_square >= a2 && source_square <= h2) {
                 if ((evasion_mask >> target_square) & 1) {
                   add_move(move_list, encode_move(source_square, target_square,
                                                   piece, q, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, r, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, b, 0, 0, 0, 0));
-                  add_move(move_list, encode_move(source_square, target_square,
-                                                  piece, n, 0, 0, 0, 0));
+                  if (!promo_queen_only) {
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, r, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, b, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, n, 0, 0, 0, 0));
+                  }
                 }
               } else {
                 if ((evasion_mask >> target_square) & 1)
@@ -5595,9 +5751,34 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     [[fallthrough]];
 
   case MPS_GEN_QUIET:
+    // 🔴 PromoQS: skip_quiets saltava l'INTERO stage, e le promozioni non-cattura
+    // nascono proprio qui. Ma la search le esenta da OGNI potatura quiet
+    // (is_quiet = !is_capture && !is_promotion, :7445), quindi cancellarle con lo
+    // skip contraddice l'intenzione dichiarata del codice. Con PromoQS lo stage
+    // viene generato lo stesso e sono le SOLE promozioni a sopravvivere: tutte le
+    // altre quiete restano marcate CONSUMED dal filtro qui sotto.
+    // 🔴 GUARDIA A COSTO QUASI NULLO (modo 3). Nel modo 1 qui si generava l'INTERA
+    // lista quieta per tenerne le sole promozioni: una movegen completa in ogni
+    // nodo dove scatta la futility, che e' quasi certamente la voce dominante del
+    // +17% di albero misurato. Due bitboard e un test: se non c'e' un pedone in
+    // settima con la casa davanti libera, non c'e' NIENTE da salvare e si salta lo
+    // stage come prima. Il modo 2 non entra mai qui.
     if (mp.skip_quiets) {
-      mp.stage = MPS_BAD_TACTICAL;
-      goto bad_tactical;
+      bool keep = false;
+      if (g_promo_qs == 1) {
+        keep = true;  // modo 1: comportamento gia' misurato, lasciato confrontabile
+      } else if (g_promo_qs == 3 || g_promo_qs == 4) {
+        const U64 empty = ~td.occupancies[both];
+        keep = (td.side == white)
+                 ? ((td.bitboards[P] & 0x000000000000FF00ULL) &&
+                    ((td.bitboards[P] & 0x000000000000FF00ULL) >> 8) & empty)
+                 : ((td.bitboards[p] & 0x00FF000000000000ULL) &&
+                    ((td.bitboards[p] & 0x00FF000000000000ULL) << 8) & empty);
+      }
+      if (!keep) {
+        mp.stage = MPS_BAD_TACTICAL;
+        goto bad_tactical;
+      }
     }
     // 2A: quiets_only. Prima era `false` = tutte le pseudo-legali, quindi ogni cattura veniva
     // rigenerata qui dopo essere gia' stata prodotta da MPS_GEN_TACTICAL, e subito buttata
@@ -5612,7 +5793,8 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
       // quiets_only: la lista ora non ne contiene, ma il costo e' nullo e toglierlo
       // renderebbe la funzione dipendente dalla modalita' del chiamante.
       if (get_move_capture(m) || m == mp.tt_move || m == mp.killer0 ||
-          m == mp.killer1 || m == mp.counter)
+          m == mp.killer1 || m == mp.counter ||
+          (mp.skip_quiets && !get_move_promoted(m)))
         mp.q_scores[i] = MP_CONSUMED;
       else
         mp.q_scores[i] = td_score_move(td, m, mp.tt_move);
@@ -6008,7 +6190,11 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
                             !get_move_capture(tt_move) &&
                             !get_move_promoted(tt_move);
   td_generate_moves(td, move_list,
-                    !in_check && !qs_checks_here && !qs_tt_quiets);
+                    !in_check && !qs_checks_here && !qs_tt_quiets,
+                    /*quiets_only=*/false, /*known_in_check=*/-1,
+                    /*promo_quiet=*/(g_promo_qs >= 1 && g_promo_qs <= 3) ||
+                                     g_promo_qs >= 5,
+                    /*promo_queen_only=*/g_promo_qs >= 2);
 
   // Calcola punteggi senza ordinare (selezione pick-next).
   int move_scores[256];
@@ -6016,18 +6202,49 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
 
   int best_move = 0;
   int legal_moves = 0;
+  // Modo 5: le promozioni non consumano uno slot di QSMoveCap. Senza questo,
+  // scoring 750.000 + cap 3 = tre promozioni e zero catture.
+  int qs_cap_count = 0;
   int qcaptures =
       0; // catture ESAMINATE a questo nodo (per BadNoisy move-count pruning)
   int q_searched_caps[8]; // Q-17 QSCaptHist: catture cercate legalmente (cap 8,
                           // come Caissa)
   int nq_caps = 0;
+  // QSCapRecap: casa d'arrivo dell'ultima mossa avversaria, cercata fra le mosse
+  // RIMASTE. -2 = non ancora calcolata, -1 = nessuna ricattura residua (si esce
+  // col break di sempre). Calcolata UNA volta sola e SOLO a cap gia' pieno:
+  // senza, il loop scandirebbe tutta la lista col pick-next (selection sort) per
+  // non cercare niente = O(n^2) su ogni nodo a cap pieno.
+  int qcr_sq = -2;
 
   for (int count = 0; count < move_list->count; count++) {
 
     // F-018.14 QSMoveCap (0=off): le mosse sono ordinate best-first -> oltre le
     // prime N (non in scacco) il resto e' quasi sempre inutile (Obsidian: 3).
-    if (g_qs_move_cap && !in_check && legal_moves >= g_qs_move_cap)
-      break;
+    // Il contatore resta quello di PromoQS (qs_cap_count nel modo >= 5, dove le
+    // promozioni non consumano slot): QSCapRecap non lo tocca, filtra soltanto
+    // COSA passa dopo che il cap e' stato raggiunto.
+    const bool qs_over_cap =
+        g_qs_move_cap && !in_check &&
+        (g_promo_qs >= 5 ? qs_cap_count : legal_moves) >= g_qs_move_cap;
+    if (qs_over_cap) {
+      if (!g_qs_cap_recap)
+        break;
+      if (qcr_sq == -2) {
+        int qcr_prev = td.move_stack[td.ply];
+        qcr_sq = -1;
+        if (qcr_prev) {
+          int ps = get_move_target(qcr_prev);
+          for (int i = count; i < move_list->count; i++)
+            if (get_move_target(move_list->moves[i]) == ps) {
+              qcr_sq = ps;
+              break;
+            }
+        }
+      }
+      if (qcr_sq < 0)
+        break;
+    }
 
     // --- INIZIO PICK-NEXT: Cerca la mossa migliore tra quelle rimaste ---
     int best_idx = count;
@@ -6052,8 +6269,26 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     int move = move_list->moves[count];
     // --- FINE PICK-NEXT ---
 
+    // QSCapRecap: a cap esaurito sopravvive SOLO la ricattura sulla casa appena
+    // mossa dall'avversario (qcr_sq, dallo stesso td.move_stack[td.ply] che
+    // usano BadNoisy e QFutility). Non serve testare get_move_capture: quella
+    // casa ospita il pezzo avversario appena arrivato. Il filtro sta DOPO il
+    // pick-next, cosi' fra piu' ricatture si sceglie la migliore per score.
+    if (qs_over_cap && get_move_target(move) != qcr_sq)
+      continue;
+
     if (!in_check) {
-      if (!get_move_capture(move)) {
+      // PromoQS: la promozione quieta ha il flag capture a 0, quindi senza questa
+      // esenzione il filtro qui sotto la scarterebbe subito dopo averla generata.
+      // 🔴 Modo 6: e SOLO se non regala la Donna. Promuovere su una casa dove il
+      // pezzo viene ripreso apre un sottoalbero intero (Donna nuova = tutte le sue
+      // catture e tutte le riprese) per una mossa che perde materiale. E' il
+      // filtro che spiega perche' il modo 5 costa +18,9% di albero.
+      if (g_promo_qs == 6 && get_move_promoted(move) &&
+          !get_move_capture(move) && !td_see_at_least(td, move, 0))
+        continue;
+      if (!get_move_capture(move) &&
+          !(g_promo_qs && get_move_promoted(move))) {
         // QSTTQuiets: quando la condizione TT vale, le quiete passano SENZA il
         // filtro "deve dare scacco" — e' la forma di Stormphrax, dove il
         // generatore produce tutte le mosse e a limitare sono l'ordinamento
@@ -6153,6 +6388,8 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     }
 
     legal_moves++;
+    if (!get_move_promoted(move))
+      qs_cap_count++;  // modo 5: la promozione non consuma uno slot del cap
     td.move_stack[td.ply] = move; // mantieni il move-stack in qsearch (serve
                                   // alla recapture-exemption della QFutility)
     if (nq_caps < 8 && get_move_capture(move))
@@ -6231,7 +6468,7 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
 
   int store_flag = (best_score >= beta) ? hash_flag_beta : hash_flag_alpha;
   store_tt(td.hash_key, best_move, best_score, 0, store_flag, td.ply, false,
-           tt_eval_undamp(q_raw_eval, td.fifty));
+           tt_store_eval(q_raw_eval, tt_eval, tt_flag, td.fifty));
 
   return best_score;
 }
@@ -6723,8 +6960,18 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       bool ttcut_ok = true;
       if (g_ttcut_refine) {
         bool tt_fh = tt_score >= beta;
-        ttcut_ok = (!tt_fh || tt_depth >= depth + 1) &&
-                   (is_cut_node == tt_fh) && td.fifty < g_ttcut_fifty;
+        // TTCutExact: la clausola (b) deriva tt_fh dallo SCORE contro beta, non dal
+        // FLAG. Per un'entry EXACT la "direzione del bound" NON ESISTE: lo score e'
+        // il valore VERO del nodo. Ma la clausola la tratta lo stesso, quindi a un
+        // cut-node un EXACT con score < beta ha tt_fh=false, la coerenza fallisce e
+        // il cutoff viene RIFIUTATO: si ricerca da capo un nodo di cui si conosce
+        // gia' il valore esatto a profondita' sufficiente.
+        // A differenza di PromoQS e TTEvalNoDecay questo RESTRINGE l'albero: piu'
+        // cutoff accettati = meno nodi, nessun costo da ripagare.
+        const bool cut_coherent =
+            (g_ttcut_exact && tt_flag == hash_flag_exact) || (is_cut_node == tt_fh);
+        ttcut_ok = (!tt_fh || tt_depth >= depth + 1) && cut_coherent &&
+                   td.fifty < g_ttcut_fifty;
       }
 
       // P1.13 (SF): il cutoff servito dalla TT non passa dal loop mosse ->
@@ -7329,7 +7576,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           // qsearch+verifica.
           if (g_probcut_tt && !excluded_move)
             store_tt(td.hash_key, move, pc_score, pc_depth + 1, hash_flag_beta,
-                     td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
+                     td.ply, store_pv,
+                     tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
           return pc_score; // fail-soft prune
         }
       }
@@ -7381,6 +7629,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
 
   int moves_searched = 0;
   int quiets_searched = 0;
+  int bad_caps_pruned = 0; // BadCapSkipAfter: bad capture SEE-potate a questo nodo
   LmpChkCtx
       lmp_chk; // LMPCheckGuard: check-squares del nodo, riempite alla prima LMP
 
@@ -7617,11 +7866,19 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         if (!stalemate_resource) {
           if (is_quiet)
             quiets_searched++;
-          // Phase-2: if this move came from MPS_BAD_TACTICAL it means every
-          // subsequent bad capture has an equal-or-worse SEE (they are yielded
-          // by descending score). The SEE threshold is the same for all, so we
-          // can skip the entire remaining bad-capture stage.
-          if (use_picker && is_capture && mp.stage == MPS_BAD_TACTICAL)
+          // Phase-2: le bad capture escono in ordine di SCORE decrescente, NON
+          // di SEE decrescente (td_score_move: SCORE_BAD_CAPTURE + mvv_lva +
+          // caphist). "Questa ha fallito -> tutte le prossime falliscono" e'
+          // quindi FALSO: dietro una cattura di vittima grossa e SEE pessimo
+          // puo' esserci una cattura di vittima piccola con SEE migliore, che
+          // questo stesso test avrebbe fatto passare. BadCapSkipAfter = quante
+          // prove servono prima di spegnere lo stage (1 = storico, 0 = mai).
+          // L'ordine dei termini e' load-bearing: senza `g_badcap_skip_after &&`
+          // il valore 0 darebbe `++c >= 0` sempre vero, cioe' il comportamento
+          // PIU' aggressivo travestito da "spento".
+          if (use_picker && is_capture && mp.stage == MPS_BAD_TACTICAL &&
+              g_badcap_skip_after &&
+              ++bad_caps_pruned >= g_badcap_skip_after)
             mp.skip_bad_caps = true;
           continue;
         }
@@ -8153,8 +8410,25 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         if (g_lmr_decisive_beta && beta >= mate_score)
           reduction++;
 
-        if (reduction < 0)
-          reduction = 0;
+        // 🔴 LMRNegative (4/08/2026). Qui la riduzione veniva troncata a 0: la nostra
+        // LMR non puo' MAI estendere. Stockfish e Hobbes permettono r negativa
+        // (`reduced_depth = clamp(new_depth - r, 1, new_depth + 1 + (legal<=3))`),
+        // cioe' cercano PIU' A FONDO le mosse molto ben ordinate.
+        //
+        // Il costo del troncamento non e' solo l'estensione mancata: tutti i termini
+        // "riduci meno" di LMRFine — killer 797, ply 524, corr 866, ttpv, pv, ss —
+        // appena sommano sotto zero finiscono sullo STESSO valore e diventano
+        // indistinguibili fra loro. Sei parametri tarati che sotto quella soglia
+        // fanno tutti esattamente la stessa cosa: niente.
+        //
+        // Default 0 = comportamento storico. Con la riduzione negativa
+        // `reduced_depth > full_depth`, quindi la re-search a profondita' piena viene
+        // saltata dal gate `full_depth > reduced_depth`: corretto, l'abbiamo gia'
+        // cercata piu' a fondo.
+        const int red_floor =
+            g_lmr_negative ? -(1 + (moves_searched <= 3 ? 1 : 0)) : 0;
+        if (reduction < red_floor)
+          reduction = red_floor;
         if (reduction > depth - 2)
           reduction = depth - 2;
       }
@@ -8325,7 +8599,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
               tt_move ? 1 : 2; // SF cutoffCnt: += 1 + !ttMove
           if (!excluded_move)
             store_tt(td.hash_key, move, best_score, depth, hash_flag_beta,
-                     td.ply, store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
+                     td.ply, store_pv,
+                     tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
           td_corr_update(td, corr_idx, static_eval, best_score, hash_flag_beta,
                          depth, in_check, move, excluded_move);
 
@@ -8528,7 +8803,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
                  in_check, best_move, excluded_move);
   if (!excluded_move)
     store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply,
-             store_pv, tt_eval_undamp(node_raw_eval, td.fifty));
+             store_pv,
+             tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
 
   return best_score;
 }

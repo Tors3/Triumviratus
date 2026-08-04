@@ -556,6 +556,8 @@ void uci_loop()
             printf("option name MulticutTTMalusScale type spin default 100 min 0 max 300\n");
             printf("option name MultiCut type check default true\n");
             printf("option name TTPvAmount type spin default 1 min 0 max 2\n");   // ex-PV LMR reduction in ply (0=off); co-tunable
+            printf("option name TTEvalNoDecay type spin default 0 min 0 max 1\n");   // riscrive in TT l'eval ORIGINALE invece del round-trip (che tronca verso zero e COMPONE); 0=off
+            printf("option name TTCutExact type spin default 0 min 0 max 1\n");   // entry EXACT esenti dalla coerenza cutnode di TTCutRefine (un EXACT non ha direzione di bound); 0=off
             printf("option name NMPEvalScale type check default false\n");
             printf("option name RFPDepth8 type check default false\n");
             printf("option name RazorDepth4 type check default false\n");
@@ -563,7 +565,7 @@ void uci_loop()
             printf("option name HistBonusSF type check default true\n");   // BAKED ON: +24 LOS99.99% @810
             printf("option name CaptureHist type check default true\n");   // baked ON, div16+malus-fix (era -21 a div1)
             printf("option name CaptureHistDiv type spin default 21 min 1 max 64\n");   // REVERT 2026-07-23 (SPSA B1 evaporato @4452g)
-            printf("option name NMPEvalDiv type spin default 100 min 50 max 1000\n");
+            printf("option name NMPEvalDiv type spin default 256 min 50 max 1000\n");   // 3/08/2026: DICHIARAVA 100 mentre l'inizializzatore (threads.cpp) e' 256 dal riallineamento a SF 356d7c5c. Inerte finche' NMPEvalScale=false, ma un tuner che legge il default dichiarato partiva da un theta che il motore non ha mai avuto
             printf("option name QFutMargin type spin default 199 min 0 max 500\n");
             printf("option name HistBonusMult type spin default 490 min 1 max 600\n");   // [4.1 BAKE 282->326]
             printf("option name HistBonusSub type spin default 299 min 0 max 400\n");      // [4.1 BAKE 59->35]
@@ -638,6 +640,7 @@ void uci_loop()
             printf("option name KillerReset type check default true\n");                     // #13 azzera killer del ply figlio a ogni nodo (+12.15 Elo)
             printf("option name CounterMove type check default true\n");                      // OFF = via la countermove heuristic (SF l'ha rimossa: PR #5441, 978k partite)
             printf("option name QSMoveCap type spin default 3 min 0 max 16\n");               // #14 cap mosse qsearch non-in-check (0=off, Obsidian 3). BAKED 2026-07-25: era 1 (= qsearch a UNA mossa per nodo), +5.21 +/- 6.47 LOS 94.28% @2868g 15+0.15
+            printf("option name QSCapRecap type spin default 0 min 0 max 1\n");               // esenta la RICATTURA (target == casa dell'ultima mossa avversaria) dal cap di QSMoveCap, come gia' fanno BadNoisy e QFutility. 0 = byte-identico
             printf("option name QSDrawCheck type check default false\n");                     // F-015 draw-detection in qsearch. Bake revertito 2026-07-07 (rumore)
             printf("option name EPKeyFix type check default true\n");                         // F-017 niente phantom-ep nella hash key (fix correttezza, SPRT +4.31 Elo)
             printf("option name HistReductionDiv type spin default 3190 min 500 max 8000\n"); // bakato: 3500->1041
@@ -667,6 +670,7 @@ void uci_loop()
             printf("option name HistPruneMargin type spin default 2097 min 200 max 4000\n");   // [3.7]
             printf("option name SEECaptureMargin type spin default 81 min 20 max 300\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
             printf("option name SEEQuietMargin type spin default 116 min 10 max 400\n");   // [3.7] max alzato per SPSA-cut
+            printf("option name BadCapSkipAfter type spin default 1 min 0 max 2\n");   // bad capture SEE-potate necessarie prima di spegnere lo stage MPS_BAD_TACTICAL. Escono per score (mvv+caphist), NON per SEE -> lo skip alla prima e' scorretto. 0=skip spento, 1=storico/byte-identico
             // Capture futility pruning (SF Step 14, default OFF). Toggle = spin 0/1; cp margins are the SPSA targets, depth gate fixed.
             printf("option name CaptureFutility type spin default 1 min 0 max 1\n");
             printf("option name CapFutBase type spin default 156 min 0 max 500\n");   // REVERT 2026-07-23 (SPSA B1 evaporato)
@@ -685,6 +689,8 @@ void uci_loop()
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
             printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
+            printf("option name LMRNegative type spin default 0 min 0 max 1\n");   // riduzione LMR negativa = estende le mosse ben ordinate (SF/Hobbes); 0=legacy
+            printf("option name PromoQS type spin default 0 min 0 max 6\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
             printf("option name CorrValMargin type spin default 1 min 0 max 1\n");
             printf("option name CorrValRFP type spin default 41 min 0 max 256\n");
             printf("option name CorrValExt type spin default 1 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
@@ -1167,12 +1173,21 @@ void uci_loop()
                          (unsigned long long)prof_max_active, (unsigned long long)prof_max_inc,
                          (prof_max_active >= 260 || prof_max_inc >= 260) ? "<<< VICINO AL BOUND" : "");
                   if (prof_n_eval) {
+                      // 🔴 prof_n_inc conta UNA VOLTA PER PROSPETTIVA: evaluate() chiama
+                      // evaluate_side(WHITE) e evaluate_side(BLACK), ognuna incrementa di 1
+                      // (e il ramo TRIUMV_PERSP_TOGETHER fa +=2 in un colpo solo). Quindi il
+                      // massimo SANO e' 2,00 per eval = uno per prospettiva, non 1,00.
+                      // La soglia di allarme era a 1,2 e si accendeva su qualunque motore
+                      // sano: il 4/08/2026 stampava "update SPRECATI" con 1,83, che invece
+                      // vuol dire che il 91,5% degli slot prospettiva-eval e' andato per la
+                      // via incrementale e il resto per il refresh. Secondo falso allarme di
+                      // questo stesso contatore (il primo: prof_n_eval incrementato due volte).
                       printf("  UPDATE vs EVAL   : %llu update incrementali, %llu valutazioni  "
-                             "=> %.2f update per eval  %s\n",
+                             "=> %.2f update per eval (max sano 2,00 = uno per prospettiva)  %s\n",
                              (unsigned long long) prof_n_inc, (unsigned long long) prof_n_eval,
                              (double) prof_n_inc / (double) prof_n_eval,
-                             prof_n_inc > prof_n_eval * 12 / 10
-                               ? "<<< update SPRECATI (nodi che non valutano)"
+                             prof_n_inc > prof_n_eval * 24 / 10
+                               ? "<<< SOPRA 2 PER PROSPETTIVA: update davvero sprecati"
                                : "");
                   }
                   if (prof_n_refresh_calls) {

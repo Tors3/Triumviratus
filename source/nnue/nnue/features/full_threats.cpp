@@ -356,4 +356,61 @@ void FullThreats::append_changed_indices(Color                   perspective,
     }
 }
 
+// Porting completo di SF 7b550409 — vedi il commento in full_threats.h per la
+// differenza voluta rispetto alla loro forma (niente alternanza delle scritture).
+void FullThreats::append_changed_indices_both(Square                  ksqW,
+                                              Square                  ksqB,
+                                              const DiffType&         diff,
+                                              IndexList&              removedW,
+                                              IndexList&              addedW,
+                                              IndexList&              removedB,
+                                              IndexList&              addedB,
+                                              const ThreatWeightType* prefetchBase,
+                                              IndexType               prefetchStride) {
+
+    for (const auto& dirty : diff.list)
+    {
+        // Decodifica UNA volta sola: e' l'unica cosa condivisibile fra le due
+        // prospettive, piu' il fatto che `dirty` si legge una volta invece di due
+        // a distanza di un intero aggiornamento di accumulatore.
+        const auto attacker = dirty.pc();
+        const auto attacked = dirty.threatened_pc();
+        const auto from     = dirty.pc_sq();
+        const auto to       = dirty.threatened_sq();
+        const bool add      = dirty.add();
+
+        const IndexType iW = feat_row(make_index(WHITE, attacker, from, to, attacked, ksqW));
+        const IndexType iB = feat_row(make_index(BLACK, attacker, from, to, attacked, ksqB));
+
+#ifdef TRIUMV_PROFILE
+        // Due tuple viste (una per prospettiva), come nel percorso a prospettiva
+        // singola chiamato due volte: i contatori restano confrontabili.
+        prof_n_thr_seen += 2;
+        if (iW >= FeatRows)
+        {
+            prof_n_thr_dead++;
+            prof_dead_pair[type_of(attacker)][type_of(attacked)]++;
+        }
+        if (iB >= FeatRows)
+        {
+            prof_n_thr_dead++;
+            prof_dead_pair[type_of(attacker)][type_of(attacked)]++;
+        }
+#endif
+        // UNA linea per riga, come nel percorso singolo: le altre 15 sono
+        // sequenziali dentro la riga e le prende lo streamer L2 (il prefetch dei 4
+        // tile aveva misurato −5,92%).
+        if (prefetchBase)
+        {
+            prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
+              reinterpret_cast<uintptr_t>(prefetchBase) + iW * prefetchStride));
+            prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
+              reinterpret_cast<uintptr_t>(prefetchBase) + iB * prefetchStride));
+        }
+
+        (add ? addedW : removedW).push_back_if_lt(iW, FeatRows);
+        (add ? addedB : removedB).push_back_if_lt(iB, FeatRows);
+    }
+}
+
 }  // namespace Triumviratus::Eval::NNUE::Features

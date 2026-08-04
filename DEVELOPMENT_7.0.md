@@ -553,6 +553,36 @@ positions the mailbox measured 35/60 (p ≈ 0.12) and was written off as noise; 
 read +0.64% on a plain -O3 build. Sixty positions were enough for a +3.5% effect and are not
 enough for +2%.</sub>
 
+### Updating both perspectives in one pass — +1.45% NPS
+
+A threat diff entry packs five bitfields: attacker, attacked piece, from-square, to-square, and the
+add/remove flag. The accumulator used to walk that list **twice**, once per perspective, with a full
+accumulator update in between — so every entry was decoded twice and, worse, was long evicted by the
+time the second pass read it.
+
+`append_changed_indices_both` walks it once, decodes each entry once, and feeds both perspectives'
+index lists. `make_index` still runs per perspective and cannot be shared: orientation, piece swap
+and the king square all differ between white and black.
+
+<sub>This is a deliberate departure from Stockfish's `7b550409`, which alternates the two
+perspectives at every transition of the chain. That form was ported first and measured **−0.70%**
+here: alternating keeps two 2 KB accumulators live while ~21 KB of weight columns are streamed, and
+on a memory-bound path the locality of the large structure outweighs the locality of the dirty list.
+Sharing only the dirty-list pass, and keeping the wide writes sequential — all of white, then all of
+black — takes the gain without the cost.</sub>
+
+> **+1.45% NPS**, three independent 150-position samples at depth 19, Hash 256, PGO AVX2:
+> 86/150 (+1.44%), 78/150 (+1.49%), 86/150 (+1.41%). Pooled **250/450 = 55.6%**, sign test
+> z = 2.36, p = 0.018. Node counts identical in all three samples, and `bench 207259` with the
+> path on and off.
+
+<sub>The three medians agree to within 0.08 percentage points even though the host's clock swung
+12% between runs (aggregate NPS on the A side: 687k, 612k, 640k — the laptop was on battery). That
+is what the paired-interleaved design is for, and it is the reason the result survives a noisy host:
+A and B alternate position by position, so a clock step hits both sides equally. It also needed the
+full 450 positions — at 150 each sample sat at p ≈ 0.09, exactly as the sample-size rule predicts
+for a 1.5% effect.</sub>
+
 ### Build targets: `avx512` no longer requires VBMI2
 
 "AVX-512" is a family, not a switch. Skylake-X, Cascade Lake and Cooper Lake have F/BW/DQ/VL

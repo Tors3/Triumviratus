@@ -44,6 +44,15 @@ void update_accumulator_incremental(Color                     perspective,
                                     AccumulatorState&         target_state,
                                     const AccumulatorState&   computed);
 
+#ifndef TRIUMV_NO_PERSP_BOTH
+template<bool Forward>
+void update_accumulator_incremental_both(const FeatureTransformer& featureTransformer,
+                                         const Square              ksqW,
+                                         const Square              ksqB,
+                                         AccumulatorState&         target_state,
+                                         const AccumulatorState&   computed);
+#endif
+
 void update_accumulator_refresh_cache(Color                     perspective,
                                       const FeatureTransformer& featureTransformer,
                                       const Position&           pos,
@@ -132,6 +141,47 @@ void AccumulatorStack::evaluate(const Position&           pos,
                     update_accumulator_incremental<true>(WHITE, featureTransformer, ksqW,
                                                          accumulators[next], accumulators[next - 1]);
                 if (next > lastB)
+                    update_accumulator_incremental<true>(BLACK, featureTransformer, ksqB,
+                                                         accumulators[next], accumulators[next - 1]);
+            }
+            return;
+        }
+    }
+#endif
+
+#ifndef TRIUMV_NO_PERSP_BOTH
+    // Porting COMPLETO di SF 7b550409 (vedi update_accumulator_incremental_both).
+    // Si entra solo se ENTRAMBE le prospettive hanno un'ancora calcolata: allora la
+    // catena si percorre una volta sola e la dirty list si legge una volta per
+    // transizione invece di due.
+    {
+        const auto lastW = find_last_usable_accumulator(WHITE);
+        const auto lastB = find_last_usable_accumulator(BLACK);
+
+        if (accumulators[lastW].computed[WHITE] && accumulators[lastB].computed[BLACK])
+        {
+#ifdef TRIUMV_PROFILE
+            prof_n_inc += 2;
+#endif
+            PROF_GUARD(prof_acc_inc);
+            const Square ksqW  = pos.square<KING>(WHITE);
+            const Square ksqB  = pos.square<KING>(BLACK);
+            const usize  start = lastW < lastB ? lastW : lastB;
+
+            for (usize next = start + 1; next < size; next++)
+            {
+                // Le due ancore possono stare a profondita' DIVERSE: la passata
+                // condivisa vale solo dove entrambe le prospettive devono ancora
+                // essere aggiornate. Sulle transizioni disallineate si ricade sul
+                // percorso a prospettiva singola, che e' esattamente il codice di
+                // sempre.
+                if (next > lastW && next > lastB)
+                    update_accumulator_incremental_both<true>(
+                      featureTransformer, ksqW, ksqB, accumulators[next], accumulators[next - 1]);
+                else if (next > lastW)
+                    update_accumulator_incremental<true>(WHITE, featureTransformer, ksqW,
+                                                         accumulators[next], accumulators[next - 1]);
+                else if (next > lastB)
                     update_accumulator_incremental<true>(BLACK, featureTransformer, ksqB,
                                                          accumulators[next], accumulators[next - 1]);
             }
@@ -602,6 +652,86 @@ void update_accumulator_incremental(Color                     perspective,
 
     target_state.computed[perspective] = true;
 }
+
+#ifndef TRIUMV_NO_PERSP_BOTH
+// Porting COMPLETO di SF 7b550409, nella nostra variante: una sola passata sulla
+// dirty list dei threat produce le liste di ENTRAMBE le prospettive (i bitfield si
+// decodificano una volta sola), ma le APPLICAZIONI restano sequenziali — tutto il
+// bianco, poi tutto il nero. La forma di Stockfish alterna le prospettive a ogni
+// transizione e da noi era costata -0,70% il 3/08: alternare tiene vivi due
+// accumulatori da 2 KB mentre si streammano ~21 KB di colonne.
+//
+// 🔴 EQUIVALENZA FUNZIONALE: le liste prodotte qui sono le stesse, nello stesso
+// ordine, di due chiamate separate a update_accumulator_incremental. L'unica cosa
+// che cambia e' QUANTE volte si legge `dirty`. Il bench DEVE restare 207259.
+template<bool Forward>
+void update_accumulator_incremental_both(const FeatureTransformer& featureTransformer,
+                                         const Square              ksqW,
+                                         const Square              ksqB,
+                                         AccumulatorState&         target_state,
+                                         const AccumulatorState&   computed) {
+
+    assert(computed.computed[WHITE] && computed.computed[BLACK]);
+    assert(!target_state.computed[WHITE] && !target_state.computed[BLACK]);
+
+    PSQFeatureSet::IndexList    psqRemW, psqAddW, psqRemB, psqAddB;
+    ThreatFeatureSet::IndexList thrRemW, thrAddW, thrRemB, thrAddB;
+
+    const auto& dirtyPiece   = Forward ? target_state.dirtyPiece : computed.dirtyPiece;
+    const auto& dirtyThreats = Forward ? target_state.dirtyThreats : computed.dirtyThreats;
+    const auto& dirtyPawns   = Forward ? target_state.dirtyPawns : computed.dirtyPawns;
+
+    const auto* pfBase   = &featureTransformer.threatWeights[0];
+    IndexType   pfStride = FeatureTransformer::OutputDimensions;
+
+    // Nel ramo all'indietro added/removed si scambiano, esattamente come nel
+    // percorso a prospettiva singola.
+    auto& remW = Forward ? thrRemW : thrAddW;
+    auto& addW = Forward ? thrAddW : thrRemW;
+    auto& remB = Forward ? thrRemB : thrAddB;
+    auto& addB = Forward ? thrAddB : thrRemB;
+
+    if constexpr (Forward)
+    {
+        PSQFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPiece, psqRemW, psqAddW);
+        PSQFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPiece, psqRemB, psqAddB);
+    }
+    else
+    {
+        PSQFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPiece, psqAddW, psqRemW);
+        PSQFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPiece, psqAddB, psqRemB);
+    }
+#ifndef TRIUMV_NO_PF_PSQ
+    prefetch_psq_rows(featureTransformer, psqRemW, psqAddW);
+    prefetch_psq_rows(featureTransformer, psqRemB, psqAddB);
+#endif
+
+    // LA PASSATA CONDIVISA: un giro solo su diff.list per tutte e quattro le liste.
+    ThreatFeatureSet::append_changed_indices_both(ksqW, ksqB, dirtyThreats, remW, addW, remB, addB,
+                                                  pfBase, pfStride);
+
+    // PawnPair/PassedPawns: indici folded, entrano nelle stesse liste threat.
+    PawnFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPawns, remW, addW);
+    PawnFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPawns, remB, addB);
+    PassedFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPawns, remW, addW);
+    PassedFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPawns, remB, addB);
+
+#ifdef TRIUMV_PROFILE
+    prof_n_cols += psqAddW.size() + psqRemW.size() + thrAddW.size() + thrRemW.size()
+                 + psqAddB.size() + psqRemB.size() + thrAddB.size() + thrRemB.size();
+    prof_n_upd += 2;
+#endif
+
+    // Applicazioni SEQUENZIALI: e' la differenza voluta da Stockfish.
+    apply_combined(WHITE, featureTransformer, computed, target_state, psqAddW, psqRemW, thrAddW,
+                   thrRemW);
+    apply_combined(BLACK, featureTransformer, computed, target_state, psqAddB, psqRemB, thrAddB,
+                   thrRemB);
+
+    target_state.computed[WHITE] = true;
+    target_state.computed[BLACK] = true;
+}
+#endif  // !TRIUMV_NO_PERSP_BOTH
 
 Bitboard get_changed_pieces(const std::array<Piece, SQUARE_NB>& oldPieces,
                             const std::array<Piece, SQUARE_NB>& newPieces) {

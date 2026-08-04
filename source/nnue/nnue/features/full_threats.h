@@ -89,6 +89,29 @@ class FullThreats {
                                        IndexList&              added,
                                        const ThreatWeightType* prefetchBase   = nullptr,
                                        IndexType               prefetchStride = 0);
+
+    // Porting COMPLETO di Stockfish 7b550409 "Update NNUE perspectives together".
+    // Una sola passata su `diff.list`: i bitfield (pc, threatened_pc, pc_sq,
+    // threatened_sq, add) si decodificano UNA volta e alimentano le liste di
+    // ENTRAMBE le prospettive. `make_index` resta per prospettiva e non e'
+    // condivisibile — orientamento, swap dei pezzi e ksq sono tutti diversi.
+    //
+    // 🔑 DIFFERENZA VOLUTA DA STOCKFISH. Loro ALTERNANO le prospettive a ogni
+    // transizione della catena; noi abbiamo misurato quella forma il 3/08/2026 e
+    // costava **−0,70%**, perche' alternare tiene vivi DUE accumulatori (2 KB
+    // l'uno) invece di uno mentre si streammano ~21 KB di colonne. Qui si
+    // condivide solo la passata sulla dirty list, che e' l'unica parte che
+    // guadagna, e le scritture grosse restano sequenziali: prima tutto il bianco,
+    // poi tutto il nero.
+    static void append_changed_indices_both(Square                  ksqW,
+                                            Square                  ksqB,
+                                            const DiffType&         diff,
+                                            IndexList&              removedW,
+                                            IndexList&              addedW,
+                                            IndexList&              removedB,
+                                            IndexList&              addedB,
+                                            const ThreatWeightType* prefetchBase   = nullptr,
+                                            IndexType               prefetchStride = 0);
 };
 
 }  // namespace Triumviratus::Eval::NNUE::Features
