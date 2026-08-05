@@ -321,10 +321,14 @@
   </ItemDefinitionGroup>
   <!-- Build con clang-cl (VS LLVM 19): MSBuild ... -p:PlatformToolset=ClangCL.
        Flag per-feature di clang (MSVC li ignora: gruppo condizionato al toolset).
-       /arch:AVX512 di clang NON abilita VNNI/BMI2 -> li aggiungo qui per gli intrinsics. -->
+       /arch:AVX512 di clang NON abilita VNNI/BMI2 -> li aggiungo qui per gli intrinsics.
+       🔴 $(ClangArchFlags) sta IN FONDO apposta: le -m di clang si sovrascrivono in
+       ordine, e l'ultima vince. I target che DISABILITANO una feature (avx2 spegne
+       gli avx512, avx2-nopext spegne anche bmi2) devono passare da qui: messe in
+       ClangPgoFlags finirebbero PRIMA delle -m qui sotto e verrebbero annullate. -->
   <ItemDefinitionGroup Condition="'$(PlatformToolset)'=='ClangCL'">
     <ClCompile>
-      <AdditionalOptions>-O3 -flto=thin $(ClangPgoFlags) -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni -mbmi2 -mavx2 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-O3 -flto=thin $(ClangPgoFlags) -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni -mbmi2 -mavx2 $(ClangArchFlags) %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <!-- runtime di profiling clang (per -fprofile-generate/-use); lld-link cerca clang_rt.profile.lib.

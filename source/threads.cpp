@@ -1140,7 +1140,9 @@ int g_lmr_negative = 0;
 //      generiamo tutta la lista quieta per buttarla via e tenere le promozioni.
 //      Il costo non e' una mossa in piu': e' una movegen completa dove prima non
 //      ce n'era nessuna. E' quasi certamente la voce dominante del 17%.
-int g_promo_qs = 0;
+// 🔴 BAKED ON = 6 il 5/08/2026: +8,38 ± 6,67 su 2572 partite @25+0.25, LOS 99,31%,
+// LLR 1,53. ⚠️ Questo cambia la FIRMA del motore: bench 207259 -> 225898.
+int g_promo_qs = 6;
 // TTCutExact (spin 0/1, default 0): esenta le entry EXACT dalla coerenza cutnode
 // di TTCutRefine. Un'entry EXACT non ha direzione di bound.
 int g_ttcut_exact = 0;

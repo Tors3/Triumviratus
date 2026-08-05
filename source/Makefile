@@ -4,13 +4,16 @@
 #  (es. generazione self-play su GCP). Le differenze OS sono #ifdef-guardate.
 #
 #  USO:
-#    make              -> build AVX2 + BMI2 (sicura su quasi ogni x86-64 moderna)
+#    make              -> build AVX2 + BMI2/PEXT (Intel, AMD Zen3+)
+#    make clean nopext -> build AVX2 SENZA pext  (AMD Zen1/Zen2: OBBLIGATORIA, vedi sotto)
 #    make clean avx512 -> build AVX512 + VNNI (Intel n2/c3, AMD Zen4 c3d) = piu' veloce
 #    make CXX=clang++  -> usa clang invece di g++
 #    make clean
 #
-#  ⚠️ L'engine usa _pext_u64 SEMPRE (magic.cpp) -> serve BMI2. Su AMD Zen2
-#     (istanze n2d/c2d) PEXT e' lento: preferisci Intel (n2/c3) o AMD Zen4 (c3d).
+#  ⚠️ PEXT (`make` liscia) e' 3 cicli su Intel e Zen3+, ma **microcodato ~18 cicli su
+#     AMD Zen1/Zen2**: li' va usato `nopext` (o NOPEXT=1), che passa al fallback
+#     fancy-magics + dual-hyperbola-quintessence. Misurato +21,4% NPS sulla VM Zen2
+#     (EPYC 7B12). Le due build sono node-identical: stessi attacchi, stesso bench.
 #  ⚠️ Cambiando arch (avx2<->avx512) fai prima `make clean` (gli .o non si
 #     ricompilano da soli al cambio di flag).
 #  ⚠️ Le reti .nnue NON sono embedded (-DNNUE_EMBEDDING_OFF): vanno messe
@@ -67,6 +70,16 @@ ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
   DEFS += -DUSE_AVX512 -DUSE_VNNI -DUSE_AVX512ICL
   ARCH += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni \
           -mavx512vbmi -mavx512vbmi2 -mavx512bitalg
+endif
+
+# `make nopext` (equivalente: NOPEXT=1, che propaga anche ai target PGO ricorsivi):
+# toglie USE_PEXT/-mbmi2 -> magic.cpp usa il fallback fancy-magics e nnue/attacks.h
+# il percorso DUAL_HYPERBOLA_QUINT (AVX2). Stessi attacchi = node-identical: la firma
+# bench NON deve cambiare. Obbligatoria su AMD Zen1/Zen2 (pext microcodato).
+ifneq (,$(filter nopext,$(MAKECMDGOALS))$(NOPEXT))
+  DEFS := $(filter-out -DUSE_PEXT,$(DEFS))
+  ARCH := $(filter-out -mbmi2,$(ARCH))
+  $(info [i] build senza PEXT (fancy-magics + dual hyperbola quintessence))
 endif
 
 # `make profile` abilita i cycle-counter per-fase (eval/movegen/make/tt/score) nel
@@ -151,11 +164,18 @@ ifeq (use,$(PGO_PHASE))
           -Wno-profile-instr-out-of-date -Wno-profile-instr-unprofiled
 endif
 
-CXXFLAGS ?= -std=c++17 $(OPT) -w $(DEFS) $(ARCH) -pthread -I. -Ifathom
+# EXTRACXXFLAGS: flag/define extra dalla riga di comando, es.
+#   make EXTRACXXFLAGS=-UUSE_PEXT        (equivalente a `make nopext`)
+#   make EXTRACXXFLAGS=-DTRIUMV_NO_PAWN_CACHE   (baseline A/B di una misura)
+# Va in FONDO alle flag: un -U/-D qui vince su quelli di DEFS.
+# 🔴 Prima del 5/08/2026 questa variabile NON esisteva e setup_spsa_vm.sh la passava
+#    comunque: il -UUSE_PEXT delle VM Zen2 veniva ignorato IN SILENZIO.
+CXXFLAGS ?= -std=c++17 $(OPT) -w $(DEFS) $(ARCH) $(EXTRACXXFLAGS) -pthread -I. -Ifathom
 CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 
 all: $(EXE)
 avx512: $(EXE)
+nopext: $(EXE)
 profile: $(EXE)
 release: $(EXE)
 android: $(EXE)
@@ -204,4 +224,4 @@ endif
 	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)"
 
-.PHONY: all avx512 profile release android android-dotprod clean pgo-avx512 pgo-avx2
+.PHONY: all avx512 nopext profile release android android-dotprod clean pgo-avx512 pgo-avx2

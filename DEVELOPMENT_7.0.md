@@ -202,13 +202,67 @@ Node-identity verified at three levels: bench unchanged, **139,146,249 nodes ide
 searches at depth 15, and identical again across a different compiler and instruction set
 (clang/Linux/AVX2 against clang-cl/Windows/AVX512).
 
-**Measured effect: +0.43% for change 1, nothing for 2 and 3** — paired interleaved A/B, 60 positions
-at depth 18, three PGO binaries built from the same recipe. About +0.4 Elo.
+Effect measured at the time with the old harness, and withdrawn: change 1 was reported as a small
+gain, changes 2 and 3 as nothing. All three are strictly less work and remain in the engine.
 
 <sub>Worth recording, since it sets expectations for further work of this kind: generating one extra
 capture is a `pop_lsb`, a test, an encode and a store. On an out-of-order core with the data in L1
 that hides in the shadow of the memory-bound network evaluation, which is ~58% of node time. The
 move generator was not the bottleneck, and micro-optimising it does not become one.</sub>
+
+### Quiet promotions in qsearch — +8.38 Elo
+
+The first change in 7.0 that moves playing strength rather than speed, and the only one that
+survived a two-day campaign in which five other candidates measured zero.
+
+**The defect.** Quiet promotions were generated only inside `if (!captures_only)` — that is, in the
+quiet buffer. Qsearch passes `captures_only = true`, so it **never saw them**. Meanwhile the engine
+declares those same moves tactical in two separate places: they score 750,000 in `td_score_move`,
+and they are exempt from LMP, futility, history and SEE pruning in the move loop. A move the search
+treats as tactical everywhere else was being generated as a quiet one, and therefore dropped
+exactly where tactics are resolved. Hobbes (#9 CCRL) generates them as `Noisies`: excluding them is
+not a universal choice.
+
+**Six variants, separated by the bench.** The first implementation lost 11.77 Elo. The node counts
+say why, and they cost zero games — two minutes per variant:
+
+| mode | nodes | vs off | what it does |
+|---|---|---|---|
+| 0 | 207,259 | — | off |
+| 1 | 242,764 | +17.1% | all four promotions — with `QSMoveCap=3` they **evict** every capture |
+| 2 | 241,596 | +16.6% | queen only (under-promotions were worth 1,168 nodes, 0.5%) |
+| 4 | 207,259 | 0.0% | move-picker half only — a measured **no-op** |
+| 5 | 246,329 | +18.9% | queen exempt from the `QSMoveCap` counter |
+| **6** | **225,898** | **+9.0%** | 5, and only if the queen is not given away (SEE ≥ 0) |
+
+Mode 1 is arithmetic, not bad luck: `55·log₂(1.171)` = −12.2 Elo of nodes, measured −11.77. It paid
+exactly for the nodes it added and bought nothing, because with a cap of three the new promotions
+displaced the captures instead of joining them.
+
+Mode 6 fixes both halves. Exempting the promotion from the counter stops the eviction; the SEE
+filter stops it opening a whole new subtree — a new queen generates all her captures and all the
+recaptures — for a move that loses material. That filter alone halves the cost, from +18.9% to
++9.0%.
+
+> **+8.38 ± 6.67** over 2,572 games at 25+0.25, LOS 99.31%, LLR 1.53 — 1 thread, 128 MB hash,
+> UHO_4060_v4, dev build with all 383 options announced.
+
+> [!WARNING]
+> **The engine signature changes with this bake: `bench` goes from 207,259 to 225,898.** Any
+> procedure that checks 207,259 as proof of identity is now checking against the wrong constant.
+
+<sub>Two diagnoses were falsified by the bench bisect within minutes, and both were mine. "The
+move-picker half is the dominant cost" — it is a no-op: `skip_quiets` is set *inside* the move loop,
+by which point the quiet stage has already passed, so it never cancels a promotion. "The
+under-promotions are expensive" — they are 0.5%. The real cost was the new queen in qsearch, which
+opens a subtree with no depth limit. Node counts do not predict Elo, but they do decompose a cost,
+and they do it without playing a single game.</sub>
+
+<sub>The other lesson is about giving up too early. Mode 1 measured −11.77 at 12+0.12 and the idea
+looked dead. Between mode 1 and mode 6 there are **20 Elo** at the same underlying idea, and the
+regime mattered as much as the variant: the node cost is proportional and does not change with the
+time control, while the value of the information grows with depth. The same code reads −11.77 at
+12+0.12 and +8.38 at 25+0.25.</sub>
 
 ### Where the time actually goes
 
@@ -239,7 +293,34 @@ Second, and more useful: the accumulator update is **memory-bound, not compute-b
 table — 1330 cycles measured against ~337 if the data were in cache. Vector instructions are not
 the constraint; they are waiting.
 
-### Dead threat tuples — +3.54% NPS
+### The per-change NPS figures below are withdrawn
+
+Every NPS figure in the sections that follow was produced by a paired-interleaved harness that ran
+the two binaries in a fixed A-then-B order on each position. The design assumed that drift between
+two adjacent searches, under a second apart, was negligible. It is not. Whichever binary occupies
+the second slot inherits the machine's thermal drift, in whichever direction that drift happens to
+be going.
+
+The harness was eventually run against itself — same binary, same options, both sides, no
+difference of any kind — and reported **135 of 150 positions won, z = 9.72** on a host still
+cooling from a build, and a comparable effect with the opposite sign on a cold host warming up. A
+tool that manufactures a nine-sigma result from nothing cannot certify a one-percent one.
+
+It now alternates the order within each pair, excludes exact ties from the sign test, refuses to
+run when a requested option is not announced by the engine, and reports the A-first and B-first
+sub-samples separately as a built-in drift check. Against itself it now returns z = 0.06 with the
+two sub-samples agreeing to a hundredth of a percent, on two different machines.
+
+Re-measured with the repaired harness, on two independent PGO builds per arm and with a null
+control run alongside: several of the changes below hold up but at a fraction of their published
+value, at least one is a loss and has been removed from the binary, and their sum is not additive —
+they compete for the same memory bottleneck, so gains that add on paper cancel in practice.
+
+The individual figures are therefore withheld rather than restated. What will be published is a
+single end-to-end measurement of the finished engine, taken with the repaired harness and its
+control.
+
+### Dead threat tuples
 
 When the threat feature set dropped pawn→pawn relations and pushes (60,720 → 59,808 inputs), the
 refresh path was updated to match but the incremental path was not. It kept generating those
@@ -247,18 +328,17 @@ tuples: each one took a slot in the dirty list, went through index computation a
 was then discarded by the bounds filter. **12.6% of every threat tuple the engine produced was
 thrown away** — 178,975 of 1,416,458 in a bench run. Now 3.8%.
 
-> **+3.54% NPS**, measured paired-interleaved over 40 book positions at depth 19, faster in 28 of
-> them, with node counts identical on both sides (31,135,764). About +2.8 Elo.
+> Figure withdrawn — see the note above. The change itself is unchanged and still in the engine.
 
-<sub>Two notes on method. The gain is **+1.68% on AVX-512 and +3.54% on AVX2** — the AVX2 path
-tiles the accumulator in 8 passes rather than 2, so removing work upstream is worth more there.
-Since rating lists compile AVX2, that is the number that counts, and profiling on AVX-512 would
-have understated it by half. And a companion change — rewriting the `PawnPair` refresh from an
-O(n²) double loop to the precomputed file band its own incremental path already used — measured
-**−0.10%: nothing**. Both results point the same way: on a memory-bound path, removing instructions
-does not pay, removing memory traffic does.</sub>
+<sub>One note on method that survives the withdrawal: the gain was consistently larger on AVX2
+than on AVX-512, because the AVX2 path tiles the accumulator in 8 passes rather than 2, so removing
+work upstream is worth more there. Rating lists compile AVX2, so profiling on AVX-512 understates
+this class of change. A companion rewrite of the `PawnPair` refresh — from an O(n²) double loop to
+the precomputed file band its own incremental path already used — measured as nothing, which points
+the same way: on a memory-bound path, removing instructions does not pay, removing memory traffic
+does.</sub>
 
-### Pawn-block refresh cache — +1.37% NPS
+### Pawn-block refresh cache
 
 The finny table covers only `HalfKAv2_hm`: 22,528 of 86,992 inputs. The other three blocks — the
 other 74% of the feature space — were rebuilt from scratch on every full refresh, which is 8% of
@@ -272,10 +352,9 @@ keyed on the full pawn bitboards rather than a hash, so a collision is impossibl
 A hit skips both the enumeration and the sparse column reads, replacing them with one contiguous
 2 KB load.
 
-> **+1.37% NPS on AVX2**, paired-interleaved over 60 positions at depth 19, faster in 40 of them
-> (sign test p ≈ 0.009), node counts identical. About +1.1 Elo.
-> On AVX-512 the same patch measured **−0.11%** and is compiled out there: the wider tiles leave
-> less to gain and the extra vector array costs more. Rating lists build AVX2.
+> Figure withdrawn — see the note above. The cache is kept on AVX2 and compiled out on AVX-512,
+> where it measured slightly negative: the wider tiles leave less to gain and the extra vector array
+> costs more. Rating lists build AVX2.
 
 <sub>The bug worth recording is what it took to get there. Caching the feature-transformer vector
 alone left the bench at 262,736 instead of 207,259, and three plausible theories about the key were
@@ -321,7 +400,7 @@ alarming and is not: rating lists show ~40 Elo from 1 to 4 CPU, in line with com
 NPS is wrong in the other direction, counting duplicated nodes as progress. For multithreading the
 only honest metric is Elo in games.</sub>
 
-### Mailbox — +2.13% NPS
+### Mailbox
 
 `ThreadData` carried only bitboards, so finding *which* piece stands on a square meant scanning up
 to six of them with as many unpredictable branches. That loop existed twice: in `td_score_move`,
@@ -330,20 +409,19 @@ for the victim of every capture scored, and in `td_make_move`, for the captured 
 `td_occ_update` is called — make-forward, illegal-move rollback, unmake — which is what makes the
 coverage structural rather than a matter of remembering every branch.
 
-> **+2.13% NPS**, paired-interleaved over 150 positions at depth 19, faster in 102 of them
-> (sign test p ≈ 7e-6), node counts identical. About +1.7 Elo.
+> Figure withdrawn — see the note above. The change itself is unchanged and still in the engine.
 
 <sub>Two method notes, both from getting it wrong first. The engine's `perft` uses the **global**
 `make_move` and never reaches `td_make_move`, so it could not have validated this: a desynchronised
 mailbox gives no crash and no changed bench signature, only move ordering that is occasionally
 wrong. A `-DTRIUMV_MAILBOX_VERIFY` build compares mailbox against bitboards square by square at all
 three sites and aborts on the first mismatch; a full bench passes clean, castling and en passant
-and promotions included. And the first two measurements both said "noise" — +0.64% at 32/60 on a
-non-PGO build, +1.19% at 35/60 on PGO. Only 150 positions resolved it. Sixty positions were enough
-for the +3.54% of the dead threat tuples and are not enough for +2%: the sample has to be sized to
-the effect being looked for, or a real gain gets discarded as noise.</sub>
+and promotions included. And the first two measurements both said "noise" — on a
+non-PGO build and again on PGO. Only a larger sample separated it from zero: the sample has to be
+sized to the effect being looked for, or a real gain gets discarded as noise. That lesson stands
+even though the figures that taught it do not.</sub>
 
-### Hybrid accumulator update — +2.13% NPS
+### Hybrid accumulator update
 
 `HalfKAv2_hm::requires_refresh` returns true for **every** move of one's own king, so every king
 move costs a full refresh. For HalfKA that is cheap — the finny table covers it — but threats,
@@ -364,16 +442,15 @@ diffs against the pre-move position rebuilt from the dirty-piece record. Gated o
 pieces (below that, rebuilding the few active features is cheaper than recovering the previous
 HalfKA) and on non-castling moves.
 
-> **+2.13% NPS**, paired-interleaved over 150 positions at depth 19, faster in 104 of them
-> (sign test p ≈ 1.6e-6), node counts identical. About +1.7 Elo.
+> Figure withdrawn — see the note above. The change itself is unchanged and still in the engine.
 
-<sub>Worth noting against the source: the same patch is worth +0.60% in Stockfish and **more than
-three times that** here, because our refresh is a larger share of the wall (8.0%) and threats are
+<sub>Worth noting against the source: the patch is reported as a small gain in Stockfish and was
+measured larger here, because our refresh is a bigger share of the wall (8.0%) and threats are
 59.6% of its columns. It also composes with the pawn-block refresh cache above rather than
 replacing it — that one covers the remaining 40.4%, and still applies when the hybrid path cannot
 (king crossing the centre, castling, few pieces, previous accumulator not computed).</sub>
 
-### Prefetch the HalfKA weight rows — +1.3% NPS
+### Prefetch the HalfKA weight rows — removed
 
 The incremental accumulator update reads about 10.5 weight rows per call, at random offsets in a
 table of roughly 110 MB: it is latency-bound, not arithmetic-bound. Threat rows were already
@@ -385,12 +462,19 @@ The prefetch only pays if something covers the latency, so the PSQ index list is
 **before** the threat lists — the lists are disjoint, so the order is functionally irrelevant —
 and the whole threat-list construction sits between the prefetch and its use.
 
-> **+1.3% NPS**, two independent 150-position samples: 89/150 with median +0.59% and 105/150 with
-> +1.98% — **194/300 won, z = 5.02, p ≈ 5e-7**, node counts identical in both runs.
+> Figure withdrawn — see the note above. Re-measured with the repaired harness this change reads
+> **negative on two different CPUs**, so the published gain is almost certainly the wrong sign. It is
+> left enabled for now: the re-measurements are not yet internally consistent (removing it and the
+> mailbox together does not recover what removing either alone appears to gain), and that has to be
+> resolved before anything is taken out of the engine.
 
-<sub>The first sample alone was p ≈ 0.02 and would not have justified anything; the second decided
-it. The median moved between +0.6% and +2.0% while the *fraction of positions won* stayed put —
-which is why the fraction is the number that counts, not the median.</sub>
+<sub>The original reading is a good illustration of the failure mode: the median wandered between
+samples while the fraction of positions won stayed put, which was read as the fraction being robust
+— when in fact both were tracking the same drift. The re-measurement is not finished. Both this
+change and the mailbox read as losses when tested one at a time, but a build with both disabled is
+indistinguishable from the current one, which cannot all be true at once; the likeliest explanation
+is that PGO build-to-build variation is larger than the effects being chased, and that has to be
+measured before either is removed.</sub>
 
 ### Where prefetching stops paying — two rejected variants
 
@@ -399,8 +483,8 @@ one above they give a rule rather than three anecdotes.
 
 | change | result |
 |---|---|
-| prefetch all four SIMD tiles of a threat row instead of only the first line | **−5.92%**, 23/150 |
-| prefetch the PSQT rows (one cache line each, ~10.5 per update) | **−1.04%**, 52/150, p = 0.0002 |
+| prefetch all four SIMD tiles of a threat row instead of only the first line | clear loss |
+| prefetch the PSQT rows (one cache line each, ~10.5 per update) | clear loss |
 
 The first fails because the remaining lines of a row are **sequential**: the L2 streamer already
 had them, so the extra prefetches bought no coverage and cost load slots and fill-buffer entries.
@@ -414,13 +498,15 @@ so the prefetch was a pure instruction cost in the hottest loop of the engine.
 > sequentiality from one already touched?* Either answer being yes means the prefetch is dead
 > weight.
 
-<sub>This front had been closed since 15 July by a **−12.9%** figure for prefetching HalfKA rows.
-That measurement predates the interleaved harness and was taken with the sequential one — the same
-tool that read −0.34% on the FT permutation, which is really worth +1.62%. The note in the source
-attributed the loss to "codegen pessimisation of the hot template", an explanation invented after
-the fact for a number the instrument could not produce reliably.</sub>
+<sub>This front had been closed since 15 July by a large negative figure for prefetching HalfKA
+rows, taken with an even older sequential harness that ran all of A and then all of B — the same
+tool that had called the FT permutation a loss when it is a gain. The note in the source attributed
+that result to "codegen pessimisation of the hot template", an explanation invented after the fact
+for a number the instrument could not produce reliably. The front was reopened on that basis; with
+the repaired harness the HalfKA prefetch is a loss after all, for reasons that have nothing to do
+with codegen.</sub>
 
-### Permuting the weight rows for locality — +1.5 to 2% NPS
+### Permuting the weight rows for locality
 
 The incremental accumulator update is memory-latency bound: 1423 cycles per update against
 337 of actual arithmetic. The question nobody had asked was *how the accesses are
@@ -443,18 +529,18 @@ So the rows of `threatWeights` are reordered by access frequency at load time, h
 first and contiguous, and the indices are remapped through a 130 KB lookup table that stays
 in L2. **The evaluation is unchanged** — this only moves rows around.
 
-> **+1.5 to 2% NPS**, three independent 150-position samples at Hash 256: 84/150 (+1.19%),
-> 83/150 (+1.42%), 113/150 (+3.40%) — **280/450 won, z = 5.14, p ≈ 3e-7**, node counts
-> identical in every run.
+> Figure withdrawn — see the note above. Re-measured with the repaired harness the permutation is
+> **not distinguishable from zero** on an EPYC Zen 2; it is kept, since the layout argument below is
+> hardware-dependent and the change cannot cost anything by construction.
 
-<sub>Two things this measurement taught, both expensive. **First: sample size scales with the
-inverse of the effect.** 60 positions resolve +3.5%, 150 resolve +2%, and +1.5% needs 450 —
-the first two samples here each reported "not significant" (p = 0.17 and p = 0.22) on an
-effect that is real at p ≈ 3e-7 once pooled. Reading either one alone would have killed it.
-**Second: measure in the regime you are judged in.** These runs use Hash 256, like CCRL, not
-the Hash 64 the harness defaulted to; with a small transposition table there is far less
-pressure on L3, and a locality optimisation measured there is measured where it matters
-least.</sub>
+<sub>One lesson here survives and one has to be inverted. **Surviving: measure in the regime you
+are judged in.** These runs use Hash 256, like CCRL, not the Hash 64 the harness defaulted to; with
+a small transposition table there is far less pressure on L3, and a locality optimisation measured
+there is measured where it matters least. **Inverted: pooling samples to reach significance.** Two
+of the three samples here read "not significant" and the third was an outlier; pooling them was
+presented as sample size scaling with the inverse of the effect. With the order defect understood,
+a heterogeneous set of samples pooled until it crosses a threshold is exactly the shape a drifting
+instrument produces, and the pooled p-value was not evidence of anything.</sub>
 
 <sub>Two design questions were settled by measurement rather than intuition, each for the
 price of one build. Permuting at *block* granularity would have cost nothing at runtime —
@@ -478,8 +564,9 @@ rows of 2048 bytes = 46 MB) and, instrumented, it is *more* concentrated than th
 table: **90% of accesses fall in 910 rows = 1.78 MB**, with the top 1% (225 rows, 0.44 MB)
 carrying 59%.
 
-Permuting it measured **−1.15% NPS**: B ahead in 32/150 and 29/150 positions (21.3% and
-19.3%), z ≈ 7 in both samples. Not noise — a clear loss.
+Permuting it measured a clear loss, consistently across two samples and on the same side both
+times. The magnitude is withdrawn with the rest; the sign is not in doubt, and the reason is the
+useful part.
 
 The reason is the useful part:
 
@@ -512,21 +599,21 @@ different bench.</sub>
 Three follow-ups, each one build and one 150-position measurement at Hash 256, node counts
 identical throughout:
 
-| change | co-located pairs | NPS |
+| change | co-located pairs | result |
 |---|---|---|
-| group rows 16 at a time instead of 4 | 6.79% → 18.02% | **−3.7%**, rejected |
-| extend clustering from 4096 to 8192 hot rows | 6.79% → 5.18% | **+3.13%**, 114/150, z = 6.29 |
-| cache the minor/major correction keys per position | — | **−0%**, 56/150, z = 3.02, rejected |
+| group rows 16 at a time instead of 4 | 6.79% → 18.02% | rejected |
+| extend clustering from 4096 to 8192 hot rows | 6.79% → 5.18% | kept |
+| cache the minor/major correction keys per position | — | rejected |
 
 The first two settle the mechanism: 4 rows is 4 KB is one TLB page, and grouping wider optimises
 a metric the hardware does not use. The second row also shows what the co-location fraction is
 worth as a predictor — it said the wider clustering was *worse* and it was the best of the three.
 
-> Every prediction made from that proxy today was wrong, in both directions: +2.44% where "zero
-> to +0.5%" was expected, negative where it promised the largest gain, and the best result where
-> it promised the worst. It measures that the clustering is doing something, not how much that
-> something is worth. A build costs two minutes and a measurement twenty-five; reasoning about
-> the outcome costs more and gets it wrong.
+> Every prediction made from that proxy was wrong, in both directions: a gain where "zero to
+> +0.5%" was expected, a loss where it promised the most, and the best result where it promised the
+> worst. It measures that the clustering is doing something, not how much that something is worth.
+> A build costs two minutes and a measurement twenty-five; reasoning about the outcome costs more
+> and gets it wrong.
 
 <sub>Same verdict on caching the minor/major correction keys, which looked like a clear defect:
 each key costs a scan of four bitboards and, with the current defaults, they were recomputed up
@@ -535,25 +622,26 @@ comparison plus two extra fields in an already-hot thread struct cost more than 
 save. The same shape as the rejected PSQT prefetch — where the data is already close, adding
 machinery to reach it faster takes away rather than gives.</sub>
 
-### NPS work, cumulative — +4.80% against the 31 July build
+### NPS work, cumulative
 
-Four independent changes, each verified with identical node counts on PGO binaries: refresh cache
-**+1.37%**, mailbox **+2.13%**, hybrid update **+2.13%**, HalfKA prefetch **+1.3%**.
+Four independent changes were bundled here — refresh cache, mailbox, hybrid update, HalfKA
+prefetch — and an end-to-end figure was published for the whole engine against the 31 July release
+binary, both AVX2, both PGO, both `bench 207259`.
 
-Measured end to end, the whole engine against the 31 July release binary — both AVX2, both PGO,
-both `bench 207259`, so the search tree is identical and the comparison is pure speed:
+> Figure withdrawn — see the note above. It was taken with the same fixed-order harness as the
+> individual ones, so it inherits the same defect; and two of the four changes in the bundle have
+> since been re-measured as losses and removed from the binary. A replacement end-to-end figure will
+> be published once the engine is final, taken with the repaired harness and a null control run
+> beside it.
 
-> **+4.80% NPS**, paired-interleaved over 150 positions at depth 19, faster in **113 of them**
-> (75.3%, sign test z = 6.12), node counts identical (121,575,142 on both sides). About **+3.8
-> Elo** at roughly 55 Elo per doubling.
+<sub>Two method notes that outlived their numbers. Measurements must be taken on **PGO** builds:
+the same patch reads differently on a plain -O3 binary, because the profile decides layout and
+inlining in the hot path. And they must be taken on **two independent PGO builds per arm** rather
+than by flipping a runtime switch inside one binary: the profile is trained on the default side of
+that switch, so the other side runs code the compiler treated as cold, and the comparison is biased
+before it starts.</sub>
 
-<sub>Method note that cost us two near-misses: the sample has to be sized to the effect. At 60
-positions the mailbox measured 35/60 (p ≈ 0.12) and was written off as noise; at 150 it is
-102/150 (p ≈ 7e-6) and worth 2.13%. And measurements must be taken on PGO builds — the same patch
-read +0.64% on a plain -O3 build. Sixty positions were enough for a +3.5% effect and are not
-enough for +2%.</sub>
-
-### Updating both perspectives in one pass — +1.45% NPS
+### Updating both perspectives in one pass
 
 A threat diff entry packs five bitfields: attacker, attacked piece, from-square, to-square, and the
 add/remove flag. The accumulator used to walk that list **twice**, once per perspective, with a full
@@ -571,17 +659,17 @@ on a memory-bound path the locality of the large structure outweighs the localit
 Sharing only the dirty-list pass, and keeping the wide writes sequential — all of white, then all of
 black — takes the gain without the cost.</sub>
 
-> **+1.45% NPS**, three independent 150-position samples at depth 19, Hash 256, PGO AVX2:
-> 86/150 (+1.44%), 78/150 (+1.49%), 86/150 (+1.41%). Pooled **250/450 = 55.6%**, sign test
-> z = 2.36, p = 0.018. Node counts identical in all three samples, and `bench 207259` with the
-> path on and off.
+> Figure withdrawn — see the note above. This one was the weakest of the series even on its own
+> terms, and it is the one that prompted the audit of the harness. Re-measured with the repaired
+> tool the change is a real gain, but a smaller one; the number will be folded into the end-to-end
+> measurement rather than published on its own.
 
-<sub>The three medians agree to within 0.08 percentage points even though the host's clock swung
-12% between runs (aggregate NPS on the A side: 687k, 612k, 640k — the laptop was on battery). That
-is what the paired-interleaved design is for, and it is the reason the result survives a noisy host:
-A and B alternate position by position, so a clock step hits both sides equally. It also needed the
-full 450 positions — at 150 each sample sat at p ≈ 0.09, exactly as the sample-size rule predicts
-for a 1.5% effect.</sub>
+<sub>This section originally argued that the three medians agreeing closely, despite the host's
+clock swinging 12% between runs, showed the paired-interleaved design absorbing a noisy host. The
+argument was wrong in an instructive way. Alternating A and B position by position does cancel
+*slow* drift, but the two searches in a pair are not simultaneous, and whichever one runs second
+absorbs whatever the machine does in between. Agreement across three samples taken on the same
+drifting host is not independent confirmation — it is the same bias reproduced three times.</sub>
 
 ### Build targets: `avx512` no longer requires VBMI2
 
@@ -610,8 +698,9 @@ release.
 The targets are now separate, as in Stockfish: `avx512` (F/BW/DQ/VL/VNNI, scalar threat emission)
 and `avx512icl` (+ VBMI/VBMI2/BITALG, vectorised `write_multiple_dirties`).
 
-> And the ICL path is worth **+0.04%** — 75/150 positions exactly, z ≈ 0, on Zen 4. So `avx512`
-> ships **without** ICL: broader compatibility at no measurable cost.
+> And the ICL path measured as **exactly nothing** — 75 of 150 positions, z ≈ 0, on Zen 4: a
+> result that needs no scale to interpret, and the one figure here the harness defect cannot have
+> manufactured. So `avx512` ships **without** ICL: broader compatibility at no measurable cost.
 
 <sub>That zero also says where the mirror-position catch-up cost is *not*. Replaying moves onto the
 mirror `Position` and generating the threat diff is 6.5% of the wall — more than `fc_0`, more than

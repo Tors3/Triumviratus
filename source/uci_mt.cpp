@@ -690,7 +690,7 @@ void uci_loop()
             printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
             printf("option name LMRNegative type spin default 0 min 0 max 1\n");   // riduzione LMR negativa = estende le mosse ben ordinate (SF/Hobbes); 0=legacy
-            printf("option name PromoQS type spin default 0 min 0 max 6\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
+            printf("option name PromoQS type spin default 6 min 0 max 6\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
             printf("option name CorrValMargin type spin default 1 min 0 max 1\n");
             printf("option name CorrValRFP type spin default 41 min 0 max 256\n");
             printf("option name CorrValExt type spin default 1 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR
@@ -1427,7 +1427,7 @@ void uci_loop()
         // ---- Bundle 3.9: toggle A/B (gli spin cadono nel gestore generico) ----
         else if (strncmp(input, "setoption name MateDistPruning value ", 37) == 0)
         {
-            const char* v = input + 39;
+            const char* v = input + 37;
             set_mate_dist(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name DrawDither value ", 32) == 0)
@@ -1502,7 +1502,7 @@ void uci_loop()
         }
         else if (strncmp(input, "setoption name EvalCacheUndamp value ", 37) == 0)
         {
-            const char* v = input + 39;
+            const char* v = input + 37;
             set_evalcache_undamp(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name ProbCutTT value ", 31) == 0)
