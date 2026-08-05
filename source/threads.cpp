@@ -2382,7 +2382,7 @@ bool set_search_param(const char *name, int value) {
     return true;
   }
   if (!strcmp(name, "PromoQS")) {
-    g_promo_qs = value < 0 ? 0 : (value > 6 ? 6 : value);
+    g_promo_qs = value < 0 ? 0 : (value > 7 ? 7 : value);
     return true;
   }
   if (!strcmp(name, "CorrValMargin")) {
@@ -4295,7 +4295,16 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                               bool quiets_only   = false,
                               int  known_in_check = -1,
                               bool promo_quiet   = false,
-                              bool promo_queen_only = false) {
+                              bool promo_queen_only = false,
+                              // Modo 7: oltre alla donna genera anche il CAVALLO. Torre e
+                              // alfiere restano fuori perche' sono strettamente DOMINATI
+                              // dalla donna (fa tutto cio' che fanno loro); l'unica eccezione
+                              // e' evitare lo stallo, che e' materia di ricerca completa in
+                              // finale, non di qsearch. Il cavallo no: attacca case che la
+                              // donna non attacca, quindi esistono posizioni in cui la
+                              // promozione a cavallo con scacco (forchetta re+donna) e'
+                              // l'UNICA mossa vincente, e oggi la qsearch non la vede.
+                              bool promo_knight = false) {
   PROF_GUARD(prof_mg);
   move_list->count = 0;
   int source_square, target_square;
@@ -4374,6 +4383,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                                                     piece, R, 0, 0, 0, 0));
                     add_move(move_list, encode_move(source_square, target_square,
                                                     piece, B, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, N, 0, 0, 0, 0));
+                  } else if (promo_knight) {
                     add_move(move_list, encode_move(source_square, target_square,
                                                     piece, N, 0, 0, 0, 0));
                   }
@@ -4467,6 +4479,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                                                     piece, r, 0, 0, 0, 0));
                     add_move(move_list, encode_move(source_square, target_square,
                                                     piece, b, 0, 0, 0, 0));
+                    add_move(move_list, encode_move(source_square, target_square,
+                                                    piece, n, 0, 0, 0, 0));
+                  } else if (promo_knight) {
                     add_move(move_list, encode_move(source_square, target_square,
                                                     piece, n, 0, 0, 0, 0));
                   }
@@ -6196,7 +6211,8 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
                     /*quiets_only=*/false, /*known_in_check=*/-1,
                     /*promo_quiet=*/(g_promo_qs >= 1 && g_promo_qs <= 3) ||
                                      g_promo_qs >= 5,
-                    /*promo_queen_only=*/g_promo_qs >= 2);
+                    /*promo_queen_only=*/g_promo_qs >= 2,
+                    /*promo_knight=*/g_promo_qs == 7);
 
   // Calcola punteggi senza ordinare (selezione pick-next).
   int move_scores[256];
@@ -6286,7 +6302,7 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
       // pezzo viene ripreso apre un sottoalbero intero (Donna nuova = tutte le sue
       // catture e tutte le riprese) per una mossa che perde materiale. E' il
       // filtro che spiega perche' il modo 5 costa +18,9% di albero.
-      if (g_promo_qs == 6 && get_move_promoted(move) &&
+      if (g_promo_qs >= 6 && get_move_promoted(move) &&
           !get_move_capture(move) && !td_see_at_least(td, move, 0))
         continue;
       if (!get_move_capture(move) &&

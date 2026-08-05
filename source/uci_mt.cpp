@@ -690,7 +690,7 @@ void uci_loop()
             printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
             printf("option name LMRNegative type spin default 0 min 0 max 1\n");   // riduzione LMR negativa = estende le mosse ben ordinate (SF/Hobbes); 0=legacy
-            printf("option name PromoQS type spin default 6 min 0 max 6\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
+            printf("option name PromoQS type spin default 6 min 0 max 7\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
             printf("option name CorrValMargin type spin default 1 min 0 max 1\n");
             printf("option name CorrValRFP type spin default 41 min 0 max 256\n");
             printf("option name CorrValExt type spin default 1 min 0 max 1\n");      // 5.0-B: folda |corr| in futility/SEE/LMR

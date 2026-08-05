@@ -532,6 +532,28 @@ inline void prefetch_psq_rows(const FeatureTransformer&       featureTransformer
 }
 #endif
 
+#ifdef TRIUMV_PF_SMALL
+// ---------------------------------------------------------------------------
+//  PF_SMALL (opt-in, DA CONFERMARE) — tre siti di prefetch oggi scoperti:
+//   * righe HalfKA nel percorso HYBRID (tabella 46 MB, nessun prefetch)
+//   * righe PawnPair/PassedPawns nell'incrementale: entrano nelle liste threat
+//     DOPO la passata di ThreatFeatureSet, che e' l'unica che prefetcha
+//   * niente prefetch per le tuple MORTE (l'indice sentinella punta una riga
+//     oltre la tabella viva: un fill buffer sprecato per ogni tupla esclusa)
+//  Misurato su VM EPYC 7K62 (Zen2), 300 pos, due build PGO, nulli passati:
+//  +0,49%, 202/300, z=6,36, divergenza d'ordine 0,25%.  UNA linea per riga.
+// ---------------------------------------------------------------------------
+inline void prefetch_thr_rows(const FeatureTransformer&          featureTransformer,
+                              const ThreatFeatureSet::IndexList& a,
+                              int                                from = 0) {
+    const char* base = reinterpret_cast<const char*>(&featureTransformer.threatWeights[0]);
+    const usize RowBytes =
+      usize(FeatureTransformer::OutputDimensions) * sizeof(featureTransformer.threatWeights[0]);
+    for (int i = from; i < a.ssize(); ++i)
+        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(a[i]) * RowBytes);
+}
+#endif
+
 template<bool Forward>
 void update_accumulator_incremental(Color                     perspective,
                                     const FeatureTransformer& featureTransformer,
@@ -566,8 +588,15 @@ void update_accumulator_incremental(Color                     perspective,
                                                  thrAdded, pfBase, pfStride);
         // TRANN1: gli indici PawnPair/PassedPawns (folded, gia' offsettati)
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
+#ifdef TRIUMV_PF_SMALL
+        const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
+#endif
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
+#ifdef TRIUMV_PF_SMALL
+        prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
+        prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
+#endif
 #ifdef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
 #endif
@@ -580,8 +609,15 @@ void update_accumulator_incremental(Color                     perspective,
 #endif
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrAdded,
                                                  thrRemoved, pfBase, pfStride);
+#ifdef TRIUMV_PF_SMALL
+        const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
+#endif
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
+#ifdef TRIUMV_PF_SMALL
+        prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
+        prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
+#endif
 #ifdef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
 #endif
@@ -902,6 +938,13 @@ void update_accumulator_hybrid(Color                     perspective,
         newAdd.push_back(PSQFeatureSet::make_index(perspective, sq, currentPieces[sq], newKsq));
     }
 
+#if defined(TRIUMV_PF_SMALL) && !defined(TRIUMV_NO_PF_PSQ)
+    // C2: le quattro liste HalfKA sono complete; la costruzione delle liste threat
+    // qui sotto copre la latenza (stessa forma che nell'incrementale).
+    prefetch_psq_rows(featureTransformer, oldRemove, oldAdd);
+    prefetch_psq_rows(featureTransformer, newRemove, newAdd);
+#endif
+
     // Delta dei tre blocchi non-HalfKA. Gli indici di PawnPair/PassedPawns sono
     // "folded" nelle stesse liste (gia' offsettati), come nel percorso incrementale.
     ThreatFeatureSet::IndexList thrRemoved, thrAdded;
@@ -909,10 +952,17 @@ void update_accumulator_hybrid(Color                     perspective,
     IndexType                   pfStride = Dimensions;
     ThreatFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyThreats, thrRemoved,
                                              thrAdded, pfBase, pfStride);
+#ifdef TRIUMV_PF_SMALL
+    const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
+#endif
     PawnFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
                                            thrAdded);
     PassedFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
                                              thrAdded);
+#ifdef TRIUMV_PF_SMALL
+    prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
+    prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
+#endif
 
     const auto& fromAcc     = computed.accumulation[perspective];
     auto&       toAcc       = target.accumulation[perspective];

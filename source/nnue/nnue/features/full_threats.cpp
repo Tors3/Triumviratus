@@ -349,7 +349,13 @@ void FullThreats::append_changed_indices(Color                   perspective,
         // prendeva gia' da solo. I prefetch in piu' non aggiungono copertura, tolgono
         // slot di load e voci di fill buffer al lavoro vero. UNA linea per riga e'
         // l'ottimo, non un compromesso.
+#ifdef TRIUMV_PF_SMALL
+        // C7: il filtro push_back_if_lt sotto scarta le tuple morte, ma il prefetch
+        // partiva comunque su una riga OLTRE la tabella viva: fill buffer sprecato.
+        if (prefetchBase && index < FeatRows)
+#else
         if (prefetchBase)
+#endif
             prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
               reinterpret_cast<uintptr_t>(prefetchBase) + index * prefetchStride));
         insert.push_back_if_lt(index, FeatRows);
@@ -402,10 +408,16 @@ void FullThreats::append_changed_indices_both(Square                  ksqW,
         // tile aveva misurato −5,92%).
         if (prefetchBase)
         {
-            prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
-              reinterpret_cast<uintptr_t>(prefetchBase) + iW * prefetchStride));
-            prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
-              reinterpret_cast<uintptr_t>(prefetchBase) + iB * prefetchStride));
+#ifdef TRIUMV_PF_SMALL
+            if (iW < FeatRows)
+#endif
+                prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
+                  reinterpret_cast<uintptr_t>(prefetchBase) + iW * prefetchStride));
+#ifdef TRIUMV_PF_SMALL
+            if (iB < FeatRows)
+#endif
+                prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(reinterpret_cast<const void*>(
+                  reinterpret_cast<uintptr_t>(prefetchBase) + iB * prefetchStride));
         }
 
         (add ? addedW : removedW).push_back_if_lt(iW, FeatRows);
