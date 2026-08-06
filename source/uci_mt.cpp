@@ -499,11 +499,11 @@ void uci_loop()
             printf("option name ImprovingFix type check default true\n");    // P0.6 sentinel improving
             printf("option name CorrHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
             printf("option name CorrHistCont type check default true\n");    // continuation correction history (SF): corregge la static eval per le ultime 2 mosse nel cammino
-            printf("option name CorrContWeight type spin default 100 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
+            printf("option name CorrContWeight type spin default 85 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
-            printf("option name CorrMaterial type check default false\n");     // SBAKATA 2026-07-25: il bundle lean che l'aveva portata dentro misura -6.89 +/- 9.01 a 20+0.2 (era +10.43 a 10+0.1). SF #5556 corrhist per MATERIAL-KEY
-            printf("option name CorrMaterialWeight type spin default 100 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
+            printf("option name CorrMaterial type check default true\n");     // BAKED ON 6/08/2026: blocco corrections tarato SPSA@TC30, gate +2,65 +/- 2,14 su 30.530g @30+0.3 (LLR 2,96). A TC CORTO PERDE: -11,38 @15+0.15. Sbakata il 25/07 su 450 partite, riaperta e chiusa bene.
+            printf("option name CorrMaterialWeight type spin default 67 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
@@ -655,7 +655,7 @@ void uci_loop()
             printf("option name QSBCMargin type spin default 183 min 0 max 800\n");        // Q-20d: cuscino sopra il best-case
             printf("option name ProbCutMargin type spin default 234 min 60 max 400\n");
             printf("option name ProbCutImprove type spin default 4 min 0 max 200\n");         // Q-20b (Alexandria): probcut_beta -= questo se improving. 0=OFF
-            printf("option name CorrCap type spin default 50 min 8 max 128\n");
+            printf("option name CorrCap type spin default 48 min 8 max 128\n");
             printf("option name CorrLearnDiv type spin default 303 min 64 max 2048\n");
             printf("option name CorrAsym type spin default 137 min 64 max 192\n");   // Tier-1: correzioni positive piu' lente (/128); 128=simmetrico
             printf("option name ContHistDiv type spin default 3684 min 1000 max 12000\n");

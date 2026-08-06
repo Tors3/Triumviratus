@@ -432,7 +432,7 @@ void set_corr_multi(bool v) { g_corr_multi = v; }
 static bool g_corr_cont = true;
 void set_corr_cont(bool v) { g_corr_cont = v; }
 int g_corr_cont_weight =
-    100; // /100 del contributo cont alla somma corr. Spin CorrContWeight.
+    85;   // BAKED 6/08/2026 col blocco corrections (SPSA TC30 + SPRT +2,65) // /100 del contributo cont alla somma corr. Spin CorrContWeight.
 
 // Non-pawn correction history PER-LATO (port Pawnocchio/SF
 // nonPawnCorrectionHistory, 2026-07-03). Due tabelle extra, chiave = Zobrist
@@ -461,8 +461,13 @@ int g_corr_np_weight = 100; // /100 sul contributo delle due tabelle non-pawn
 // in isolamento (piatta @1290g, poi -3.17 LOS 30%) ed e' anche quello con il
 // movente peggiore: la correzione da materiale e' informazione che la RETE ha
 // gia'. Gli altri due restano ON (GoodCapHistDiv=32, QsStalemateCheck).
-static bool g_corr_material = false;
-int g_corr_material_weight = 100; // /100 sul contributo della tabella material
+// 🔴 BAKED ON il 6/08/2026: blocco corrections tarato via SPSA a TC 30+0.3 e poi
+// gate SPRT SUPERATO: +2,65 +/- 2,14 su 30.530 partite @30+0.3, LOS 99,25%, LLR 2,96.
+// ⚠️ A TC CORTO LA STESSA CONFIGURAZIONE PERDE: -11,38 +/- 10,09 @2016g a 15+0.15.
+// Accenderlo costa +11,5% di albero (bench 225.898 -> 251.855) = ~8,8 Elo di debito, che
+// a TC lungo si ripaga e a TC corto no. Vettore: material 67, cont 85, cap 48.
+static bool g_corr_material = true;
+int g_corr_material_weight = 67; // /100 sul contributo della tabella material
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di
 // ordering per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale.
@@ -1503,7 +1508,7 @@ static bool g_qs_delta_bestcase = false;
 int g_qs_bc_margin = 183; // cuscino sopra il best-case (scala-56, SPSA)
 // Correction-history tunables (only active when CorrHist is on).
 int g_corr_cap =
-    50; // max correction applied to static eval (cp). [SPSA histmulti 32->44
+    48;   // BAKED 6/08/2026 col blocco corrections // max correction applied to static eval (cp). [SPSA histmulti 32->44
         // RIGETTATO: -1.3 LOS23% @11438 -> default]
 int g_corr_lr_div = 303; // learning-rate divisor (bigger = slower/steadier
                          // learning) [histmulti 512->565 rigettato]

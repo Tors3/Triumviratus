@@ -71,10 +71,12 @@ separately and published when the work is closed.
 |---|---|---|---|---|---|
 | 1 | `6.0` → **network** | full training from scratch, `TRANN2`. Measured on the 7.0 binary **frozen before any search change**, so the figure isolates the net | 15+0.15 | 1,442 | **+23.41 ± 9.22** (LOS 100%) |
 | 2 | → **quiet promotions in qsearch** | `PromoQS=6`: promotions generated in qsearch, exempt from the capture cap, filtered by SEE ≥ 0 | 25+0.25 | 2,572 | **+8.38 ± 6.67** (LOS 99.31%) |
+| 3 | → **corrections block, retuned** | material correction table switched back on and the block rebalanced around it: material weight 67, continuation weight 85, cap 48 | 30+0.3 | **30,530** | **+2.65 ± 2.14** (LOS 99.25%, LLR 2.96) |
 
-> ⚠️ **Stage 2 changes the engine signature: `bench` goes from 207,259 to 225,898.** Any script or
-> procedure still checking 207,259 is verifying the wrong constant — that value is valid only for
-> binaries built before this bake.
+> ⚠️ **The engine signature changes twice in this table: `bench` goes 207,259 → 225,898 at stage 2
+> → 251,855 at stage 3.** The current signature is **251,855**; any script or procedure still
+> checking one of the earlier values is verifying the wrong constant, and each of those is valid
+> only for binaries built before the corresponding bake.
 
 <sub>Stage 2 is worth recording because of what it cost. Quiet promotions were generated only
 inside the quiet buffer, and qsearch never asks for it — so the engine declared those moves
@@ -87,9 +89,21 @@ and that is what made the difference visible. The same code reads −11.77 at 12
 25+0.25: a change that inflates the tree has to be judged at the time control it will be played
 at.</sub>
 
-<sub>Under test at the time of writing: `PromoQS=7`, which adds the **knight** under-promotion in
-qsearch on top of the queen. It grows the tree by a further 11%, so it starts with roughly 8 Elo
-of debt to repay before it can show a gain.</sub>
+<sub>Stage 3 is the clearest lesson of the project so far, and it is about **time control, not
+about corrections**. The material correction table had been switched off in July on the strength of
+450 games, and re-measured crudely it looked terrible: −17.68 over 708 games. Tuned by SPSA and
+gated again it was flat. What changed the answer was tuning it **at the time control it would be
+played at**: an SPSA run at 15+0.15 drove the continuation weight *up* to 162 and produced a
+package that lost 11.38 Elo over 2,016 games; the same SPSA at 30+0.3 drove the same weight *down*
+to 85 and turned the material weight toward zero — the opposite direction — and the resulting
+vector passed its gate. Switching the table on costs 11.5% more nodes, roughly 8.8 Elo of debt at
+55 Elo per doubling, and that debt is repayable at long time control and not at short. ⇒ **Every
+lever rejected at short TC has to be looked at again.** The SPSA itself was stopped at 152
+iterations and is not converged; the vector will be refined at long TC.</sub>
+
+<sub>Tested and rejected: `PromoQS=7`, which adds the **knight** under-promotion in qsearch on top
+of the queen — −1.82 ± 6.49 over 3,818 games at 25+0.25. It grows the tree by a further 11% and
+did not repay it.</sub>
 
 ---
 
