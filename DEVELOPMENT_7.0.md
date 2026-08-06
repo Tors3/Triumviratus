@@ -148,10 +148,13 @@ sides — it reported a nine-sigma difference out of nothing. It now alternates 
 pair, drops exact ties from the sign test, refuses to run when a requested option is not announced
 by the engine, and reports the A-first and B-first sub-samples separately as a built-in drift check.
 
-**End to end, against the 31 July build**, both at their own defaults, AVX2, PGO, 300 positions
+**End to end, against the 31 July build**, both at their own defaults, PGO, 300 positions
 interleaved at depth 20 on an idle Zen4 laptop:
 
-> **+3.3% NPS**
+> **AVX2 +3.3% NPS · AVX-512 +1.9%**
+
+AVX2 is the figure that matters for the rating lists, which compile it. AVX-512 gains less
+because three of the five changes below are inert or harmful on that instruction set.
 
 Everything below was then re-measured on the fixed harness, each change **on its own** against a
 baseline built from the same source with all of them off. Six PGO builds, all at `bench` 249,466.
