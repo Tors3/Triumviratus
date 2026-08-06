@@ -648,6 +648,9 @@ void uci_loop()
             printf("option name AspGrow type spin default 34 min 30 max 200\n");          // bakato: 100->31
             printf("option name AspScoreMult type spin default 38 min 0 max 2000\n");       // Q-28 (Stormphrax): finestra asp += |avgSq(score)|*mult>>20. 0=OFF
             printf("option name CMHCScale type spin default 6 min 0 max 200\n");           // Q-12 (SF #6653): bonus conthist *= (100 + scale*consistenza)/100. 0=OFF
+            printf("option name CMHCPly1 type spin default 0 min 0 max 1\n");              // FIX 7/08/2026: il lookup 1-ply di td_cmhc_factor usava move_stack[ply-1] (=2 ply) mentre la scrittura usa move_stack[ply]. 1 = allineato alla scrittura, 0 = comportamento attuale (byte-identico)
+            printf("option name Rule50Formula type spin default 1 min 0 max 1\n");         // BAKED ON 7/08/2026 su base di CORRETTEZZA, non di Elo: misurato NEUTRO (+1,04 +/- 4,90 su 6002g @15+0.15). undamp/redamp invertivano v*(200-fifty)/214 (wrapper SF vecchio) mentre nn_scale applica v*(199-rule50)/199. 0 = comportamento pre-7/08
+            printf("option name CorrTBGuard type spin default 0 min 0 max 1\n");           // FIX 7/08/2026: la guardia della banda Syzygy in td_corr_update prendeva il bordo ALTO (29936) invece del basso (29872) -> il fix del 2/08 era un no-op e la banda TB passava intera. ⚠️ misurabile SOLO con SyzygyPath configurato: senza e' no-op esatto
             printf("option name FollowPV type check default false\n");                     // Q-15 (SF #6656): niente IIR/futility/LMP sui nodi che riseguono la PV precedente
             printf("option name RFPBadNode type spin default 4 min 0 max 200\n");          // Q-20a (Alexandria): rfp_margin -= questo se !tt_move. 0=OFF
             printf("option name FutSpareQuiet type check default false\n");                // Q-20c (Caissa): la futility non pota mai la prima quiet del nodo
@@ -687,7 +690,8 @@ void uci_loop()
             printf("option name TripleExt type spin default 1 min 0 max 1\n");
             printf("option name SingularTripleMargin type spin default 319 min 0 max 400\n");
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
-            printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF)
+            printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF). ⚠️ IRRAGGIUNGIBILE con NegExtOrder=0: i due rami sopra partizionano lo spazio (finestra nulla). Bench identico a 0..4. Fuori dallo spazio SPSA finche' NegExtOrder resta 0
+            printf("option name NegExtOrder type spin default 0 min 0 max 1\n");  // FIX 7/08/2026: 1 = ordine SF (cut node PRIMA del test su alpha) -> rende vivo NegExtCut. 0 = ordine storico, byte-identico
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
             printf("option name LMRNegative type spin default 0 min 0 max 1\n");   // riduzione LMR negativa = estende le mosse ben ordinate (SF/Hobbes); 0=legacy
             printf("option name PromoQS type spin default 6 min 0 max 7\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0

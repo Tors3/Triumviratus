@@ -75,6 +75,15 @@ and reported under the table.
 | 4 | → **qsearch delta pruning restored** | `QSDeltaMargin` 3000 → 1525, co-tuned with `QSCaptHistScale` 86 → 72. 3000 was the **maximum of the parameter's own range**, i.e. delta pruning was effectively off | 30+0.3 | 5,994 | **+5.57 ± 4.84** (LLR 1.89, stopped before the bound) |
 | 5 | → **material correction table removed** | `CorrMaterial` off again. Stage 3 changed three things at once, so it measured the block; isolated — continuation weight and cap identical on both sides — the table loses. Figure is for the engine *without* it | 20+0.2 | 1,298 | **+18.49 ± 11.43** (LOS 99.93%) |
 | 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
+| 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
+
+<sub>Stage 7 is the one entry here that was **not** taken for its Elo. `+1.04 ± 4.90` establishes only
+that it does no harm; the interval is far too wide to call it a gain, and the SPRT was stopped
+without reaching a bound because with a true effect near +1 it would never reach one. It was baked
+because the alternative was keeping two different formulas for the same rule50 damping inside one
+engine, so that anyone later reasoning about what the table holds starts from a false premise.
+That is exactly how stage 6 — worth +18 — came about: a comment that described the defect
+correctly sitting above a constant that did something else.</sub>
 
 **The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the 7.0 build of
 6 August, each loading its own network, AVX-512, one thread, 128 MB, UHO_4060_v4:

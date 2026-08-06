@@ -63,13 +63,27 @@ DEFS := -DNDEBUG $(EMBED_DEF) -DTRIUMV5_THREATS_INCR -DUSE_PEXT -DUSE_POPCNT \
 
 ARCH := -mavx2 -mbmi2 -mfma -mpopcnt -msse4.1 -mssse3 -msse2
 
-# `make avx512` aggiunge AVX512 + VNNI + ICL (VBMI/VBMI2/BITALG) = identico alla
-# build Windows shipping (TRANN1 forward + dirty-threats vettoriali). OK su c3
-# (Sapphire Rapids) e c3d (Zen4): entrambi hanno VBMI/VBMI2.
-ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
-  DEFS += -DUSE_AVX512 -DUSE_VNNI -DUSE_AVX512ICL
-  ARCH += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni \
-          -mavx512vbmi -mavx512vbmi2 -mavx512bitalg
+# 🔴 6/08/2026 — `avx512` NON definisce piu' USE_AVX512ICL. Prima lo faceva, con
+# -mavx512vbmi/vbmi2/bitalg, perche' era stato tarato sulle VM di GCP (c3 Sapphire
+# Rapids, c3d Zen4: entrambe hanno VBMI2). Ma quel binario e' quello che si SPEDISCE
+# come "avx512", e su **Skylake-X e Cascade Lake** — AVX512F/BW/DQ/VL/VNNI, senza
+# VBMI/VBMI2/BITALG — muore di istruzione illegale all'avvio. Sono macchine vere e
+# diffuse: verificato oggi su uno Xeon Gold 6242 (Cascade Lake), dove il target
+# vecchio non sarebbe partito.
+# Lo script Windows era gia' stato separato il 3/08; il Makefile era rimasto indietro,
+# quindi il canale di build Linux produceva ancora il binario rotto.
+# ✅ Separati come fa Stockfish (x86-64-avx512 vs x86-64-avx512icl):
+#   make avx512      F/BW/DQ/VL/VNNI          -> percorso threat SCALARE
+#   make avx512icl   + VBMI/VBMI2/BITALG      -> emissione tuple vettoriale
+# ⚠️ L'ICL non serve: misurato +0,04% con 75/150 posizioni esatte, z~0, su Zen4.
+#    Si costruisce ma non c'e' motivo di pubblicarlo.
+ifneq (,$(filter avx512 avx512icl,$(MAKECMDGOALS)))
+  DEFS += -DUSE_AVX512 -DUSE_VNNI
+  ARCH += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni
+endif
+ifeq (avx512icl,$(filter avx512icl,$(MAKECMDGOALS)))
+  DEFS += -DUSE_AVX512ICL
+  ARCH += -mavx512vbmi -mavx512vbmi2 -mavx512bitalg
 endif
 
 # `make nopext` (equivalente: NOPEXT=1, che propaga anche ai target PGO ricorsivi):
@@ -206,6 +220,7 @@ CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 
 all: $(EXE)
 avx512: $(EXE)
+avx512icl: $(EXE)
 nopext: $(EXE)
 intel: $(EXE)
 profile: $(EXE)
@@ -256,4 +271,4 @@ endif
 	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)"
 
-.PHONY: all avx512 nopext intel profile release android android-dotprod clean pgo-avx512 pgo-avx2
+.PHONY: all avx512 avx512icl nopext intel profile release android android-dotprod clean pgo-avx512 pgo-avx2

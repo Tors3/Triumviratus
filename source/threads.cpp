@@ -149,19 +149,55 @@ bool g_eval_tt_write =
 // TT va l'eval DE-smorzata; all'uso si RI-smorza col fifty corrente. Errore
 // residuo = solo arrotondamenti interi (~±3cp) invece di v*Δfifty/214 (fino a
 // ~237cp).
+// Rule50Formula (spin 0/1, default 0 = comportamento attuale, byte-identico).
+// 🔴 DISALLINEAMENTO trovato il 7/08/2026. Le due funzioni qui sotto invertono
+// `v*(200-fifty)/214`, che e' la formula di una versione PRECEDENTE del wrapper SF
+// (ed e' quella che il commento sopra cita). Lo smorzamento realmente applicato da
+// `nn_scale` e' un altro: `v -= v*rule50/199`, cioe' `v*(199-rule50)/199`
+// (nnue_bridge.cpp:181, e identico in nn_finalize :283).
+// Le due funzioni restano l'una l'inversa dell'altra, quindi il round-trip e'
+// auto-consistente e — con TTEvalNoDecay bakato — NON si compone. Il difetto e'
+// semantico: un'eval salvata a fifty=s e riletta a fifty=n da'
+// `raw*(200-n)/(200-s)` invece di `raw*(199-n)/(199-s)`. Errore relativo massimo
+// 0,5% (agli estremi n=0,s=100 e n=100,s=0) = ~1 cp su un'eval di 500.
+// 🔴 BAKED ON il 7/08/2026, e **non per l'Elo**: misurato NEUTRO —
+// **+1,04 +/- 4,90 su 6002 partite @15+0.15**, LLR -0,16. L'intervallo
+// [-3,9 ; +5,9] non stabilisce un guadagno: stabilisce che non fa danno.
+// Bakato su base di CORRETTEZZA. L'alternativa era tenere due formule diverse per
+// lo stesso smorzamento rule50 dentro lo stesso motore, e chiunque ragioni in
+// futuro sulla semantica dell'eval in TT partirebbe da una premessa falsa. Il
+// difetto piu' redditizio della giornata (TTEvalNoDecay, +18 Elo) era esattamente
+// questo: un commento che descriveva giusto e una costante che diceva altro.
+// ⚠️ L'SPRT non e' stato portato a un bound: con elo0=0/elo1=5 e un effetto vero
+// attorno a +1 l'LLR galleggia e servirebbero decine di migliaia di partite. La
+// domanda a cui doveva rispondere — "fa danno?" — ha risposta a 6002.
+// 🔑 Il fix DEFINITIVO sarebbe togliere la formula, non correggerla: `nn_finalize`
+// (nnue_bridge.cpp:281) applica gia' quella giusta, e usarla al posto di `redamp`
+// la farebbe esistere in UN SOLO posto. Senza quel refactor, fra un anno le due
+// formule tornano a divergere.
+// ⚠️ Il clamp a 100 e' obbligatorio anche nella variante nuova: senza, un fifty
+// vicino a 199 azzererebbe il denominatore. In partita il contatore si ferma a 100.
+// NB: la strada piu' pulita sarebbe usare `nn_finalize` invece di `redamp`, che
+// applica gia' la formula giusta — ma e' un refactor, non un fix a costanti.
+int g_rule50_formula = 1;
+// CorrTBGuard (spin 0/1, default 0 = comportamento attuale, byte-identico SENZA
+// tablebase). Corregge la guardia della banda Syzygy in `td_corr_update` — vedi il
+// commento esteso al sito d'uso, :6760 circa. 1 = la banda TB viene davvero esclusa
+// dalla correction history.
+int g_corr_tb_guard = 0;
 static inline int tt_eval_undamp(int v, int fifty) {
   if (v == tt_eval_none)
     return v;
   if (fifty > 100)
     fifty = 100;
-  return v * 214 / (200 - fifty);
+  return g_rule50_formula ? v * 199 / (199 - fifty) : v * 214 / (200 - fifty);
 }
 static inline int tt_eval_redamp(int v, int fifty) {
   if (v == tt_eval_none)
     return v;
   if (fifty > 100)
     fifty = 100;
-  return v * (200 - fifty) / 214;
+  return g_rule50_formula ? v * (199 - fifty) / 199 : v * (200 - fifty) / 214;
 }
 
 // TTEvalNoDecay (spin 0/1, default 0 = comportamento attuale).
@@ -1183,6 +1219,13 @@ int g_promo_qs = 6;
 int g_ttcut_exact = 0;
 int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
                       // fail-high); 0=legacy/off
+// NegExtOrder (spin 0/1, default 0 = ordine storico, byte-identico). Riordina la
+// catena delle estensioni negative alla maniera di SF: cut node PRIMA del test su
+// alpha. Con 0 il ramo NegExtCut e' IRRAGGIUNGIBILE (i due rami sopra partizionano
+// tutto lo spazio in finestra nulla) — dettaglio al sito d'uso, ~:8184. 1 lo rende
+// vivo. ⚠️ Finche' resta 0, NegExtCut va tenuto FUORI dallo spazio SPSA: tararlo
+// significa misurare rumore, ed e' gia' successo (default 3 = massimo del range).
+int g_negext_order = 0;
 static bool g_corrval_margin =
     true; // CorrValMargin (SF :980): fold |corr| into RFP margin (prune less
           // when eval heavily corrected)
@@ -1486,6 +1529,38 @@ int g_asp_score_mult =
     38; // >> 20 scale; SPSA range [0,2000], init-when-ON ~100
 int g_cmhc_scale =
     6; // Q-12 CMHC: bonus conthist *= (100 + scale*consistenza)/100. 0 = neutro
+// CMHCPly1 (spin 0/1, default 0 = comportamento attuale, byte-identico).
+// 🔴 DIFETTO trovato il 7/08/2026. Dei cinque lookup di `td_cmhc_factor` quattro
+// sono corretti e uno no — proprio il termine 1-ply, che e' l'unico SEMPRE attivo.
+// La convenzione del move stack e' documentata a :6618-6620 e imposta dalla
+// scrittura: `move_stack[td.ply]` e' la mossa che porta IN questo nodo (1 ply
+// indietro), `move_stack[td.ply-1]` sono 2 ply indietro.
+//   SCRITTURA (:8675-8677, :8714):  continuation_history[ move_stack[ply] ][mossa]
+//   LETTURA   (:6869, oggi):        continuation_history[ move_stack[ply-1] ][mossa]
+// Non e' "un contesto diverso": e' una cella che nessuno ha mai scritto con quel
+// significato, quindi il bit di consistenza che ne esce e' rumore. Con scale=6 e
+// consistent in [0,5], un contributo su cinque casuale = ±6% di rumore sul bonus
+// conthist a ogni beta-cutoff quiet.
+// 🔴 MISURATO il 7/08/2026 e lasciato a 0 — NON perche' il fix sia sbagliato.
+//   in pacchetto con Rule50Formula, 20+0.2 : -20,33 +/- 16,74 su 462 partite
+//   da solo, 40+0.4                        : negativo anche li'
+// Due TC opposti concordi ⇒ non e' una questione di regime.
+// 🔑 Il fix RESTA CORRETTO: scrittura (:8675/:8714) e lettura ora usano la stessa
+// chiave, mentre prima la lettura interrogava una cella che nessuno aveva mai
+// scritto con quel significato. Cio' che perde non e' la correttezza — e' che
+// `CMHCScale=6` era stato tarato ATTORNO al lookup rotto. Col bug il termine 1-ply
+// era un bit ~casuale (positivo circa meta' delle volte); corretto diventa il piu'
+// informativo dei cinque e sara' positivo molto piu' spesso, quindi il fattore sale
+// sistematicamente e i bonus conthist si gonfiano oltre quanto la taratura
+// prevedesse. Il difetto era stato ASSORBITO dalla taratura fatta sopra di esso.
+// ⇒ SEGUITO: non archiviare. Serve un SPSA su `CMHCScale` e sui parametri conthist
+//   che ci stanno sopra, con CMHCPly1=1 FISSO. Il fix da solo rompe un equilibrio;
+//   il guadagno arriva solo ritarando quell'equilibrio.
+// 🔑 Lezione generale, valida oltre questo caso: un difetto che vive nel codice
+//   abbastanza a lungo viene assorbito dalle tarature che gli si costruiscono
+//   sopra, e correggerlo ISOLATAMENTE puo' peggiorare il motore. Non vale per i
+//   difetti che non hanno parametri tarati sopra — es. CorrTBGuard.
+int g_cmhc_ply1 = 0;
 int g_probcut_margin =
     234; // ProbCut: capture verification must beat beta by this margin
 int g_probcut_improve = 4; // Q-20b (Alexandria): abbassa probcut_beta di questo
@@ -2266,6 +2341,22 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "AspScoreMult")) {
     g_asp_score_mult = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "CMHCPly1")) {
+    g_cmhc_ply1 = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "Rule50Formula")) {
+    g_rule50_formula = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "CorrTBGuard")) {
+    g_corr_tb_guard = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "NegExtOrder")) {
+    g_negext_order = value != 0;
     return true;
   }
   if (!strcmp(name, "CMHCScale")) {
@@ -6757,7 +6848,31 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
   // partite di rating, che usano 6 pezzi. Stesso schema del gate TMv2 a incremento zero.
   // Nessun toggle: e' correttezza, e senza tablebase configurate e' un no-op esatto
   // (nessuno score cade fra 29873 e 30000 se non viene da Syzygy).
-  constexpr int corr_max = mate_score - max_ply;   // 29936 = TB_VALUE_WIN
+  // 🔴 IL FIX DEL 2/08 QUI SOPRA E' UN NO-OP — trovato il 7/08/2026.
+  // `mate_score - max_ply` = 29936 = `TB_VALUE_WIN`, cioe' il bordo **ALTO** della
+  // banda [29873, 29936] che il commento stesso descrive. La guardia `>= 29936`
+  // cattura un solo valore, e quel valore non arriva mai qui:
+  //   - il probe e' gated da `td.ply &&` (:7146) ⇒ lo score vale al piu' 29935;
+  //   - il nodo che fa il probe RITORNA subito (:7160) senza chiamare td_corr_update;
+  //   - quello che arriva al padre e' TB_VALUE_WIN - (ply+1) ≤ 29935.
+  // ⇒ la banda passa ancora INTERA e il difetto descritto sopra e' tuttora vivo.
+  // Il ragionamento era giusto, la costante e' il bordo opposto.
+  //
+  // CorrTBGuard=1 usa il bordo BASSO: `mate_score - 2*max_ply` = 29872, appena sotto
+  // il minimo della banda, quindi `>= 29872` la cattura tutta. Sicuro: i mate score
+  // valgono `mate_value - ply` ∈ [30936, 31000] e restano filtrati comunque; allargare
+  // la banda di rifiuto di 64 unita' (~27 cp all'estremo di un range gia' assurdo) non
+  // toglie nessun update legittimo.
+  //
+  // ⚠️ VINCOLO DI MISURA: senza `SyzygyPath` configurato questo fix e' un no-op ESATTO
+  // — nessuno score cade in [29873, 29935] se non viene da Syzygy. Un SPRT senza
+  // tablebase misurera' **zero per costruzione**. Va misurato con le TB caricate, che
+  // e' il regime delle liste di rating (CCRL usa 6 pezzi) ma non quello dei nostri
+  // test: e' esattamente il motivo per cui e' sopravvissuto finora.
+  // Sonda prima delle partite: contatore di |best_score| ∈ [29873, 29936] con TB
+  // attive. Deve essere > 0 oggi e 0 col fix. Prova binaria, zero partite.
+  const int corr_max = g_corr_tb_guard ? mate_score - 2 * max_ply   // 29872
+                                       : mate_score - max_ply;      // 29936
   if (best_score >= corr_max || best_score <= -corr_max)
     return;
   if (static_eval >= corr_max || static_eval <= -corr_max)
@@ -6865,8 +6980,13 @@ static inline int td_cmhc_factor(ThreadData &td, int move) {
     return 100;
   int pc = get_move_piece(move), tg = get_move_target(move);
   int consistent = 0;
-  if (td.ply >= 1) {
-    int p = td.move_stack[td.ply - 1];
+  // 1-ply: con CMHCPly1=1 si legge `move_stack[td.ply]`, la STESSA chiave con cui
+  // :8675/:8714 scrive la tabella. Con 0 resta `[td.ply-1]` = comportamento
+  // attuale, byte-identico. Nessuna guardia su ply: `move_stack[0]` vale 0 alla
+  // radice e il check `p &&` lo scarta, esattamente come fa `prev_cm` a :8675.
+  {
+    int p = g_cmhc_ply1 ? td.move_stack[td.ply]
+                        : (td.ply >= 1 ? td.move_stack[td.ply - 1] : 0);
     if (p &&
         td.continuation_history[get_move_piece(p)][get_move_target(p)][pc][tg] >
             0)
@@ -8064,13 +8184,34 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       // fail high over beta -> shrink by g_negext_tt (default 1=legacy, SF=3);
       // else on a cut node -> shrink by g_negext_cut (default 0=off, SF=2).
       // Co-tunable -> SPSA can dial a harmful negative extension back to 0.
+      // 🔴 NegExtCut E' CODICE MORTO CON L'ORDINE STORICO — trovato il 7/08/2026.
+      // I due rami sopra PARTIZIONANO tutto lo spazio: su un nodo non-PV la
+      // finestra e' nulla (alpha = beta-1), quindi ogni tt_score intero e' o
+      // >= beta o <= alpha, non esiste il mezzo. E `is_cut_node` vive solo sui
+      // non-PV. ⇒ il terzo ramo non ha nessun caso residuo in cui cadere.
+      // Verificato sul bench: NegExtCut a 0,1,2,3,4 da' TUTTI 212420 nodi.
+      // ⚠️ Il default e' 3 = MASSIMO del range: viene da un giro di SPSA che ha
+      // tarato rumore su un parametro inerte. Va tolto dallo spazio SPSA finche'
+      // NegExtOrder resta 0.
+      //
+      // Stockfish ha le stesse tre idee ma in ordine diverso, ed e' l'ordine a
+      // renderle tutte vive: mette `cutNode` PRIMA del confronto con alpha (e il
+      // suo terzo test e' `ttValue <= value`, contro il risultato della ricerca
+      // singular, che non e' il complemento del primo).
+      //
+      // NegExtOrder=1 adotta l'ordine SF: cut node prima di alpha. Effetto reale:
+      // un cut node con tt_score <= alpha passa da -g_negext_alpha a
+      // -g_negext_cut. I nodi PV con tt_score <= alpha restano su alpha.
+      // 0 = ordine storico, byte-identico.
       else if (g_negext_tt > 0 && tt_score >= beta) {
         extension = -g_negext_tt;
       }
       // F-018.6d NegExtAlpha (0=off): la TT move non batte nemmeno alpha -> il
       // nodo non e' singolare ne' promettente, riduci l'estensione (Berserk:
       // -1).
-      else if (g_negext_alpha > 0 && tt_score <= alpha) {
+      else if (g_negext_order && g_negext_cut > 0 && is_cut_node) {
+        extension = -g_negext_cut;
+      } else if (g_negext_alpha > 0 && tt_score <= alpha) {
         extension = -g_negext_alpha;
       } else if (g_negext_cut > 0 && is_cut_node) {
         extension = -g_negext_cut;
