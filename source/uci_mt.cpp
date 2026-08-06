@@ -415,7 +415,7 @@ void uci_loop()
             // in mezzo. Con "%s %s" usciva "Triumviratus  - 7.0" (doppio spazio): l'id
             // name e' l'identita' del motore per GUI e liste rating, deve essere pulito.
             // La data di build in coda distingue le build giornaliere fra loro:
-            // "Triumviratus - 7.0 2026-07-31".
+            // "Triumviratus - 7.0 2026-08-06".
             printf("id name %s%s %s\n", NAME, VERSION, build_date());
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
@@ -597,7 +597,7 @@ void uci_loop()
             printf("option name SingularDoubleMargin type spin default 59 min 0 max 200\n"); // bakato: 63->43
             // F-002/F-004/F-005 (audit 2026-07-02): ex-hardcoded promossi a tunable + LMR-catture.
             // Default = comportamento storico bit-identico; leve per SPSA (preset 5.1 in SPSA Lab).
-            printf("option name QSDeltaMargin type spin default 3000 min 200 max 3000\n");   // delta-pruning qsearch (unita'-eval)
+            printf("option name QSDeltaMargin type spin default 1525 min 200 max 3000\n");   // delta-pruning qsearch (unita'-eval). BAKED 6/08/2026: era 3000 = MASSIMO del range, cioe' delta pruning SPENTO. Gate +7,37 +/- 5,65 @4.480g a 30+0.3
             printf("option name SingularMarginPD type spin default 1 min 1 max 10\n");        // margine singular per-depth
             printf("option name TMDropThresh type spin default 6 min 1 max 100\n");           // soglia score-drop TM; BAKE 2026-07-03 TM post-F-003 8->6
             printf("option name TMDropCap type spin default 160 min 50 max 1000\n");          // cap score-drop TM; BAKE 2026-07-03 TM post-F-003 200->160
@@ -793,7 +793,7 @@ void uci_loop()
             printf("option name TBScoreTT type check default true\n");                        // S-10 (SF): scrivi il risultato TB in TT a depth+6 (niente ri-probe)  [BAKATA]
             printf("option name ProbCutImproving type check default true\n");                // Q-10 (Reckless+SF convergenti): verifica ProbCut a depth-1 quando improving
             printf("option name QSCaptHist type check default true\n");                      // Q-17 (Caissa): capture-history aggiornata ai beta-cutoff di qsearch
-            printf("option name QSCaptHistScale type spin default 86 min 0 max 400\n");      // Q-17: % del bonus/malus (leva SPSA dedicata)
+            printf("option name QSCaptHistScale type spin default 72 min 0 max 400\n");      // Q-17: % del bonus/malus (leva SPSA dedicata). BAKED 6/08/2026 col vettore qsearch
             printf("option name NodeCache type check default true\n");                       // Q-11 (Caissa): ordering quiet near-root pesato sui nodi spesi (cross-iterazione E cross-move)
             printf("option name NodeCacheBonus type spin default 2080 min 0 max 16384\n");    // Q-11: bonus max (Caissa: 4096, range tune [1000,8000])
             printf("option name NodeCacheMinSum type spin default 1066 min 0 max 8192\n");     // Q-11: nodes_sum minimo prima di applicare il bonus (Caissa: 256)

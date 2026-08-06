@@ -948,7 +948,8 @@ static bool g_tb_tt_store = true;
 static bool g_probcut_improving = true;
 // Q-17 (Caissa): capture-history aggiornata anche ai beta-cutoff di QSEARCH.
 static bool g_qs_capthist = true;
-int g_qs_capthist_scale = 86; // % di td_stat_bonus(1)/malus — leva SPSA
+int g_qs_capthist_scale = 72; // % di td_stat_bonus(1)/malus — leva SPSA
+                              // BAKED 6/08/2026 col vettore qsearch (vedi g_qs_delta)
                               // dedicata (bonus/malus qsearch fissi altrimenti)
 // Q-16 (Caissa): extension=1 ai nodi PV se la mossa e' la ttMove ED e' una
 // ricattura sulla casa dell'ultima mossa avversaria (gate strettissimo).
@@ -1361,7 +1362,15 @@ static bool g_follow_pv = false;
 // tunable + LMR-catture. TUTTI i default = valore hardcoded storico =
 // comportamento BIT-IDENTICO (verificato via bench); si accendono solo dal
 // tuning/SPRT.
-int g_qs_delta = 3000; // F-002: delta-pruning qsearch (era const DELTA=1000; a
+// 🔴 BAKED il 6/08/2026: 3000 -> 1525. Il 3000 era il MASSIMO del range (200..3000),
+// cioe' il delta pruning in quiescence era di fatto SPENTO, e ci era arrivato spinto da
+// due SPSA precedenti. Non era una taratura: era un meccanismo disattivato per sbaglio.
+// Co-tunato con QSCaptHistScale via SPSA a 20+0.2 (830 iter), gate a 30+0.3:
+//   +7,37 +/- 5,65 su 4.480 partite, LLR 2,00 (67,8%).
+// ⚠️ Il vettore COSTA nodi: bench 251.855 -> 261.287 (+3,74%), ~2,9 Elo di debito a
+// 55 Elo/raddoppio, quindi il guadagno lordo del meccanismo e' piu' alto del misurato.
+// ⚠️ Il bisect fra le due leve NON e' stato fatto: non sappiamo quale delle due paghi.
+int g_qs_delta = 1525; // F-002: delta-pruning qsearch (era const DELTA=1000; a
                        // scala-56 ~1785cp reali)
 int g_singular_mpd =
     1; // F-002: margine singular PER-DEPTH (era hardcoded 2*depth, unita'-eval)

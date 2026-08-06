@@ -19,7 +19,7 @@
 // Data di BUILD, presa dal compilatore: cambia da sola a ogni ricompilazione, cosi'
 // due build dello stesso giorno-diverso si distinguono nella GUI senza toccare il
 // sorgente. `__DATE__` e' "Jul 31 2026" (giorno con lo SPAZIO davanti sotto il 10):
-// build_date() lo riscrive in "2026-07-31", che si ordina.
+// build_date() lo riscrive in "2026-08-06", che si ordina.
 inline const char* build_date() {
   static char iso[11];
   if (!iso[0]) {
