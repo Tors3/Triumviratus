@@ -82,6 +82,21 @@ ifneq (,$(filter nopext,$(MAKECMDGOALS))$(NOPEXT))
   $(info [i] build senza PEXT (fancy-magics + dual hyperbola quintessence))
 endif
 
+# `make intel` (equivalente: INTEL=1, che propaga ai target PGO ricorsivi): asse VENDOR,
+# ortogonale all'ISA — si combina con avx512, nopext o niente. Spegne `persp`
+# (append_changed_indices_both, porting SF 7b550409), che aggiorna le due prospettive in
+# una sola passata sulla dirty list. Misurato a ordine alternato con nulli di apertura e
+# chiusura: +0,63% su Zen2, +1,87% su Zen4, ma **-1,2% su Intel Rocket Lake** (15/300
+# posizioni). Cambia solo COME si aggiorna l'accumulatore, non cosa contiene:
+# node-identical, la firma bench NON deve cambiare.
+# ⚠️ A compile-time e non con dispatch cpuid: sotto PGO il ramo non preso durante il
+# training resta freddo, quindi un dispatch a runtime svantaggerebbe per costruzione uno
+# dei due percorsi.
+ifneq (,$(filter intel,$(MAKECMDGOALS))$(INTEL))
+  DEFS += -DTRIUMV_NO_PERSP_BOTH
+  $(info [i] build Intel: persp (append_changed_indices_both) SPENTA)
+endif
+
 # `make profile` abilita i cycle-counter per-fase (eval/movegen/make/tt/score) nel
 # bench (vedi profile.h). Default = no-op, byte-identico.
 ifeq (profile,$(filter profile,$(MAKECMDGOALS)))
@@ -176,6 +191,7 @@ CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 all: $(EXE)
 avx512: $(EXE)
 nopext: $(EXE)
+intel: $(EXE)
 profile: $(EXE)
 release: $(EXE)
 android: $(EXE)
@@ -224,4 +240,4 @@ endif
 	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)"
 
-.PHONY: all avx512 nopext profile release android android-dotprod clean pgo-avx512 pgo-avx2
+.PHONY: all avx512 nopext intel profile release android android-dotprod clean pgo-avx512 pgo-avx2

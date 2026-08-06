@@ -178,13 +178,29 @@ def main():
     newgame_every = pop_flag("--newgame-every", 0)    # 0 = mai (storico)
     mix_pct       = pop_flag("--mix-endgames", 0)     # % di EXTRA_FENS interleaved
 
+    # --times "250,1000,4000,12000": spettro di movetime esplicito. Va tolto da `args`
+    # INSIEME agli altri flag, prima di leggere i posizionali, o "--times" finirebbe
+    # dentro n_pos quando i posizionali sono meno di quattro.
+    times_s = None
+    if "--times" in args:
+        i = args.index("--times")
+        times_s = args[i + 1]
+        del args[i:i + 2]
+
     exe      = args[0] if len(args) > 0 else \
         os.path.join(_REPO, "x64", "Release", "Triumviratus_pgo.exe")
     movetime = int(args[1]) if len(args) > 1 else 0   # 0 = usa lo spettro
     book     = args[2] if len(args) > 2 else DEFAULT_BOOK
     n_pos    = int(args[3]) if len(args) > 3 else 60
 
-    times = [movetime] if movetime > 0 else MOVETIMES
+    # NB: `--times` e' gia' stato tolto da `args` insieme agli altri flag, sopra.
+    # (Qui c'era un SECONDO blocco di parsing identico: non trovando piu' il flag
+    # rimetteva times_s = None e si ricadeva sullo spettro bullet. Il primo test del
+    # profilo lungo ha misurato due build allenate allo stesso modo -> +0,16%.)
+    if times_s:
+        times = [int(t) for t in times_s.replace(" ", "").split(",") if t]
+    else:
+        times = [movetime] if movetime > 0 else MOVETIMES
     positions, src = load_positions(book, n_pos)
 
     # --mix-endgames PCT: 1 posizione EXTRA_FENS ogni round(100/PCT) del libro.
