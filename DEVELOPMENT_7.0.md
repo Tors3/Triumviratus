@@ -75,6 +75,7 @@ separately and published when the work is closed.
 | 4 | → **qsearch delta pruning restored** | `QSDeltaMargin` 3000 → 1525, co-tuned with `QSCaptHistScale` 86 → 72. 3000 was the **maximum of the parameter's own range**, i.e. delta pruning was effectively off | 30+0.3 | 5,994 | **+5.57 ± 4.84** (LLR 1.89, stopped before the bound) |
 | 5 | → **material correction table removed** | `CorrMaterial` off again. Stage 3 changed three things at once, so it measured the block; isolated — continuation weight and cap identical on both sides — the table loses. Figure is for the engine *without* it | 20+0.2 | 1,298 | **+18.49 ± 11.43** (LOS 99.93%) |
 | 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
+| 7 | `6.0` → **7.0 06-08-2026** | Results of Trium_7.0 vs Trium_6.0 (1t, 128MB, UHO_4060_v4.epd). nElo: 75.18 +/- 24.08, Wins: 245, Losses: 158, Draws: 397 | 30+0.3 | 800 | **+37.93 ± 12.25** (LOS 100.00%) |
 
 > ⚠️ **The engine signature changes at every stage: `bench` goes 207,259 → 225,898 (stage 2) →
 > 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6).** The current
