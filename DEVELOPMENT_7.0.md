@@ -64,8 +64,8 @@ feature set are in [NETWORKS.md](NETWORKS.md).** Nothing about training is repea
 ## 2. Measured Elo, incremental
 
 Each stage is measured **against the one above it**, not against 6.0. The stages therefore
-compose, but the total is *not* their sum — a whole-engine gate against 6.0 will be measured
-separately and published when the work is closed.
+compose, but the total is *not* their sum — the whole engine against 6.0 is measured separately
+and reported under the table.
 
 | # | stage | what it is | TC | games | Elo |
 |---|---|---|---|---|---|
@@ -75,7 +75,19 @@ separately and published when the work is closed.
 | 4 | → **qsearch delta pruning restored** | `QSDeltaMargin` 3000 → 1525, co-tuned with `QSCaptHistScale` 86 → 72. 3000 was the **maximum of the parameter's own range**, i.e. delta pruning was effectively off | 30+0.3 | 5,994 | **+5.57 ± 4.84** (LLR 1.89, stopped before the bound) |
 | 5 | → **material correction table removed** | `CorrMaterial` off again. Stage 3 changed three things at once, so it measured the block; isolated — continuation weight and cap identical on both sides — the table loses. Figure is for the engine *without* it | 20+0.2 | 1,298 | **+18.49 ± 11.43** (LOS 99.93%) |
 | 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
-| 7 | `6.0` → **7.0 06-08-2026** | Results of Trium_7.0 vs Trium_6.0 (1t, 128MB, UHO_4060_v4.epd). nElo: 75.18 +/- 24.08, Wins: 245, Losses: 158, Draws: 397 | 30+0.3 | 800 | **+37.93 ± 12.25** (LOS 100.00%) |
+
+**The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the 7.0 build of
+6 August, each loading its own network, AVX-512, one thread, 128 MB, UHO_4060_v4:
+
+> **+37.93 ± 12.25 Elo** — LOS 100%, nElo +75.18 ± 24.08, 800 games at 30+0.3
+> (245 wins, 158 losses, 397 draws)
+
+The network alone was worth +23.41. The remaining ~14 Elo is the search work, which is the number
+that could not be read off the table above: the stages are each measured against a different
+baseline and at three different time controls, so they do not add up to anything.
+
+⚠️ 800 games, stopped by hand — the interval is wide and the run is not a gate against a bound.
+It is a point estimate, and it is the last one that will change: **7.0 is not closed.**
 
 > ⚠️ **The engine signature changes at every stage: `bench` goes 207,259 → 225,898 (stage 2) →
 > 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6).** The current
