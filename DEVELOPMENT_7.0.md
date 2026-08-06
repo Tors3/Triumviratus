@@ -73,11 +73,26 @@ separately and published when the work is closed.
 | 2 | → **quiet promotions in qsearch** | `PromoQS=6`: promotions generated in qsearch, exempt from the capture cap, filtered by SEE ≥ 0 | 25+0.25 | 2,572 | **+8.38 ± 6.67** (LOS 99.31%) |
 | 3 | → **corrections block, retuned** | material correction table switched back on and the block rebalanced around it: material weight 67, continuation weight 85, cap 48 | 30+0.3 | **30,530** | **+2.65 ± 2.14** (LOS 99.25%, LLR 2.96) |
 | 4 | → **qsearch delta pruning restored** | `QSDeltaMargin` 3000 → 1525, co-tuned with `QSCaptHistScale` 86 → 72. 3000 was the **maximum of the parameter's own range**, i.e. delta pruning was effectively off | 30+0.3 | 5,994 | **+5.57 ± 4.84** (LLR 1.89, stopped before the bound) |
+| 5 | → **material correction table removed** | `CorrMaterial` off again. Stage 3 changed three things at once, so it measured the block; isolated — continuation weight and cap identical on both sides — the table loses. Figure is for the engine *without* it | 20+0.2 | 1,298 | **+18.49 ± 11.43** (LOS 99.93%) |
+| 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
 
 > ⚠️ **The engine signature changes at every stage: `bench` goes 207,259 → 225,898 (stage 2) →
-> 251,855 (stage 3) → 261,287 (stage 4).** The current signature is **261,287**; any script or
-> procedure still checking an earlier value is verifying the wrong constant, and each of those is
-> valid only for binaries built before the corresponding bake.
+> 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6).** The current
+> signature is **205,355**; any script or procedure still checking an earlier value is verifying
+> the wrong constant, and each of those is valid only for binaries built before the corresponding
+> bake.
+
+<sub>Stage 6 shrinks the tree by 17.7%, which is most of where its Elo comes from. Once the eval
+read back from the table stops contracting toward zero on every revisit, the margins that compare
+against it — reverse futility, null-move, razoring — are applied to the real value instead of a
+degraded one, and they fire when they should. The gain is not only better moves; it is also a
+smaller tree in the same time.</sub>
+
+<sub>Stage 5 is a correction to stage 3, not a reversal of it. Stage 3 turned the material table on
+*and* retuned continuation weight 100 → 85 and cap 50 → 48 in the same comparison, so its +2.65 over
+30,530 games belongs to the block; the table itself was never isolated. Measured on its own it costs
+11.5% of the tree and does not pay for it. The retuned continuation weight and cap stay: they were
+co-tuned with the table on and have not been re-checked against 100 / 50, which is open work.</sub>
 
 <sub>Stage 2 is worth recording because of what it cost. Quiet promotions were generated only
 inside the quiet buffer, and qsearch never asks for it — so the engine declared those moves
@@ -126,13 +141,42 @@ Every change below is **node-identical**: the search tree is bit-for-bit the sam
 can alter playing strength at a fixed node count — only the rate at which nodes are produced. Each
 was gated on an unchanged `bench` signature before being measured at all.
 
-**No per-change figures are given.** The harness that produced them ran the two binaries in a
-fixed A-then-B order on each position, so whichever binary occupied the second slot absorbed the
-machine's thermal drift; run against itself — same binary, same options, both sides — it reported
-a nine-sigma difference out of nothing. It now alternates the order within each pair, drops exact
-ties from the sign test, refuses to run when a requested option is not announced by the engine,
-and reports the A-first and B-first sub-samples separately as a built-in drift check. A single
-end-to-end measurement of the finished engine will replace the withdrawn figures.
+The first set of figures published here was **withdrawn**. The harness that produced them ran the
+two binaries in a fixed A-then-B order on each position, so whichever binary occupied the second
+slot absorbed the machine's thermal drift; run against itself — same binary, same options, both
+sides — it reported a nine-sigma difference out of nothing. It now alternates the order within each
+pair, drops exact ties from the sign test, refuses to run when a requested option is not announced
+by the engine, and reports the A-first and B-first sub-samples separately as a built-in drift check.
+
+**End to end, against the 31 July build**, both at their own defaults, AVX2, PGO, 300 positions
+interleaved at depth 20 on an idle Zen4 laptop:
+
+> **+3.3% NPS**
+
+Everything below was then re-measured on the fixed harness, each change **on its own** against a
+baseline built from the same source with all of them off. Six PGO builds, all at `bench` 249,466.
+
+| change | in isolation |
+|---|---|
+| hybrid update on king moves | **+3.4%** |
+| pawn-block refresh cache | **+2.8%** |
+| mailbox `piece_on[64]` | **+2.5%** |
+| both perspectives in one dirty-list pass (AVX2) | **+1.5%** |
+| weight-row permutation for locality | **≈ 0%** |
+| all five together | **+1.8%** |
+
+Two things in that table matter more than the individual numbers.
+
+**The five do not add up.** Together they are worth +1.8%, against roughly +10% if they composed.
+They all attack the same bottleneck — memory traffic in the accumulator — so each one finds in
+cache what the previous one already brought there. The remaining +1.5% of the end-to-end figure
+comes from the HalfKA row prefetch, which has no compile-time switch and could not be isolated.
+
+**The permutation is worth nothing.** Three commits claimed +1.5%, +2.4% and +3.1% for reordering
+weight rows by access frequency and then by co-occurrence — nearly half the campaign. Measured
+properly it is inside the noise. The machinery it needs (a generated permutation, its inverse on
+save, an 8192² co-occurrence profiler) remains in the tree and buys nothing; a planned second
+version, estimated at a further +0.3-1% *on top of* this one, was dropped.
 
 **Feature generation**
 

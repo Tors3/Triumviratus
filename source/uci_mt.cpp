@@ -556,7 +556,7 @@ void uci_loop()
             printf("option name MulticutTTMalusScale type spin default 100 min 0 max 300\n");
             printf("option name MultiCut type check default true\n");
             printf("option name TTPvAmount type spin default 1 min 0 max 2\n");   // ex-PV LMR reduction in ply (0=off); co-tunable
-            printf("option name TTEvalNoDecay type spin default 0 min 0 max 1\n");   // riscrive in TT l'eval ORIGINALE invece del round-trip (che tronca verso zero e COMPONE); 0=off
+            printf("option name TTEvalNoDecay type spin default 1 min 0 max 1\n");   // BAKED ON 6/08/2026: riscrive in TT l'eval ORIGINALE invece del round-trip (che tronca verso zero e COMPONE). Gate +18,06 +/- 8,07, LOS 100%, LLR 2,95 su 2618g @20+0.2. 0 = comportamento pre-6/08.
             printf("option name TTCutExact type spin default 0 min 0 max 1\n");   // entry EXACT esenti dalla coerenza cutnode di TTCutRefine (un EXACT non ha direzione di bound); 0=off
             printf("option name NMPEvalScale type check default false\n");
             printf("option name RFPDepth8 type check default false\n");

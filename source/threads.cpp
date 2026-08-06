@@ -179,7 +179,20 @@ static inline int tt_eval_redamp(int v, int fifty) {
 // zero solo sotto 107 unita', o quando il fifty cambia fra le rivisite
 // (trasposizioni: la chiave TT non contiene il fifty). Quindi il difetto e' reale
 // ma piu' piccolo di quanto sembri a prima vista: stima onesta +2..+6 Elo.
-static int g_tt_eval_no_decay = 0;
+// 🔴 BAKED ON il 6/08/2026, e la stima qui sopra era SBAGLIATA di un fattore tre:
+// gate SPRT SUPERATO con **+18,06 +/- 8,07 Elo, LOS 100%, LLR 2,95 (bound 2,94),
+// 2618 partite @20+0.2**, baseline CorrMaterial=false. E' il guadagno singolo piu'
+// grosso della campagna di ricerca 7.0.
+// 🔑 Perche' la stima era bassa: contava la perdita per rivisita e l'attrattore a
+// fifty costante, cioe' il caso statico. Il caso che paga e' quello DINAMICO — le
+// trasposizioni, dove il fifty cambia fra le rivisite e l'attrattore si sposta,
+// quindi la contrazione non si ferma mai. Non e' stato quantificato perche' non lo
+// si vede in una simulazione dell'aritmetica: si vede solo giocando.
+// 🔑 E dice quale classe di fix paga: TTEvalNoDecay corregge un errore che si
+// COMPONE e non apre ricerca nuova. Gli altri due fix della stessa coda —
+// QSCapRecap e BadCapSkipAfter — AGGIUNGONO sottoalberi, e hanno perso entrambi
+// (-3,45 e -16,45). Tre su tre coerenti con questa distinzione.
+static int g_tt_eval_no_decay = 1;
 
 // Valore da mettere in TT allo store. Le QUATTRO guardie replicano ESATTAMENTE
 // la condizione sotto cui raw_eval e' stato derivato da tt_eval; togliendone una

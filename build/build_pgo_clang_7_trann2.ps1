@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 7.0 TRANN2
 #  (= SFNNv16 + blocco PassedPawns nostro). Rete: legio-septima, caricata a
 #  runtime ACCANTO all'exe.

@@ -212,7 +212,20 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
 
     else
     {
-#ifndef TRIUMV_NO_HYBRID_ACC
+// 🔴 6/08/2026 — SPENTA SU AVX-512, come la pawn cache poco sotto (:1214) e per la
+// stessa ragione. Misurato con banco interlacciato, build PGO appaiate, node-identical
+// a bench 205355, laptop scarico:
+//     AVX2    : +3,4%  (300 pos, depth 19)
+//     AVX-512 : -1,8%  (300 pos, depth 20, stabile su sei letture consecutive)
+// Su AVX-512 i tile sono piu' larghi: ricostruire l'HalfKA precedente dalla finny table
+// costa piu' di quanto si risparmi non ricostruendo le colonne di threat, e il percorso
+// sparso che si evita era gia' piu' efficiente in partenza. E' il terzo caso con questa
+// firma — pawn cache (+1,37% AVX2 / -0,11% AVX-512) e persp (+2,3% / -1,3%) — quindi
+// non e' un'anomalia: e' la regola su questa ISA.
+// ⚠️ Una prima lettura dava -8,34%, poi una seconda +1,3% e poi 0,00%: quest'ultima era
+//    presa con una compilazione PGO in corso sulla stessa macchina. Il numero buono e' il
+//    -1,8% a macchina scarica. Le misure NPS su laptop non valgono niente sotto carico.
+#if !defined(TRIUMV_NO_HYBRID_ACC) && !defined(USE_AVX512)
         // Percorso HYBRID (SF db98633b): una mossa di re che NON attraversa la
         // colonna d/e lascia validi tutti gli indici di threat/PawnPair/PassedPawns,
         // perche' quelli dipendono da OrientTBL[ksq] che ha due soli valori. In quel
