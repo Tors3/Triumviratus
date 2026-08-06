@@ -461,12 +461,28 @@ int g_corr_np_weight = 100; // /100 sul contributo delle due tabelle non-pawn
 // in isolamento (piatta @1290g, poi -3.17 LOS 30%) ed e' anche quello con il
 // movente peggiore: la correzione da materiale e' informazione che la RETE ha
 // gia'. Gli altri due restano ON (GoodCapHistDiv=32, QsStalemateCheck).
-// 🔴 BAKED ON il 6/08/2026: blocco corrections tarato via SPSA a TC 30+0.3 e poi
+// BAKED ON il 6/08/2026 (mattina): blocco corrections tarato via SPSA a TC 30+0.3 e poi
 // gate SPRT SUPERATO: +2,65 +/- 2,14 su 30.530 partite @30+0.3, LOS 99,25%, LLR 2,96.
-// ⚠️ A TC CORTO LA STESSA CONFIGURAZIONE PERDE: -11,38 +/- 10,09 @2016g a 15+0.15.
-// Accenderlo costa +11,5% di albero (bench 225.898 -> 251.855) = ~8,8 Elo di debito, che
-// a TC lungo si ripaga e a TC corto no. Vettore: material 67, cont 85, cap 48.
-static bool g_corr_material = true;
+// A TC CORTO la stessa configurazione perdeva: -11,38 +/- 10,09 @2016g a 15+0.15.
+// Accenderlo costa +11,5% di albero (bench 225.898 -> 251.855) = ~8,8 Elo di debito.
+//
+// 🔴 SBAKATA il 6/08/2026 (pomeriggio). Il gate da 30.530 partite NON misurava
+// CorrMaterial: muoveva TRE cose insieme — material off->on, cont 100->85, cap 50->48 —
+// quindi il +2,65 e' del BLOCCO, e puo' venire tutto dalla ritaratura cont/cap. Isolata
+// non era mai stata misurata, ne' li' ne' altrove.
+// Misura ISOLATA (cont 85 e cap 48 IDENTICI sui due lati, cambia solo CorrMaterial):
+//     -18,49 +/- 11,43 Elo, LOS 0,07%, PairsRatio 0,67, 1298 partite @20+0.2.
+// Un secondo run a 40+0.4 e' stato interrotto a 598 partite (-6,97 +/- 15,69): resta
+// INCONCLUSO, la banda non separa nulla. La decisione si regge sul punto a 20+0.2.
+// ⇒ Serviva una prova positiva per giustificare l'11,5% di albero, e non esiste.
+//    Spegnerla non e' una scommessa: toglie un meccanismo non dimostrato e restituisce
+//    i nodi. Il movente era gia' il piu' debole del blocco (la correzione da materiale
+//    e' informazione che la RETE ha gia').
+// ⚠️ `cont 85 / cap 48` restano quelli co-tunati da SPSA CON material acceso. Il test
+//    dice "OFF@85/48 batte ON@85/48", NON dice quale sia il miglior OFF: i default
+//    pre-blocco erano 100 / 50, e il confronto OFF@85/48 vs OFF@100/50 non e' stato
+//    fatto. In coda, non urgente.
+static bool g_corr_material = false;
 int g_corr_material_weight = 67; // /100 sul contributo della tabella material
 
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di

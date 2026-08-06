@@ -97,6 +97,22 @@ ifneq (,$(filter intel,$(MAKECMDGOALS))$(INTEL))
   $(info [i] build Intel: persp (append_changed_indices_both) SPENTA)
 endif
 
+# 🔴 6/08/2026 — `persp` si spegne anche per ISA, non solo per vendor. Misurato su Zen4
+# 8845HS, build PGO fresche e node-identical (bench 261287 su tutte le varianti):
+#     AVX2    : +2,3% con persp ACCESA (mediana stabile su 5 letture)
+#     AVX-512 : ~-1,3%, lettura instabile (+0,97 / -2,60 / -1,35 / -1,82 / -1,28)
+# Su AVX-512 i tile sono piu' larghi e la pressione sui registri cambia: stesso profilo
+# della pawn cache (+1,37% AVX2, -0,11% AVX-512, spenta li'). Negativa su AMD, e su Intel
+# era gia' -1,17% ⇒ nessun vendor la vuole accesa su AVX-512: niente split, una build sola.
+# ⚠️ Il -1,3% e' meno solido del +2,3% (60 posizioni, mediana instabile, senza nullo di
+#    sessione). Basta a NON accendere una patch; non basterebbe ad accenderla.
+ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
+  ifeq (,$(findstring TRIUMV_NO_PERSP_BOTH,$(DEFS)))
+    DEFS += -DTRIUMV_NO_PERSP_BOTH
+    $(info [i] build AVX-512: persp SPENTA per ISA (misura 6/08/2026))
+  endif
+endif
+
 # `make profile` abilita i cycle-counter per-fase (eval/movegen/make/tt/score) nel
 # bench (vedi profile.h). Default = no-op, byte-identico.
 ifeq (profile,$(filter profile,$(MAKECMDGOALS)))

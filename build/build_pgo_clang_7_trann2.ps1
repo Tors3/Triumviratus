@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 #  Build RELEASE clang-cl + ThinLTO + PGO (IR-based) per TRIUMVIRATUS 7.0 TRANN2
 #  (= SFNNv16 + blocco PassedPawns nostro). Rete: legio-septima, caricata a
 #  runtime ACCANTO all'exe.
@@ -138,6 +138,17 @@ function Build-Variant([string]$tag) {
     $noPersp = $false
     $baseTag = $tag
     if ($tag -match '-intel$') { $noPersp = $true; $baseTag = $tag -replace '-intel$','' }
+    # 🔴 6/08/2026 — `persp` si spegne anche per ISA, non solo per vendor. Misurato su
+    # Zen4 8845HS con build PGO fresche e node-identical (bench 261287 su tutte):
+    #     AVX2    : +2,3% con persp ACCESA (mediana stabile su 5 letture, 50 pos)
+    #     AVX-512 : ~-1,3%, e la lettura OSCILLA (+0,97 / -2,60 / -1,35 / -1,82 / -1,28)
+    # Su AVX-512 i tile sono piu' larghi e la pressione sui registri cambia: e' lo stesso
+    # profilo della pawn cache (+1,37% AVX2, -0,11% AVX-512, spenta li'). Il segno e'
+    # negativo su AMD e su Intel era gia' -1,17%: nessun vendor ha motivo di tenerla
+    # accesa su AVX-512, quindi NIENTE split su quella ISA — una sola build.
+    # ⚠️ Il -1,3% e' meno solido del +2,3%: 60 posizioni, mediana instabile, senza nullo
+    #    di sessione. Basta a NON accendere una patch, non basterebbe ad accenderla.
+    if ($baseTag -match '^avx512') { $noPersp = $true }
 
     # PGO e' gia' specifico per questa macchina (profilato QUI), quindi tune=native
     # e' la scelta coerente. Effetto misurato sulla 6.0: dentro il rumore, tenuto
@@ -254,9 +265,11 @@ $variants = switch ($Arch) {
     # matrice di release completa. avx2-nopext e' per AMD Zen1/Zen2 (pext microcodato):
     # senza, quei tester girano ~15-20% piu' lenti con la build "avx2".
     # avx2-intel = stesso ISA di avx2 ma senza `persp`, che su Intel costa -1,2%.
-    # ⚠️ avx512-intel / avx512icl-intel NON sono ancora qui: il vendor split su AVX-512
-    # non e' misurato (la sessione Zen4 fu invalidata dal suo nullo, quella Intel e' in
-    # corso). Si compilano gia' a mano; entrano in `all` solo quando c'e' il dato.
+    # ✅ 6/08/2026 — il vendor split su AVX-512 e' CHIUSO, e la risposta e' "non serve":
+    # persp e' negativa li' per entrambi i vendor, quindi `avx512` la spegne per ISA
+    # (vedi Build-Variant) e una sola build copre AMD e Intel. `avx512-intel` resta
+    # costruibile a mano ma sarebbe identica ad `avx512`: fuori dalla matrice.
+    # Lo split resta invece necessario su AVX2: +2,3% su AMD, -1,17% su Intel.
     "all"  { @("avx512icl","avx512","avx2","avx2-intel","avx2-nopext") }
     default { @($Arch) }
 }

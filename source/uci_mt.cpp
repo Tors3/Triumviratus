@@ -502,7 +502,7 @@ void uci_loop()
             printf("option name CorrContWeight type spin default 85 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
-            printf("option name CorrMaterial type check default true\n");     // BAKED ON 6/08/2026: blocco corrections tarato SPSA@TC30, gate +2,65 +/- 2,14 su 30.530g @30+0.3 (LLR 2,96). A TC CORTO PERDE: -11,38 @15+0.15. Sbakata il 25/07 su 450 partite, riaperta e chiusa bene.
+            printf("option name CorrMaterial type check default false\n");    // SBAKATA il 6/08/2026: il gate da 30.530g @30+0.3 (+2,65 +/- 2,14) muoveva TRE cose insieme (material off->on, cont 100->85, cap 50->48), quindi non misurava questa leva. Isolata: -18,49 +/- 11,43, LOS 0,07%, 1298g @20+0.2. Costa +11,5% di albero senza prova positiva. Dettaglio in threads.cpp.
             printf("option name CorrMaterialWeight type spin default 67 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
