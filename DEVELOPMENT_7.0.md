@@ -76,6 +76,19 @@ and reported under the table.
 | 5 | → **material correction table removed** | `CorrMaterial` off again. Stage 3 changed three things at once, so it measured the block; isolated — continuation weight and cap identical on both sides — the table loses. Figure is for the engine *without* it | 20+0.2 | 1,298 | **+18.49 ± 11.43** (LOS 99.93%) |
 | 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
 | 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
+| 8 | → **negative extension on alpha** | `NegExtAlpha` 1 → 2: when the TT move does not even reach alpha the node is neither singular nor promising, so the extension shrinks further. One parameter, nothing else touched | 30+0.3 | 3,958 | **+6.50 ± 5.77** (LOS 98.64%) |
+
+<sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
+The audit that led to it started from a genuine defect: the third arm of the negative-extension
+chain, `NegExtCut`, is **unreachable**. On a non-PV node the window is null, so every score is
+either at or above beta or at or below alpha, and the two arms above it cover both cases; the
+bench confirms it, with the parameter at 0, 1, 2, 3 and 4 all returning exactly the same node
+count. Its shipped value was 3, the top of its own range, which means a tuning run had once
+optimised noise. Reordering the chain the way Stockfish does makes the branch live — and **it does
+not pay**: in a six-way gauntlet every configuration involving the reorder finished below the
+unmodified engine. What paid was a parameter three lines away that had always worked and had never
+been questioned. The defect did not contain the Elo; looking for it is what put the whole family
+under review.</sub>
 
 <sub>Stage 7 is the one entry here that was **not** taken for its Elo. `+1.04 ± 4.90` establishes only
 that it does no harm; the interval is far too wide to call it a gain, and the SPRT was stopped

@@ -625,7 +625,7 @@ void uci_loop()
             printf("option name SingularMinDepth type spin default 6 min 4 max 12\n");        // #6a gate depth singular (Obsidian 5, Berserk 6)
             printf("option name SingularDECap type spin default 1 min 0 max 16\n");           // #6b cap catena double-ext (0=off, Berserk 6)
             printf("option name SingularPlyGuard type check default false\n");                // #6c niente singular oltre ply >= 2*rootDepth
-            printf("option name NegExtAlpha type spin default 1 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1)
+            printf("option name NegExtAlpha type spin default 2 min 0 max 3\n");              // #6d negext se ttScore<=alpha (Berserk 1). BAKED A 2 il 7/08/2026: +6,50 +/- 5,77, LOS 98,64% su 3958g @30+0.3. Il 3 non e' mai stato provato
             printf("option name FailHighSmooth type check default true\n");                   // [BAKE 2026-07-03] return (score+beta)/2 su RFP/qsearch
             printf("option name NMPStaticMargin type check default false\n");                 // #8a NMP: static_eval >= beta - mult*depth + bias (SF)
             printf("option name NMPStaticMult type spin default 23 min 0 max 100\n");

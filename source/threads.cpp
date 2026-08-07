@@ -1861,10 +1861,22 @@ int g_singular_de_cap =
        // @500g (non conclusivo ma leaning+)]
 static bool g_singular_plyguard =
     false; // #6c niente singular oltre ply >= 2*rootDepth (anti-esplosione)
-int g_negext_alpha =
-    1; // #6d negext se ttScore <= alpha (0=off; Berserk 1) [BAKE 2026-07-04
-       // blocco secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g (non
-       // conclusivo ma leaning+)]
+// #6d negext se ttScore <= alpha (0=off; Berserk 1). [BAKE 2026-07-04 a 1, blocco
+// secondaudit_block SPSA, SPRT +8.34 Elo LOS79.4% @500g, non conclusivo]
+// 🔴 BAKED A 2 il 7/08/2026: **+6,50 +/- 5,77 Elo, LOS 98,64%, 3958 partite
+// @30+0.3**, un solo parametro di differenza. L'intervallo [0,7 ; 12,3] esclude
+// lo zero. Non portato al bound: a 30+0.3 la risposta era gia' leggibile.
+// 🔑 ATTRIBUZIONE, da non confondere leggendo il log. Il ramo MORTO trovato quel
+// giorno era `NegExtCut` (irraggiungibile: i due rami sopra partizionano lo
+// spazio in finestra nulla), e riattivarlo col riordino NON ha pagato — nel
+// gauntlet a sei bracci tutte le configurazioni col riordino stavano SOTTO la
+// base. A pagare e' questo parametro, che era sempre stato vivo e non era mai
+// stato messo in discussione. Quello che ha funzionato non e' la scoperta del
+// ramo morto in se': e' che indagarlo ha portato ad auditare l'intera famiglia.
+// ⚠️ Il gauntlet metteva sopra la base sia `Alpha=2` sia `Alpha=0`, cioe' due
+// modifiche OPPOSTE: uno dei due era rumore. Il testa a testa ha confermato il 2.
+// Resta non provato il 3, che e' il resto del range: candidato per un altro giro.
+int g_negext_alpha = 2;
 static bool g_fh_smooth =
     true; // #7 fail-high: return (score+beta)/2 su RFP e qsearch (bound TT meno
           // gonfiati) [BAKE 2026-07-03]
