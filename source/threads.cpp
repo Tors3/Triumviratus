@@ -1553,9 +1553,24 @@ int g_cmhc_scale =
 // informativo dei cinque e sara' positivo molto piu' spesso, quindi il fattore sale
 // sistematicamente e i bonus conthist si gonfiano oltre quanto la taratura
 // prevedesse. Il difetto era stato ASSORBITO dalla taratura fatta sopra di esso.
-// ⇒ SEGUITO: non archiviare. Serve un SPSA su `CMHCScale` e sui parametri conthist
-//   che ci stanno sopra, con CMHCPly1=1 FISSO. Il fix da solo rompe un equilibrio;
-//   il guadagno arriva solo ritarando quell'equilibrio.
+// ⇒ SEGUITO: serviva un SPSA su `CMHCScale` e sui parametri conthist che ci stanno
+//   sopra, con CMHCPly1=1 FISSO. FATTO l'8/08/2026 — e NON ha sbloccato niente.
+//
+// 🔴 ESITO DELLA RITARATURA (8/08/2026). SPSA a 13 parametri, 2141 iterazioni,
+// TC 20+0.2, Hash 64. Il vettore trovato abbassa il peso della conthist ovunque,
+// che e' la direzione prevista dalla teoria: CMHCScale 6 -> 1,5 (un quarto),
+// ContHistWeight -33%, ContHistDiv +79%, LMRContHistDiv +132%. Ma ai gate non
+// produce niente, in NESSUNO dei tre regimi provati:
+//     pacchetto (fix+vettore)  Hash 128 @30+0.3 :  -1,63 +/-  9,98  su 1064
+//     soli parametri, no fix   Hash 128 @30+0.3 :  -8,36 +/- 14,41  su  582
+//     pacchetto                Hash 256 @30+0.3 : -10,24 +/- 10,89  su 1018
+// ⚠️ Il tuning e' stato fatto a 20+0.2/Hash 64 e gattato a 30+0.3/Hash 128-256:
+//   la differenza di regime e' una spiegazione plausibile del fallimento, e non
+//   e' stata separata (il log.csv del run e' andato perso con la VM, quindi non
+//   si e' potuto nemmeno verificare la convergenza ne' le derive per parametro).
+// ⇒ STATO: CMHCPly1 resta 0. Il fix e' corretto e non paga. Per riaprirlo servono
+//   un tuning fatto DIRETTAMENTE a 30+0.3, con meno parametri e il log conservato.
+//   Non e' una priorita': tre gate su tre dicono che li' dentro non c'e' Elo.
 // 🔑 Lezione generale, valida oltre questo caso: un difetto che vive nel codice
 //   abbastanza a lungo viene assorbito dalle tarature che gli si costruiscono
 //   sopra, e correggerlo ISOLATAMENTE puo' peggiorare il motore. Non vale per i
