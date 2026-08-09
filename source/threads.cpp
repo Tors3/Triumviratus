@@ -1226,6 +1226,26 @@ int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
 // vivo. ⚠️ Finche' resta 0, NegExtCut va tenuto FUORI dallo spazio SPSA: tararlo
 // significa misurare rumore, ed e' gia' successo (default 3 = massimo del range).
 int g_negext_order = 0;
+// CapturedMailbox (spin 0/1, BAKED A 1 il 9/08/2026; 0 = comportamento storico).
+// P2/B3 dell'audit del 5/08. `td_captured_piece` scorre SEI bitboard per scoprire
+// quale pezzo sta su una casa; la mailbox `td.piece_on[64]` — gia' mantenuta in
+// make/unmake e inizializzata dalla radice — da' la stessa risposta con un lookup.
+// 🔑 NODE-IDENTICAL per costruzione: cambia COME si ottiene il valore, non il
+// valore. Il bench DEVE restare identico, ed e' anche il controllo che dice se
+// l'implementazione e' sbagliata.
+// Il fallback conta: la versione storica ritorna `P` quando sulla casa non c'e' un
+// pezzo AVVERSARIO (casa vuota -> mailbox -1, oppure pezzo amico -> fuori banda).
+// La condizione `pc >= start && pc <= end` al sito d'uso riproduce quel caso.
+// ⚠️ Sotto TRIUMV_NO_MAILBOX la mailbox non e' mantenuta: li' il percorso veloce
+// non esiste e si torna al loop, altrimenti si leggerebbe un array stantio.
+// MISURA (9/08/2026, laptop Zen4, un solo binario Trium_p2_avx2, 160 posizioni UHO
+// interlacciate a depth 20): mediana B/A da +1,01% a +0,73%, mai sotto lo zero in
+// nessun blocco da 10. L'audit ne stimava +0,2-0,7% per il LOTTO P2 intero: qui
+// il solo B3 rende di piu'. Resta velocita' pura, ~0,5-1 Elo.
+// Toggle a RUNTIME e non #ifdef proprio per questo: fra due build PGO diverse il
+// pavimento di rumore e' ~0,5% e un effetto dell'1% non sarebbe separabile; con un
+// solo eseguibile e due setoption la varianza di layout si cancella per costruzione.
+int g_captured_mailbox = 1;
 static bool g_corrval_margin =
     true; // CorrValMargin (SF :980): fold |corr| into RFP margin (prune less
           // when eval heavily corrected)
@@ -2384,6 +2404,10 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "NegExtOrder")) {
     g_negext_order = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "CapturedMailbox")) {
+    g_captured_mailbox = value != 0;
     return true;
   }
   if (!strcmp(name, "CMHCScale")) {
@@ -5023,9 +5047,23 @@ static inline int td_stat_bonus(int depth) {
 #define SCORE_BAD_CAPTURE (-700000)
 
 // Pezzo catturato sulla casa target (en passant -> P, coerente con lo scoring).
+// Percorso veloce dietro CapturedMailbox: vedi la globale, dichiarata piu' in alto.
+// Cronaca di un falso allarme (8/08/2026): sembrava che con CapturedMailbox=1 il
+// bench scendesse da 252074 a 191454 (-24%), cioe' un cambio di comportamento e non
+// un'ottimizzazione. Era la SONDA a essere sbagliata: i due bench giravano nello
+// STESSO processo, e il secondo partiva con TT e storie gia' calde. Il controllo
+// senza alcun cambio di opzione riproduce esattamente la stessa coppia di numeri.
+// 🔑 Un bench per processo, sempre. E MB_VERIFY (che confronta tutte e 64 le case
+// contro i bitboard) su un bench intero non ha trovato nessuna discrepanza.
 static inline int td_captured_piece(ThreadData &td, int target) {
   int start = (td.side == white) ? p : P;
   int end = (td.side == white) ? k : K;
+#ifndef TRIUMV_NO_MAILBOX
+  if (g_captured_mailbox) {
+    int pc = td.piece_on[target];
+    return (pc >= start && pc <= end) ? pc : P;
+  }
+#endif
   for (int pc = start; pc <= end; pc++)
     if (get_bit(td.bitboards[pc], target))
       return pc;

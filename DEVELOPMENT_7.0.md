@@ -253,6 +253,14 @@ version, estimated at a further +0.3-1% *on top of* this one, was dropped.
 
 **Search-side**
 
+- **Capture-victim lookup through the mailbox.** Finding which piece stands on the target square
+  scanned six bitboards, on a path taken for every capture in move ordering and again throughout
+  quiescence. The `piece_on[64]` array is already maintained by make/unmake, so the answer is a
+  single load; the fallback for an empty square or a friendly piece reproduces the old return value
+  exactly. Node-identical by construction, with the unchanged `bench` signature as the gate.
+  **+0.7 to +1.0%**, measured on one binary with the path chosen by a UCI option at runtime — the
+  only way to resolve an effect this small, since between two separately built PGO binaries the
+  noise floor is about 0.5% and its sign flips between sessions.
 - The quiet stage no longer regenerates the captures already produced by the tactical stage.
 - The in-check state is passed in by the caller instead of being recomputed on every generation.
 - Least-significant-bit clearing uses `bb &= bb - 1` where the bit being cleared is provably the

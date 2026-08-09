@@ -692,6 +692,7 @@ void uci_loop()
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
             printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF). ⚠️ IRRAGGIUNGIBILE con NegExtOrder=0: i due rami sopra partizionano lo spazio (finestra nulla). Bench identico a 0..4. Fuori dallo spazio SPSA finche' NegExtOrder resta 0
             printf("option name NegExtOrder type spin default 0 min 0 max 1\n");  // FIX 7/08/2026: 1 = ordine SF (cut node PRIMA del test su alpha) -> rende vivo NegExtCut. 0 = ordine storico, byte-identico
+            printf("option name CapturedMailbox type spin default 1 min 0 max 1\n"); // P2/B3: td_captured_piece via mailbox piece_on[64] invece della scansione di 6 bitboard. NODE-IDENTICAL: il bench NON deve cambiare. BAKED a 1 il 9/08/2026 su misura NPS +0,73..+1,01% (160 pos UHO, un solo binario, due setoption). 0 = percorso storico
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
             printf("option name LMRNegative type spin default 0 min 0 max 1\n");   // riduzione LMR negativa = estende le mosse ben ordinate (SF/Hobbes); 0=legacy
             printf("option name PromoQS type spin default 6 min 0 max 7\n");      // 0=off 2=solaDonna 4=solo picker(no-op) 5=esente da QSMoveCap 6=5+SEE>=0
