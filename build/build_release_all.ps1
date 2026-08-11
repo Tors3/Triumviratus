@@ -18,6 +18,11 @@ param(
   [string]$Ndk     = "C:\android-ndk-r27c",
   [switch]$SkipWindows,
   [switch]$SkipAndroid,
+  # -NoBuild: NON ricompila, ma raccoglie i binari gia' presenti in x64\Release e fa
+  # girare i canary. Diverso da -SkipWindows, che salta anche la raccolta.
+  # Serve a ri-verificare una matrice esistente dopo aver toccato i CANARY invece dei
+  # sorgenti: sei build PGO sono ore, i due controlli sono secondi.
+  [switch]$NoBuild,
   # Bench atteso della matrice. Vuoto = canary NON armato: si verifica soltanto che
   # tutte le varianti diano lo STESSO bench (invariante node-identical), che e' gia'
   # il controllo che becca una variante rotta. Pinna il numero dopo la prima release.
@@ -68,9 +73,13 @@ Write-Host "raccolta in: $rel" -ForegroundColor DarkGray
 # --- 1. Windows PGO, matrice completa ---------------------------------------
 if (-not $SkipWindows) {
   Write-Host "`n===== WINDOWS PGO ($($cfg.Variants -join ', ')) =====" -ForegroundColor Cyan
-  $bp = @{ Arch = "all"; Release = $true; Name = "Triumviratus_$Version" }
-  if ($cfg.Net) { $bp['Net'] = $cfg.Net }
-  & $cfg.Builder @bp
+  if ($NoBuild) {
+      Write-Host "  -NoBuild: nessuna ricompilazione, si raccoglie da $outDir" -ForegroundColor Yellow
+  } else {
+      $bp = @{ Arch = "all"; Release = $true; Name = "Triumviratus_$Version" }
+      if ($cfg.Net) { $bp['Net'] = $cfg.Net }
+      & $cfg.Builder @bp
+  }
   foreach ($a in $cfg.Variants) {
     $src = "$outDir\Triumviratus_${Version}_$a.exe"
     if (Test-Path $src) { Copy-Item $src $rel -Force; Write-Host "  raccolto $(Split-Path $src -Leaf)" -ForegroundColor Green }
