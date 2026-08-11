@@ -24,9 +24,10 @@
 #  ⚠️ -Net e' DI FATTO OBBLIGATORIO: il default qui sotto punta a una rete che non
 #     esiste piu' e lo script muore con "Rete non trovata" (fallimento pulito, voluto).
 #
-#  MATRICE DI RELEASE (-Arch all): avx512icl, avx512, avx2, avx2-intel, avx2-nopext.
+#  MATRICE DI RELEASE (-Arch all): avx512icl, vnni512, avx512, avx2, avx2-intel, avx2-nopext.
 #   avx512icl   = AVX512 + VBMI/VBMI2/BITALG -> Ice Lake+, Sapphire Rapids, Zen5
-#   avx512      = AVX512 F/BW/DQ/VL/VNNI     -> Skylake-X, Cascade Lake, Zen4
+#   vnni512     = AVX512 F/BW/DQ/VL + VNNI   -> Cascade Lake, Ice Lake SP, Zen4
+#   avx512      = AVX512 F/BW/DQ/VL          -> Skylake-X, Xeon W-21xx (NIENTE VNNI)
 #   avx2        = AVX2 + BMI2/PEXT           -> AMD Zen3+   (= x86-64-bmi2 di Stockfish)
 #   avx2-intel  = come avx2, senza `persp`   -> Intel Haswell..Rocket Lake
 #   avx2-nopext = AVX2 senza PEXT            -> AMD Zen1/Zen2 (= x86-64-avx2 di Stockfish)
@@ -59,7 +60,7 @@ param([int]$Movetime = 0, [int]$Positions = 200, [int]$Workers = 8,
       # Il suffisso "-intel" e' l'asse VENDOR, ortogonale all'ISA: spegne la patch
       # `persp`, che rende su AMD (+0,63% Zen2, +1,87% Zen4) e COSTA su Intel (-1,2%
       # su Rocket Lake). Dettaglio e motivazioni in Build-Variant.
-      [ValidateSet("both","all","avx512","avx512icl","avx2","avx2-nopext",
+      [ValidateSet("both","all","avx512","vnni512","avx512icl","avx2","avx2-nopext",
                    "avx2-intel","avx512-intel","avx512icl-intel")][string]$Arch = "avx512",
       [string]$ExtraDefs = "",
       [switch]$Release)
@@ -148,7 +149,7 @@ function Build-Variant([string]$tag) {
     # accesa su AVX-512, quindi NIENTE split su quella ISA — una sola build.
     # ⚠️ Il -1,3% e' meno solido del +2,3%: 60 posizioni, mediana instabile, senza nullo
     #    di sessione. Basta a NON accendere una patch, non basterebbe ad accenderla.
-    if ($baseTag -match '^avx512') { $noPersp = $true }
+    if ($baseTag -match '^(avx512|vnni512)') { $noPersp = $true }
 
     # PGO e' gia' specifico per questa macchina (profilato QUI), quindi tune=native
     # e' la scelta coerente. Effetto misurato sulla 6.0: dentro il rumore, tenuto
@@ -180,9 +181,16 @@ function Build-Variant([string]$tag) {
     # annullati (le MACRO USE_AVX512 restavano comunque spente, quindi i percorsi SIMD
     # erano quelli giusti: il rischio era l'auto-vettorizzazione del compilatore).
     $archFlags = ""
-    if ($baseTag -eq "avx512" -or $baseTag -eq "avx512icl") {
-        $extra += " -DUSE_AVX512 -DUSE_VNNI"
-        $extra += " /clang:-mavx512f /clang:-mavx512bw /clang:-mavx512dq /clang:-mavx512vl /clang:-mavx512vnni /clang:-mbmi2"
+    if ($baseTag -eq "avx512" -or $baseTag -eq "vnni512" -or $baseTag -eq "avx512icl") {
+        $extra += " -DUSE_AVX512"
+        $extra += " /clang:-mavx512f /clang:-mavx512bw /clang:-mavx512dq /clang:-mavx512vl /clang:-mbmi2"
+        # 🔴 10/08/2026 — VNNI FUORI da `avx512`: Skylake-X NON ce l'ha (arriva con
+        # Cascade Lake). Verificato su i9-7940X: 44 `vpdpbusd` nel binario, SIGILL
+        # (exit 132) alla prima valutazione, dopo `readyok`. La verifica del 6/08 girava
+        # su uno Xeon Gold 6242 = Cascade Lake, che il VNNI ce l'ha: non poteva vederlo.
+        if ($baseTag -eq "vnni512" -or $baseTag -eq "avx512icl") {
+            $extra += " -DUSE_VNNI /clang:-mavx512vnni"
+        }
         if ($baseTag -eq "avx512icl") {
             $extra += " -DUSE_AVX512ICL"
             $extra += " /clang:-mavx512vbmi /clang:-mavx512vbmi2 /clang:-mavx512bitalg"

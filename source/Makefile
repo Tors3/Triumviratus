@@ -6,7 +6,8 @@
 #  USO:
 #    make              -> build AVX2 + BMI2/PEXT (Intel, AMD Zen3+)
 #    make clean nopext -> build AVX2 SENZA pext  (AMD Zen1/Zen2: OBBLIGATORIA, vedi sotto)
-#    make clean avx512 -> build AVX512 + VNNI (Intel n2/c3, AMD Zen4 c3d) = piu' veloce
+#    make clean avx512 -> build AVX512 F/BW/DQ/VL, SENZA VNNI (Skylake-X, Xeon W-21xx)
+#    make clean vnni512-> build AVX512 + VNNI (Cascade Lake, Ice Lake SP, Zen4) = piu' veloce
 #    make CXX=clang++  -> usa clang invece di g++
 #    make clean
 #
@@ -72,14 +73,31 @@ ARCH := -mavx2 -mbmi2 -mfma -mpopcnt -msse4.1 -mssse3 -msse2
 # vecchio non sarebbe partito.
 # Lo script Windows era gia' stato separato il 3/08; il Makefile era rimasto indietro,
 # quindi il canale di build Linux produceva ancora il binario rotto.
-# ✅ Separati come fa Stockfish (x86-64-avx512 vs x86-64-avx512icl):
-#   make avx512      F/BW/DQ/VL/VNNI          -> percorso threat SCALARE
-#   make avx512icl   + VBMI/VBMI2/BITALG      -> emissione tuple vettoriale
+# 🔴 10/08/2026 — VNNI FUORI da `avx512`. Il difetto del 6/08 e' sopravvissuto UN
+# LIVELLO PIU' IN BASSO: si tolse VBMI2 e si diede per scontato che Skylake-X avesse
+# VNNI. Non ce l'ha — VNNI arriva con Cascade Lake. Il commento qui sopra diceva
+# "Skylake-X e Cascade Lake — AVX512F/BW/DQ/VL/VNNI" ed era sbagliato sul primo dei due.
+# 🔑 PERCHE' NON EMERSE: la verifica del 6/08 fu fatta su uno Xeon Gold 6242, che e'
+# Cascade Lake e il VNNI ce l'ha. Il caso che rompe non poteva uscire da li'. Una
+# macchina di verifica che possiede la feature non puo' falsificare l'assunzione che
+# quella feature ci sia.
+# VERIFICATO il 10/08/2026 su i9-7940X (Skylake-X, 14 core): il binario `avx512`
+# conteneva 44 `vpdpbusd` e moriva con SIGILL (exit 132) alla prima valutazione,
+# subito dopo `readyok` — cioe' il tester vede il motore rispondere a `uci` e poi
+# sparire alla prima mossa.
+# ✅ Tre gradini, come Stockfish (x86-64-avx512 / vnni512 / avx512icl):
+#   make avx512      F/BW/DQ/VL              -> Skylake-X, Xeon W-21xx
+#   make vnni512     + VNNI                  -> Cascade Lake, Ice Lake SP, Zen4
+#   make avx512icl   + VBMI/VBMI2/BITALG     -> Ice Lake client+, Sapphire Rapids, Zen5
 # ⚠️ L'ICL non serve: misurato +0,04% con 75/150 posizioni esatte, z~0, su Zen4.
 #    Si costruisce ma non c'e' motivo di pubblicarlo.
-ifneq (,$(filter avx512 avx512icl,$(MAKECMDGOALS)))
-  DEFS += -DUSE_AVX512 -DUSE_VNNI
-  ARCH += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vnni
+ifneq (,$(filter avx512 vnni512 avx512icl,$(MAKECMDGOALS)))
+  DEFS += -DUSE_AVX512
+  ARCH += -mavx512f -mavx512bw -mavx512dq -mavx512vl
+endif
+ifneq (,$(filter vnni512 avx512icl,$(MAKECMDGOALS)))
+  DEFS += -DUSE_VNNI
+  ARCH += -mavx512vnni
 endif
 ifeq (avx512icl,$(filter avx512icl,$(MAKECMDGOALS)))
   DEFS += -DUSE_AVX512ICL
@@ -120,7 +138,11 @@ endif
 # era gia' -1,17% ⇒ nessun vendor la vuole accesa su AVX-512: niente split, una build sola.
 # ⚠️ Il -1,3% e' meno solido del +2,3% (60 posizioni, mediana instabile, senza nullo di
 #    sessione). Basta a NON accendere una patch; non basterebbe ad accenderla.
-ifeq (avx512,$(filter avx512,$(MAKECMDGOALS)))
+# ⚠️ 10/08/2026: il filtro prendeva SOLO il goal letterale `avx512`, quindi `avx512icl`
+# usciva con persp ACCESA nonostante la misura dica il contrario per entrambi i vendor.
+# Lo script Windows usa `-match '^avx512'` e le prendeva tutte: e' la stessa deriva
+# Windows/Linux gia' vista sopra. Ora il filtro elenca tutti e tre i target AVX-512.
+ifneq (,$(filter avx512 vnni512 avx512icl,$(MAKECMDGOALS)))
   ifeq (,$(findstring TRIUMV_NO_PERSP_BOTH,$(DEFS)))
     DEFS += -DTRIUMV_NO_PERSP_BOTH
     $(info [i] build AVX-512: persp SPENTA per ISA (misura 6/08/2026))
@@ -220,6 +242,7 @@ CFLAGS   ?= -O3 -w $(ARCH) -pthread -I. -Ifathom
 
 all: $(EXE)
 avx512: $(EXE)
+vnni512: $(EXE)
 avx512icl: $(EXE)
 nopext: $(EXE)
 intel: $(EXE)
@@ -271,4 +294,4 @@ endif
 	$(MAKE) all $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)"
 
-.PHONY: all avx512 avx512icl nopext intel profile release android android-dotprod clean pgo-avx512 pgo-avx2
+.PHONY: all avx512 vnni512 avx512icl nopext intel profile release android android-dotprod clean pgo-avx512 pgo-avx2

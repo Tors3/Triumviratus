@@ -149,6 +149,21 @@ void Position::update_piece_threats(Piece               pc,
     const Bitboard whitePawns = pieces(WHITE, PAWN);
     const Bitboard blackPawns = pieces(BLACK, PAWN);
 
+    // ⛔ NON riscrivere questa riga riusando rAttacks/bAttacks: provato e MISURATO ZERO
+    // (10/08/2026). Nel sorgente la ridondanza c'e' — per un alfiere `attacks_bb` ritorna
+    // esattamente `bAttacks`, per una torre `rAttacks`, per una donna la loro unione, tutti
+    // gia' calcolati a :110-111 — e nel .obj a /O2 di una singola unita' di traduzione e'
+    // davvero una CALL fuori linea che rifa' `magic(s, pt)` + pext/lookup/pdep, perche' due
+    // call opache in mezzo bloccano la CSE. Ma NOI COMPILIAMO CON `-flto=thin`, e a link
+    // time l'inlining la elimina da solo.
+    // Misura: i9-7940X dedicata, un solo binario con due setoption, 150 posizioni UHO a
+    // depth 20 -> +0,18%, contro un NULLO DI SESSIONE di +0,17% sulla stessa macchina.
+    // Cioe' esattamente il pavimento dello strumento. Il toggle e' stato rimosso: un ramo
+    // morto su un percorso caldo e' il difetto, non la cura.
+    // 🔑 Vale anche per il calcolo di `pawnThreats` qui sotto, verificato con `clang-cl /FA`:
+    // clang lo affonda gia' dentro il test sul tipo e `PawnPushOrAttacks` non compare
+    // nemmeno nel file oggetto. Regola generale: "calcolo morto" letto nel sorgente non e'
+    // un difetto finche' non si e' guardata l'assembly della build che si spedisce.
     Bitboard threatened       = attacks_bb(pc, s, occupied) & occupiedNoK;
     Bitboard incoming_threats = PseudoAttacks[KNIGHT][s] & knights;
 

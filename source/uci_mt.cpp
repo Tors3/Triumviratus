@@ -26,6 +26,10 @@ extern "C" int __llvm_profile_write_file(void);
 #endif
 #include <string.h>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>   // getpid() per il suffisso per-processo di TMLog (su Windows
+                      // GetCurrentProcessId arriva da windows.h via defs.h)
+#endif
 
 // Defined in main.cpp: resolve an NNUE filename/path to an existing path
 // (tries the path as given, then next to the exe, then cwd). Used by the UCI
@@ -34,6 +38,50 @@ std::string resolve_net_path(const std::string& name);
 
 // "Move Overhead" (UCI): ms riservati per mossa a lag di I/O e GUI (prima 50 fisso).
 static int g_move_overhead = 50;
+
+// ---------------------------------------------------------------------------
+// TMLog — sonda di allocazione del tempo, una riga CSV per `go`. NON e' un fix.
+//
+// Serve a guardare il regime `movestogo > 0` (CCRL 40/15, CEGT 40/20), che nessuno
+// dei 24 script .ps1 del progetto ha mai giocato: tutti i nostri TC hanno incremento
+// e mandano `wtime/btime/winc/binc` senza `movestogo`. E' pero' il regime in cui ci
+// danno il rating, e li' il ramo preso e' un ALTRO: `mtg` arriva ESATTO dalla GUI
+// invece che dalla curva stimata `mtg_base - slope*fullmove`, mentre
+// `g_tmv2_opt_pct = 124` e' stato tarato CONTRO quella curva. Il 24% di sovraspesa
+// nasce per compensare una stima prudente; su un `mtg` esatto e' sovraspesa e basta.
+//
+// Prima si guarda, poi si decide: qui non si cambia nessuna allocazione.
+//
+// `elapsed` NON e' una colonna: si ricava dalle righe consecutive come
+// `clock[n] - clock[n+1] + inc`, che e' il tempo misurato DALLA GUI — cioe' la
+// grandezza che conta per il forfait, non il nostro cronometro interno.
+//
+// File per-processo (".<pid>") come DataLog: sotto fastchess girano decine di
+// istanze insieme e senza suffisso si sovrascriverebbero a vicenda.
+static bool        g_tm_log = false;
+static std::string g_tm_log_file = "tm_log.csv";
+
+static void tm_log_row(int fullmove, int stm, int mstogo_uci, int mtg, int branch,
+                       int clock_ms, int inc_ms, int optimum, int maximum, int cap)
+{
+#ifdef _WIN32
+    unsigned long tri_pid = (unsigned long) GetCurrentProcessId();
+#else
+    unsigned long tri_pid = (unsigned long) getpid();
+#endif
+    std::string path = g_tm_log_file + "." + std::to_string(tri_pid);
+    FILE* probe = fopen(path.c_str(), "r");   // intestazione solo alla prima riga
+    bool  fresh = (probe == nullptr);
+    if (probe) fclose(probe);
+    FILE* f = fopen(path.c_str(), "a");
+    if (!f) return;
+    if (fresh)
+        fprintf(f, "fullmove,stm,movestogo_uci,mtg,branch,clock_ms,inc_ms,optimum,maximum,cap\n");
+    // branch: 0 = movestogo dalla GUI, 1 = curva TMv2 stimata, 2 = fallback fisso
+    fprintf(f, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", fullmove, stm, mstogo_uci, mtg, branch,
+            clock_ms, inc_ms, optimum, maximum, cap);
+    fclose(f);
+}
 
 // parse user/GUI move string input (e.g. "e7e8q")
 int parse_move(char* move_string)
@@ -247,6 +295,7 @@ void parse_go(char* command)
         if (remaining < 0) remaining = 0;
 
         int optimum, maximum;
+        int log_mtg = 0, log_cap = 0, log_branch = -1;   // solo per TMLog, vedi tm_log_row
         if (movetime != -1)
         {
             // Fixed move time: use (almost) all of it.
@@ -257,6 +306,7 @@ void parse_go(char* command)
             int mtg;
             if (movestogo > 0) {
                 mtg = movestogo;
+                log_branch = 0;
             } else if (g_tmv2_alloc && g_tmv2_tc_ok) {
                 // TM v2 Q-05a (Caissa): moves-left stimate CALANO col progredire della
                 // partita (~35 a mossa 1 -> min a mossa ~40): meno overspend in apertura,
@@ -265,9 +315,12 @@ void parse_go(char* command)
                 int fullmove = repetition_index / 2 + 1;
                 mtg = g_tmv2_mtg_base - g_tmv2_mtg_slope * fullmove / 100;
                 if (mtg < g_tmv2_mtg_min) mtg = g_tmv2_mtg_min;
+                log_branch = 1;
             } else {
                 mtg = g_tm_movestogo;                       // assunzione moves-to-go (tunable)
+                log_branch = 2;
             }
+            log_mtg = mtg;
 
             if (g_tmv2_alloc && g_tmv2_tc_ok) {
                 // TM v2 Q-05b (Alexandria, pooled increments): l'incremento entra nel
@@ -303,10 +356,16 @@ void parse_go(char* command)
             if (optimum > cap) optimum = cap;
             if (maximum > cap) maximum = cap;
             if (maximum < optimum) maximum = optimum;
+            log_cap = cap;
         }
 
         if (optimum < 1) optimum = 1;
         if (maximum < 1) maximum = 1;
+
+        // Sonda TMLog: nessun effetto sull'allocazione, si limita a registrarla.
+        if (g_tm_log && log_branch >= 0)
+            tm_log_row(repetition_index / 2 + 1, side, movestogo, log_mtg, log_branch,
+                       time_uci, inc, optimum, maximum, log_cap);
 
         soft_time_limit = starttime + optimum;   // stop starting new iterations past this
         stoptime        = starttime + maximum;    // hard cap checked inside the search
@@ -433,6 +492,8 @@ void uci_loop()
 #ifndef TRIUMV_RELEASE
             printf("option name Depth type spin default 0 min 0 max 64\n");
             printf("option name DataLog type check default false\n");
+            printf("option name TMLog type check default false\n");             // sonda: una riga CSV per `go` con l'allocazione del tempo. Nessun effetto sulla ricerca
+            printf("option name TMLogFile type string default tm_log.csv\n");   // il file prende il suffisso ".<pid>" come DataFile
             printf("option name DataFile type string default triumviratus_dataset.txt\n");
             // Bundle 3.9 (micro-fix dietro toggle, ablazione stile 3.8)
             printf("option name MateDistPruning type check default true\n");   // P1.4
@@ -1415,6 +1476,21 @@ void uci_loop()
             const char* v = input + 29;
             bool on = (strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
             set_data_log_enabled(on);
+        }
+
+        // UCI command: "setoption name TMLog value <true|false>" (sonda allocazione tempo)
+        else if (strncmp(input, "setoption name TMLog value ", 27) == 0)
+        {
+            const char* v = input + 27;
+            g_tm_log = (strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+
+        // UCI command: "setoption name TMLogFile value <path>"
+        else if (strncmp(input, "setoption name TMLogFile value ", 31) == 0)
+        {
+            char val[4096];
+            if (parse_setoption(input, "TMLogFile", val, sizeof(val)) && val[0])
+                g_tm_log_file = val;
         }
 
         // UCI command: "setoption name DataFile value <path>"
