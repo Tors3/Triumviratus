@@ -887,7 +887,27 @@ int g_tmv2_stab[5] = {232, 172, 82, 112, 56}; // %
 // {1.25,1.15,1.03,0.92,0.87}: eval ferma = confidenza = risparmia; eval che
 // salta (in ENTRAMBE le direzioni, non solo drop) = piu' tempo.
 int g_tmv2_eval[5] = {139, 119, 101, 93, 88}; // %
-int g_tmv2_eval_window = 10;
+// 10 -> 20 il 12/08/2026, INSIEME a g_tmv2_eval_prevavg = 1. I due valori vanno
+// letti come una cosa sola: col difetto, `ediff` valeva meta' e 10 significava 20;
+// tolto il difetto, 20 significa 20. La soglia EFFETTIVA non cambia.
+int g_tmv2_eval_window = 20;
+// TMv2EvalPrevAvg — BAKATO A 1 il 12/08/2026. Il counter Q-03 confronta lo score
+// con la media PRIMA che assorba lo score stesso. Motivazione al sito d'uso, ~:9660.
+// ⚠️ NON e' esattamente byte-identico al vecchio (10, prevavg=0), ed e' giusto
+// saperlo: l'algebra torna ma l'aritmetica INTERA no. `avg_new = (avg_prec+score)/2`
+// tronca verso zero, e la direzione del troncamento dipende dal SEGNO della somma:
+//     somma pari      -> ediff_vecchio = d/2 esatto        -> |d| <= 20, identico
+//     somma dispari>0 -> ediff_vecchio = (d+1)/2
+//     somma dispari<0 -> ediff_vecchio = (d-1)/2
+// con d = score - avg_prec. La differenza e' confinata a |d| = 21 con somma dispari:
+// una banda larga UN centipedone che fa scattare o no il contatore. Esempio verificato:
+// avg_prec=-30, score=-9 (d=21) era "stabile" col vecchio, non lo e' col nuovo.
+// 🔑 Il bench NON puo' vederlo: eval_stab_iters alimenta solo il fattore di tempo e
+// il bench va a profondita' fissa. Resta 252074, ma non e' una verifica di QUESTO.
+// PERCHE' comunque: il parametro smette di mentire di un fattore due. Finche' mentiva,
+// qualunque SPSA su TMv2EvalWindow partiva da coordinate sbagliate — ed e' esattamente
+// l'errore che il 12/08 ha fatto buttare un run intero, partito da init 5 invece di 20.
+int g_tmv2_eval_prevavg = 1;
 // Q-04 NodeTM bidirezionale: (base/100 - frac) * mult/100, clamp [min,max]/100
 // (Alexandria 1.52/1.74 -> best che assorbe pochi nodi = alternative vive =
 // fino a ~2.5x; best che domina = riduzione come il NodeTM classico).
@@ -3021,6 +3041,10 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "TMv2EvalWindow")) {
     g_tmv2_eval_window = value < 1 ? 1 : value;
+    return true;
+  }
+  if (!strcmp(name, "TMv2EvalPrevAvg")) {
+    g_tmv2_eval_prevavg = value != 0;
     return true;
   }
   if (!strcmp(name, "TMv2NodeBase")) {
@@ -9227,6 +9251,9 @@ static void thread_search(int thread_id, int max_depth) {
       0;                    // last completed iteration's score (TimeMgmt drop)
   int avg_score = infinity; // F-018.5a AspAvg: media mobile degli score
                             // (infinity = non ancora inizializzata)
+  // Snapshot di avg_score PRIMA che assorba lo score corrente. Serve solo al
+  // counter Q-03: vedi il commento a TMv2EvalPrevAvg (~:9660).
+  int prev_avg_score = infinity;
   long long avg_sq_score = 0; // Q-28 AspScoreMult: EMA di score*|score| (valida
                               // sse avg_score != infinity)
   td.prev_pv_len =
@@ -9463,6 +9490,7 @@ static void thread_search(int thread_id, int max_depth) {
       long long sq = (long long)score * (score < 0 ? -score : score);
       avg_sq_score = (avg_score == infinity) ? sq : (avg_sq_score + sq) / 2;
     }
+    prev_avg_score = avg_score; // snapshot per il counter Q-03, vedi ~:9660
     avg_score =
         (avg_score == infinity) ? score : (avg_score + score) / 2; // F-018.5a
     // EvalOptimism (5.1): aggiorna il contempt dinamico per i sottoalberi
@@ -9651,8 +9679,24 @@ static void thread_search(int thread_id, int max_depth) {
       // che vive a ogni TC. Il CONSUMO da parte di TMv2 e' invariato -> nessun
       // cambio di comportamento con AspStableShrink=false (il counter viene
       // solo tenuto aggiornato invece che a zero).
-      if (current_depth > start_depth && avg_score != infinity) {
-        int ediff = score - avg_score;
+      // 🔴 TMv2EvalPrevAvg (10/08/2026). `avg_score` e' gia' stato aggiornato a
+      // :9468, PRIMA di arrivare qui, quindi ha gia' assorbito lo score corrente:
+      //     avg_new = (avg_prec + score)/2
+      //     score - avg_new = (score - avg_prec)/2
+      // cioe' `ediff` vale META' della distanza dall'iterazione precedente, e
+      // `TMv2EvalWindow = 10` in pratica significa 20.
+      // 🔑 Che sia un difetto e non una scelta lo dice il vicino di riga: dodici
+      // righe sopra `stable_iters` confronta con `prev_best_move`, e il commento
+      // avverte che quello e' aggiornato PIU' SOTTO apposta. Due counter di
+      // stabilita' affiancati con convenzioni opposte.
+      // ⚠️ NON e' invariante: raddoppiando `ediff` il counter scatta molto meno, e
+      // `g_tmv2_eval[]` e' tarato CON il dimezzamento. Va acceso INSIEME a una
+      // finestra dimezzata (10 -> 5) per restare quasi-invarianti, e poi ritarato.
+      // Da solo e' `CMHCPly1` daccapo: il difetto vecchio e' gia' stato assorbito
+      // dalle tarature costruite sopra.
+      const int eval_ref = g_tmv2_eval_prevavg ? prev_avg_score : avg_score;
+      if (current_depth > start_depth && eval_ref != infinity) {
+        int ediff = score - eval_ref;
         if (ediff < 0)
           ediff = -ediff;
         if (ediff <= g_tmv2_eval_window) {

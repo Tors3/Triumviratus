@@ -265,6 +265,12 @@ clean:
 	rm -f $(OBJS) $(EXE)
 
 # ---- PGO pipeline (ricorsivo: clean fra le fasi = niente .o con flag misti) --
+# PGOGOAL: quale target ISA costruire dentro la pipeline PGO. Serve da quando i
+# gradini AVX-512 sono TRE (avx512 / vnni512 / avx512icl): prima ce n'erano due e
+# `avx512` bastava. Su una macchina con VNNI, lasciare il default significherebbe
+# tarare su un binario piu' lento di quello che quella CPU sa eseguire.
+#   make pgo-avx512 PGOGOAL=vnni512 CXX=clang++
+PGOGOAL ?= avx512
 pgo-avx512:
 ifeq (,$(IS_CLANG))
 	$(error pgo-avx512 richiede CXX=clang++ (formato profdata LLVM))
@@ -272,12 +278,12 @@ endif
 	@mkdir -p $(PROFDIR) && rm -f $(PROFDIR)/*.profraw
 	@test -f $(BOOK) || echo "[!] libro $(BOOK) assente: pgo_train.py usera' i FEN builtin"
 	$(MAKE) clean
-	$(MAKE) avx512 $(RELGOAL) CXX=$(CXX) PGO_PHASE=gen
+	$(MAKE) $(PGOGOAL) $(RELGOAL) CXX=$(CXX) PGO_PHASE=gen
 	LLVM_PROFILE_FILE="$(PROFDIR)/prof_%p.profraw" \
 	  python3 $(TRAINER) ./$(EXE) 0 $(BOOK) $(PGO_POS) --workers $(PGO_WORKERS)
 	$(LLVM_PROFDATA) merge -output=$(PROFDIR)/merged.profdata $(PROFDIR)/*.profraw
 	$(MAKE) clean
-	$(MAKE) avx512 $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
+	$(MAKE) $(PGOGOAL) $(RELGOAL) CXX=$(CXX) PGO_PHASE=use
 	@echo "[+] PGO fatto: ./$(EXE)  (verifica: bench 13 deve dare la stessa firma della build liscia)"
 
 pgo-avx2:

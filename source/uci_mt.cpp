@@ -883,7 +883,8 @@ void uci_loop()
             printf("option name TMv2Eval2 type spin default 101 min 50 max 200\n");           // Q-03
             printf("option name TMv2Eval3 type spin default 93 min 40 max 150\n");            // Q-03
             printf("option name TMv2Eval4 type spin default 88 min 30 max 150\n");            // Q-03 (0.87): eval ferma da 4+ iterazioni -> risparmia
-            printf("option name TMv2EvalWindow type spin default 10 min 1 max 100\n");        // Q-03: |score-avg| entro questo = "ferma"
+            printf("option name TMv2EvalWindow type spin default 20 min 1 max 100\n");        // Q-03: |score-avg| entro questo = "ferma". 10 -> 20 il 12/08/2026 INSIEME a TMv2EvalPrevAvg=1: col difetto 10 valeva 20, tolto il difetto 20 vale 20. Soglia effettiva invariata
+            printf("option name TMv2EvalPrevAvg type spin default 1 min 0 max 1\n");          // BAKATO a 1 il 12/08/2026 insieme a TMv2EvalWindow=20. 1 = confronta con la media PRIMA che assorba lo score corrente; con 0 `ediff` valeva meta' e la finestra era di fatto doppia. Serve a rendere il parametro leggibile per lo SPSA: quando mentiva di un fattore 2, ogni taratura partiva da coordinate sbagliate
             printf("option name TMv2NodeBase type spin default 155 min 100 max 250\n");       // Q-04 (Alexandria 1.52): nodeFactor = (base/100 - frac)*mult/100
             printf("option name TMv2NodeMult type spin default 130 min 50 max 400\n");        // Q-04 (Alexandria 1.74)
             printf("option name TMv2NodeMin type spin default 36 min 10 max 100\n");          // Q-04: clamp inferiore %

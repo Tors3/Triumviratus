@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Dev log 6.0](DEVELOPMENT_6.0.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -58,7 +58,7 @@ search work: an unconditional check extension removed, a quiescence search that 
 examining a single move per node, quiet checks removed from quiescence, continuation-history and
 killer-move fixes, and a pre-release audit that found seven latent defects.
 
-<sub>The incremental gains listed in [`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md) are **not additive** —
+<sub>The incremental gains listed in [`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md) are **not additive** —
 each is measured against the state immediately before it, and they overlap.</sub>
 
 #### Against other engines
@@ -70,7 +70,7 @@ each is measured against the state immediately before it, and they overlap.</sub
 
 > [!NOTE]
 > Networks, SPSA tunes, time management, the full incremental table, the corrections and the
-> retractions are all in **[`DEVELOPMENT_6.0.md`](DEVELOPMENT_6.0.md)**, to keep this page short.
+> retractions are all in **[`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md)**, to keep this page short.
 > How each network was trained: **[`NETWORKS.md`](NETWORKS.md)**.
 
 ---

@@ -18,7 +18,7 @@
 
 [The network](#1-the-network) · [Measured Elo](#2-measured-elo-incremental) ·
 [Speed work](#3-speed-work-nps) ·
-[6.0 log](DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md)
+[6.0 log](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md)
 
 </div>
 
@@ -77,6 +77,7 @@ and reported under the table.
 | 6 | → **TT eval decay fixed** | `TTEvalNoDecay=1`: the static eval written to the transposition table went through a round trip that truncates toward zero and **compounds on every revisit**, so the error was systematic and one-directional. The original value is stored instead | 20+0.2 | 2,618 | **+18.06 ± 8.07** (LOS 100%, LLR 2.95, bound crossed) |
 | 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
 | 8 | → **negative extension on alpha** | `NegExtAlpha` 1 → 2: when the TT move does not even reach alpha the node is neither singular nor promising, so the extension shrinks further. One parameter, nothing else touched | 30+0.3 | 3,958 | **+6.50 ± 5.77** (LOS 98.64%) |
+| 9 | → **eval-stability window made honest** | `TMv2EvalPrevAvg=1` with `TMv2EvalWindow` 10 → 20. The counter compared the score against a moving average that had **already absorbed that same score**, so the measured difference was exactly half the real one and the parameter meant double what it said. The pair keeps the effective threshold identical — taken **on readability, not on Elo** | — | — | **no measurable change by construction** |
 
 <sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
 The audit that led to it started from a genuine defect: the third arm of the negative-extension
@@ -98,6 +99,21 @@ engine, so that anyone later reasoning about what the table holds starts from a 
 That is exactly how stage 6 — worth +18 — came about: a comment that described the defect
 correctly sitting above a constant that did something else.</sub>
 
+<sub>Stage 9 has no Elo column because there is nothing to measure: `avg_new = (avg_prev + score)/2`
+means the difference the counter saw was `(score − avg_prev)/2`, so doubling the window restores
+the same threshold. Two caveats stated plainly. It is **not** byte-identical: the division truncates
+toward zero, and which way it truncates depends on the *sign* of the sum, so at exactly
+`|score − avg_prev| = 21` with an odd sum the old and new answers differ by one counter tick —
+a band one centipawn wide. And `bench` cannot see any of this, since the counter feeds only time
+allocation and the bench runs at fixed depth; 252,074 is unchanged, but that confirms nothing about
+this change. It was taken because the parameter sits in the SPSA space, and a parameter that lies by
+a factor of two makes every tuning run start from the wrong coordinates. That is not hypothetical:
+the campaign built on this fix was launched with the window initialised to 5 — the arithmetic was
+inverted, the invariant point is 20 — and a thousand iterations were spent in a regime four times
+tighter than the shipped one, where the high indices of `TMv2Eval[]` almost never fire. The tuning
+found nothing (largest per-parameter drift 1.6 σ over 1,000 iterations, and the resulting vector read
+−6.18 ± 8.29 at 60+0.6). The block is left where it was; only its units were fixed.</sub>
+
 **The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the 7.0 build of
 6 August, each loading its own network, AVX-512, one thread, 128 MB, UHO_4060_v4:
 
@@ -110,6 +126,22 @@ baseline and at three different time controls, so they do not add up to anything
 
 ⚠️ 800 games, stopped by hand — the interval is wide and the run is not a gate against a bound.
 It is a point estimate, and it is the last one that will change: **7.0 is not closed.**
+
+**Against another engine: Obsidian 16.0.** The first measurement of 7.0 outside its own family,
+12 August, one thread, 128 MB, 20+1, opening positions from the Norman Pollock database:
+
+> **+3.0 ± 8.0 Elo** — 700 games, 37 wins, 31 losses, **632 draws** (50.43%)
+
+A dead heat, and the error bar says so: the interval spans zero comfortably in both directions.
+What the result does establish is the order of magnitude — 7.0 is *at* Obsidian 16.0's level at
+this time control, not a class below or above it.
+
+The number worth staring at is the draw count: **90.3%**. That is not a property of the engines
+alone, it is what balanced opening positions plus a fast time control produce, and it is why the
+interval is as tight as ±8 on only 700 games — the decisive games are few, but the paired
+structure makes the ones that decide count for a lot. It also means this pairing needs far more
+games than usual to separate anything: at a 90% draw rate, resolving 5 Elo would take tens of
+thousands of games. It is a calibration point, not a gate.
 
 > ⚠️ **The engine signature changes at every stage: `bench` goes 207,259 → 225,898 (stage 2) →
 > 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6).** The current
