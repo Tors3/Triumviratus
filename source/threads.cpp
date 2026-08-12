@@ -127,7 +127,9 @@ void set_np_key_incr(bool v) { g_np_key_incr = v; }
 // ---- Wave 3b (2026-06-11): P1.1 static-eval-in-TT + P2.2 + P2.3 -------------
 
 // P1.1 (UCI "TTStaticEval", default ON): usa l'eval statica salvata nella TT
-// (8 bit: ±508cp passo 4, vedi tt.h) al posto della forward NNUE quando il
+// (16 bit PIENI in `ext`, vedi tt.h:40-51 — il commento diceva "8 bit, ±508cp
+// passo 4" ma quella era la v1: dalla 4.0 la quantizzazione non c'e' piu')
+// al posto della forward NNUE quando il
 // probe la porta. Il motore e' EVAL-BOUND (58% del tempo-nodo = forward): ogni
 // hit con eval = una forward risparmiata. Errore ±2cp + staleness-fifty
 // accettati (stessa classe dell'eval-cache, gia' ON). Lo STORE dell'eval e'
@@ -171,14 +173,16 @@ bool g_eval_tt_write =
 // ⚠️ L'SPRT non e' stato portato a un bound: con elo0=0/elo1=5 e un effetto vero
 // attorno a +1 l'LLR galleggia e servirebbero decine di migliaia di partite. La
 // domanda a cui doveva rispondere — "fa danno?" — ha risposta a 6002.
-// 🔑 Il fix DEFINITIVO sarebbe togliere la formula, non correggerla: `nn_finalize`
-// (nnue_bridge.cpp:281) applica gia' quella giusta, e usarla al posto di `redamp`
-// la farebbe esistere in UN SOLO posto. Senza quel refactor, fra un anno le due
-// formule tornano a divergere.
 // ⚠️ Il clamp a 100 e' obbligatorio anche nella variante nuova: senza, un fifty
 // vicino a 199 azzererebbe il denominatore. In partita il contatore si ferma a 100.
-// NB: la strada piu' pulita sarebbe usare `nn_finalize` invece di `redamp`, che
-// applica gia' la formula giusta — ma e' un refactor, non un fix a costanti.
+// 🔴 "USARE nn_finalize AL POSTO DI redamp" — ESAMINATO IL 12/08/2026 E SCARTATO.
+// L'idea era di far esistere la formula in un solo posto. Ma `nn_finalize` NON e' un
+// rimpiazzo: oltre allo smorzamento applica anche `EvalScale` e un clamp alla banda
+// TB, che `redamp` non fa — sostituirlo scalerebbe una seconda volta un valore gia'
+// scalato. E anche il solo smorzamento non coincide sugli INTERI: `v - v*r/199`
+// tronca in un punto diverso da `v*(199-r)/199`, quindi differiscono di un'unita' su
+// meta' degli input. Non e' igiene a costo zero, e' un cambio di comportamento da
+// misurare. Se un giorno si fa, va fatto con un toggle e un SPRT, non come refactor.
 int g_rule50_formula = 1;
 // CorrTBGuard — BAKATO A 1 il 12/08/2026. Corregge la guardia della banda Syzygy in
 // `td_corr_update`: vedi il commento esteso al sito d'uso, ~:6955.
@@ -8260,6 +8264,16 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
                               ? (tt_score - singular_margin_full)
                               : singular_beta;
       int singular_depth = (depth - 1) / g_singular_depth_div;
+      // Guardia 12/08/2026 — BYTE-IDENTICA coi default (mindepth 6, div 2 =>
+      // singular_depth >= 2), quindi non tocca nulla oggi. Serve a rendere
+      // SingularDepthDiv TARABILE senza trappola: basta che uno SPSA lo alzi a
+      // >= depth-1 perche' singular_depth diventi 0, e `td_negamax` a depth 0
+      // cade in quiescenza — la verifica di singolarita' smetterebbe di essere
+      // una ricerca e diventerebbe un qsearch, cambiando significato invece di
+      // grado. Un parametro che puo' rendere insensato il proprio test non e'
+      // tarabile: o la guardia c'e', o il parametro sta fuori dallo spazio SPSA.
+      if (singular_depth < 1)
+        singular_depth = 1;
       int s = td_negamax(td, singular_beta - 1, singular_beta, singular_depth,
                          is_cut_node, tt_move);
       // Audit SF#5612 (2026-07): ricerca di esclusione abortita -> s=0 garbage
@@ -8308,9 +8322,12 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         return singular_beta;
       }
       // Negative extensions as tunable amounts (0 = off). ttMove assumed to
-      // fail high over beta -> shrink by g_negext_tt (default 1=legacy, SF=3);
-      // else on a cut node -> shrink by g_negext_cut (default 0=off, SF=2).
-      // Co-tunable -> SPSA can dial a harmful negative extension back to 0.
+      // fail high over beta -> shrink by g_negext_tt (default 2, SF=3); else on
+      // a cut node -> shrink by g_negext_cut (default 3, SF=2).
+      // ⚠️ I DEFAULT nel commento erano stantii: diceva "g_negext_tt default
+      // 1=legacy" e "g_negext_cut default 0=off" mentre le globali a :1240 e
+      // :1260 valgono 2 e 3. Il secondo per giunta e' il massimo del suo range,
+      // e viene da uno SPSA che tarava rumore — vedi il blocco qui sotto.
       // 🔴 NegExtCut E' CODICE MORTO CON L'ORDINE STORICO — trovato il 7/08/2026.
       // I due rami sopra PARTIZIONANO tutto lo spazio: su un nodo non-PV la
       // finestra e' nulla (alpha = beta-1), quindi ogni tt_score intero e' o

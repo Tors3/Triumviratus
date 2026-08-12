@@ -332,10 +332,14 @@ void parse_go(char* command)
                                - (long long)overhead * (2 + mtg);
                 if (pool < 1) pool = 1;
                 optimum = (int)(pool / mtg * g_tmv2_opt_pct / 100);
-                maximum = optimum * g_tm_max_mult / 100;
+                // i64: `optimum * g_tm_max_mult` sfora int32 quando optimum supera
+                // ~2,1e9/mult. Con mult=300 succede sopra ~7,15e6 ms = ~2 ore per
+                // mossa: irraggiungibile in partita, ma raggiungibile in analisi
+                // (`go infinite` con orologi enormi) e gratis da chiudere.
+                maximum = (int)((long long)optimum * g_tm_max_mult / 100);
             } else {
                 optimum = remaining / mtg + inc * g_tm_inc_frac / 100;    // quota base + % incremento (tunable)
-                maximum = optimum * g_tm_max_mult / 100;                   // burst su posizioni difficili (tunable)
+                maximum = (int)((long long)optimum * g_tm_max_mult / 100); // burst su posizioni difficili (tunable)
             }
 
             // TM v2 Q-06 (Caissa): l'avversario ha giocato la risposta PREDETTA dalla
