@@ -29,6 +29,35 @@
 
 ## Rating
 
+**CCRL Blitz** (2 min + 1 s), list of 8 August 2026:
+
+> ### 🏅 Triumviratus 6.0 — **10th**, 3754 ±16
+> on a **single CPU**, ahead of engines rated on eight
+
+| # | Engine | Rating | CPU |
+|---|---|---|---|
+| 1 | Stockfish 17.1 | 3788 ±10 | 8 |
+| 2 | Torch v4 | 3781 ±14 | 8 |
+| 3 | PlentyChess 8.0.0 | 3778 ±13 | 1 |
+| 4 | Obsidian 16.0 | 3774 ±13 | 8 |
+| 5 | Reckless 0.9.0 | 3768 ±11 | 1 |
+| … | | | |
+| 9 | pawnocchio 2.0 | 3756 ±13 | 1 |
+| **10** | **Triumviratus 6.0** | **3754 ±16** | **1** |
+| 11 | Viridithas 20.0.0 | 3750 ±13 | 1 |
+| 12 | Integral 7.0.0 | 3749 ±10 | 8 |
+
+<sub>34 Elo from the top of the list. Of the nine engines above ours, **six run on eight cores**
+(positions 1, 2, 4, 6, 7, 8) and three on one. 996 games, so ±16 is still wide.</sub>
+
+<sub>The number worth reading twice is the **draw rate: 93.4%**. That is what a top-level pool plus
+balanced openings produces, and it is the single most important fact for anyone reading the
+development logs: our own testing uses deliberately unbalanced UHO books and draws 52–56%. A gain
+measured there does **not** arrive at full size here — a draw is a game where the advantage never
+converted, and at nine draws in ten it takes a much larger edge to move the result. It also means
+the list itself needs many games to separate engines: the top twenty span 54 Elo, less than four
+error bars.</sub>
+
 **CCRL 40/15** (40 moves in 15 minutes + increment):
 
 | Version | Rating | List |
@@ -37,10 +66,12 @@
 | Triumviratus 5.0 64-bit (4 CPU) | 3603 | 2026-07-16 |
 | Triumviratus 5.0 64-bit (1 CPU) | 3570 | 2026-07-16 |
 
-<sub>5.1 on a single CPU has just entered the list at **3605**, on few games so far — provisional, and
-placed just below the 24th–25th positions of the full ranking. **6.0 is not yet rated**; on the
-internal gate it is a further **+53 Elo** over 5.1, but a rating list is a different measurement and
-this section will be updated when CCRL publishes one.</sub>
+<sub>On this list 6.0 is **not yet rated** and 5.1 is the most recent entry, provisional on few games.
+The two lists are not comparable: different time control, different pool, different draw rate.</sub>
+
+<sub>**7.0 is not rated anywhere** — it is not released. On the internal gate it measures
+**+37.93 ± 12.25** over 6.0, but that is 800 games against one opponent, which is a different
+measurement from a rating list and carries the caveat above about draw rates.</sub>
 
 ---
 

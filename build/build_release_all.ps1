@@ -23,10 +23,15 @@ param(
   # Serve a ri-verificare una matrice esistente dopo aver toccato i CANARY invece dei
   # sorgenti: sei build PGO sono ore, i due controlli sono secondi.
   [switch]$NoBuild,
-  # Bench atteso della matrice. Vuoto = canary NON armato: si verifica soltanto che
-  # tutte le varianti diano lo STESSO bench (invariante node-identical), che e' gia'
-  # il controllo che becca una variante rotta. Pinna il numero dopo la prima release.
-  [string]$ExpectedBench = "",
+  # Bench atteso della matrice. ARMATO a 252074 il 12/08/2026 (firma della 7.0 dopo i
+  # bake di CapturedMailbox, TTEvalNoDecay, Rule50Formula, NegExtAlpha, TMv2EvalPrevAvg,
+  # CorrTBGuard e mate-stop). Verificato identico su Windows clang-cl/PGO e su Linux
+  # clang++/ThinLTO con fancy-magics invece di PEXT: due implementazioni indipendenti
+  # degli attacchi scorrevoli che producono lo stesso albero.
+  # ⚠️ Se cambia il SORGENTE la firma cambia ed e' giusto che il canary si lamenti:
+  #    aggiorna QUESTO numero nello stesso commit del bake, non dopo.
+  # Vuoto = canary disarmato: resta solo l'invariante "tutte le varianti uguali".
+  [string]$ExpectedBench = "252074",
   # Cartella di raccolta. Vuoto = _release\Triumviratus_<Version>. Serve per le build
   # datate di prova, che non devono sovrascrivere la release ufficiale.
   [string]$RelDir = ""
