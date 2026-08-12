@@ -9853,8 +9853,22 @@ static void thread_search(int thread_id, int max_depth) {
       // resta confermato che ci sia o no l'incremento: il tempo extra non serve.
       // Non e' allocazione, e' uno stop -> puo' solo risparmiare tempo.
       if (g_tmv2_mate_stop) {
-        int mabs = score < 0 ? -score : score;
-        if (mabs >= mate_score)
+        // FIX 12/08/2026 — era `|score| >= mate_score`, quindi il contatore
+        // scattava anche quando il matto e' CONTRO di noi. L'intento dichiarato
+        // dodici righe sopra e' l'opposto e vale solo in un verso: "hai trovato
+        // il matto, giocalo invece di continuare a pensare" (SF perse partite
+        // CCC proprio per quello).
+        // Subire matto e' il caso opposto: fermarsi presto non guadagna nulla e
+        // toglie l'unica risorsa che resta in una posizione persa — continuare a
+        // cercare la linea che allunga di piu', o scoprire che il matto era un
+        // artefatto della potatura. Uno score di matto alla radice NON e' una
+        // prova formale: con riduzioni e potature puo' essere instabile, e le
+        // N iterazioni consecutive lo rendono raro, non impossibile.
+        // ⚠️ NON misurabile: l'evento e' troppo raro perche' un SPRT lo veda.
+        // Preso sulla correttezza, come Rule50Formula. Il bench non si muove —
+        // il contatore alimenta solo lo stop temporale e il bench e' a
+        // profondita' fissa, quindi 252074 non e' una verifica di QUESTO.
+        if (score >= mate_score)
           mate_score_iters++;
         else
           mate_score_iters = 0;
