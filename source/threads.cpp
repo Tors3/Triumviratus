@@ -180,11 +180,31 @@ bool g_eval_tt_write =
 // NB: la strada piu' pulita sarebbe usare `nn_finalize` invece di `redamp`, che
 // applica gia' la formula giusta — ma e' un refactor, non un fix a costanti.
 int g_rule50_formula = 1;
-// CorrTBGuard (spin 0/1, default 0 = comportamento attuale, byte-identico SENZA
-// tablebase). Corregge la guardia della banda Syzygy in `td_corr_update` — vedi il
-// commento esteso al sito d'uso, :6760 circa. 1 = la banda TB viene davvero esclusa
-// dalla correction history.
-int g_corr_tb_guard = 0;
+// CorrTBGuard — BAKATO A 1 il 12/08/2026. Corregge la guardia della banda Syzygy in
+// `td_corr_update`: vedi il commento esteso al sito d'uso, ~:6955.
+// ⚠️ SENZA tablebase e' un no-op ESATTO (nessuno score cade in [29873, 29935] se non
+// viene da Syzygy), quindi il bench resta 252074 e i nostri test storici sono intatti.
+// MISURA DI FREQUENZA (sonda con contatore, zero partite): nei finali fino a UN TERZO
+// degli update di correction history porta uno score TB — 31,6% / 23,3% / 33,7% su tre
+// finali; zero sulle stesse posizioni senza tablebase.
+// SPRT con tablebase su entrambi i lati:
+//   15+0.15, con aggiudicazione   3596 partite   -1,06 +/- 5,43
+//    8+0.08, SENZA aggiudicazione 4786 partite   +1,74 +/- 4,87
+// (il secondo perche' il draw adjudication dalla mossa 40 chiude le partite proprio nei
+//  finali bilanciati, cioe' poteva aver rimosso il regime in esame invece di misurarlo)
+// ⇒ ~8400 partite, nullo. **Preso sulla CORRETTEZZA, non sull'Elo**, come Rule50Formula.
+// 🔑 L'argomento che regge da solo e' l'OVERFLOW, non la semantica. Coi default reali:
+//     lim   = g_corr_cap(48) * CORR_GRAIN(256)                    = 12.288
+//     bonus = diff(~29.900) * 256 * w(16) / g_corr_lr_div(303)    = 404.193
+//     decay = cv * abs_bonus / lim  ->  12.288 * 404.193 = 4.966.723.584
+//   contro INT32_MAX = 2.147.483.647. Overflow con segno = UB, non wrap benigno: clang
+//   e' libero di assumere che non accada. E accade ESATTAMENTE nel caso tablebase, con
+//   il bucket vicino al cap.
+// Semanticamente: un verdetto Syzygy non e' una valutazione, e' una certezza. Farlo
+// entrare in una tabella che impara l'ERRORE DI EVAL e' un errore di categoria — satura
+// il bucket a +/-CorrCap e ci resta, e la pawn key a 14 bit lo propaga per collisione a
+// posizioni che con le tablebase non c'entrano.
+int g_corr_tb_guard = 1;
 static inline int tt_eval_undamp(int v, int fifty) {
   if (v == tt_eval_none)
     return v;
@@ -1246,6 +1266,24 @@ int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
 // vivo. ⚠️ Finche' resta 0, NegExtCut va tenuto FUORI dallo spazio SPSA: tararlo
 // significa misurare rumore, ed e' gia' successo (default 3 = massimo del range).
 int g_negext_order = 0;
+// ⛔ SingularNoPollute — PROVATO E SCARTATO il 12/08/2026, non rifarlo.
+// L'idea: la ricerca singular rientra allo STESSO ply con `excluded_move` impostato, e
+// sul suo beta-cutoff scrive `cutoff_cnt`, killer, counter-move e TUTTE le history —
+// mentre due righe sopra `store_tt` e `td_corr_update` sono protetti da `excluded_move`.
+// Sembrava una guardia che si ferma a meta'. Proteggere anche il resto:
+//     bench 252074 -> 219752, cioe' -12,8% di albero a profondita' fissa (NON e' un
+//     percorso raro: la frequenza si e' misurata cosi', senza sonde ne' contatori)
+//     SPRT 15+0.15   3198 partite   -0,54 +/- 5,97   Ptnml [6, 375, 838, 378, 2]
+//     SPRT 30+0.3    3012 partite   +1,61 +/- 6,04   Ptnml [2, 341, 807, 353, 3]
+// Seimila partite su due TC, entrambe centrate sullo zero. ⚠️ A 1212 partite il test a
+// 30+0.3 leggeva +14,63 +/- 9,53 con LOS 99,87%: leggere un SPRT a meta' strada qui
+// avrebbe fatto bakare quindici Elo inesistenti.
+// 🔑 PERCHE' non paga, ed e' la lezione: l'asimmetria e' COERENTE, non distratta.
+// `store_tt` e `td_corr_update` registrano informazione sulla POSIZIONE, che escludendo
+// la mossa migliore sarebbe falsa; le history registrano informazione sulla MOSSA, che
+// resta vera anche li'. E il -12,8% lo conferma: senza pollution l'albero e' piu' piccolo,
+// quindi a tempo fisso il motore va PIU' A FONDO — e pareggia lo stesso. Quei nodi in piu'
+// non erano sprecati, compravano ordinamento. Il dato vale quanto costa raccoglierlo.
 // CapturedMailbox (spin 0/1, BAKED A 1 il 9/08/2026; 0 = comportamento storico).
 // P2/B3 dell'audit del 5/08. `td_captured_piece` scorre SEI bitboard per scoprire
 // quale pezzo sta su una casa; la mailbox `td.piece_on[64]` — gia' mantenuta in
