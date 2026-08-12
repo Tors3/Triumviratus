@@ -32,23 +32,10 @@
 **CCRL Blitz** (2 min + 1 s), list of 8 August 2026:
 
 > ### 🏅 Triumviratus 6.0 — **10th**, 3754 ±16
-> on a **single CPU**, ahead of engines rated on eight
+> on a **single CPU**, 34 Elo from the top of the list
 
-| # | Engine | Rating | CPU |
-|---|---|---|---|
-| 1 | Stockfish 17.1 | 3788 ±10 | 8 |
-| 2 | Torch v4 | 3781 ±14 | 8 |
-| 3 | PlentyChess 8.0.0 | 3778 ±13 | 1 |
-| 4 | Obsidian 16.0 | 3774 ±13 | 8 |
-| 5 | Reckless 0.9.0 | 3768 ±11 | 1 |
-| … | | | |
-| 9 | pawnocchio 2.0 | 3756 ±13 | 1 |
-| **10** | **Triumviratus 6.0** | **3754 ±16** | **1** |
-| 11 | Viridithas 20.0.0 | 3750 ±13 | 1 |
-| 12 | Integral 7.0.0 | 3749 ±10 | 8 |
-
-<sub>34 Elo from the top of the list. Of the nine engines above ours, **six run on eight cores**
-(positions 1, 2, 4, 6, 7, 8) and three on one. 996 games, so ±16 is still wide.</sub>
+<sub>Of the nine engines above ours, six are rated on eight cores. 996 games, so ±16 is still
+wide.</sub>
 
 <sub>The number worth reading twice is the **draw rate: 93.4%**. That is what a top-level pool plus
 balanced openings produces, and it is the single most important fact for anyone reading the
