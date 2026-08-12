@@ -29,21 +29,15 @@
 
 ## Rating
 
-**CCRL Blitz** (2 min + 1 s), list of 8 August 2026:
+**CCRL Blitz** (2 min + 1 s):
 
-> ### 🏅 Triumviratus 6.0 — **10th**, 3754 ±16
-> on a **single CPU**, 34 Elo from the top of the list
+| Version | Rating | Rank | List |
+|---|---|---|---|
+| **Triumviratus 6.0 64-bit (1 CPU)** | **3754** ±16 | **10** | 2026-08-08 |
+| Triumviratus 4.2 64-bit (1 CPU) | 3670 ±13 | 51–52 | 2026-08-08 |
 
-<sub>Of the nine engines above ours, six are rated on eight cores. 996 games, so ±16 is still
-wide.</sub>
-
-<sub>The number worth reading twice is the **draw rate: 93.4%**. That is what a top-level pool plus
-balanced openings produces, and it is the single most important fact for anyone reading the
-development logs: our own testing uses deliberately unbalanced UHO books and draws 52–56%. A gain
-measured there does **not** arrive at full size here — a draw is a game where the advantage never
-converted, and at nine draws in ten it takes a much larger edge to move the result. It also means
-the list itself needs many games to separate engines: the top twenty span 54 Elo, less than four
-error bars.</sub>
+<sub>6.0 is **34 Elo from the top of the list**, and six of the nine engines above it are rated on
+eight cores. 996 games, so ±16 is still wide.</sub>
 
 **CCRL 40/15** (40 moves in 15 minutes + increment):
 
