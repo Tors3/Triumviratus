@@ -193,10 +193,10 @@ int g_rule50_formula = 1;
 // finali; zero sulle stesse posizioni senza tablebase.
 // SPRT con tablebase su entrambi i lati:
 //   15+0.15, con aggiudicazione   3596 partite   -1,06 +/- 5,43
-//    8+0.08, SENZA aggiudicazione 4786 partite   +1,74 +/- 4,87
+//    8+0.08, SENZA aggiudicazione 5374 partite   +1,10 +/- 4,61  (LLR -0,06)
 // (il secondo perche' il draw adjudication dalla mossa 40 chiude le partite proprio nei
 //  finali bilanciati, cioe' poteva aver rimosso il regime in esame invece di misurarlo)
-// ⇒ ~8400 partite, nullo. **Preso sulla CORRETTEZZA, non sull'Elo**, come Rule50Formula.
+// ⇒ ~9000 partite, nullo. **Preso sulla CORRETTEZZA, non sull'Elo**, come Rule50Formula.
 // 🔑 L'argomento che regge da solo e' l'OVERFLOW, non la semantica. Coi default reali:
 //     lim   = g_corr_cap(48) * CORR_GRAIN(256)                    = 12.288
 //     bonus = diff(~29.900) * 256 * w(16) / g_corr_lr_div(303)    = 404.193
