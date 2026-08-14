@@ -200,6 +200,22 @@ two parameters at once, so which of the two pays is not known.</sub>
 of the queen — −1.82 ± 6.49 over 3,818 games at 25+0.25. It grows the tree by a further 11% and
 did not repay it.</sub>
 
+<sub>**Tested and rejected: the negative branch of late-move reductions, with its six fine
+coefficients retuned around it** — **+1.70 ± 3.35 over 10,194 games**, 95% CI [−1.64, +5.05].
+Stockfish and Obsidian let the sum of the fine reduction terms fall below zero, where a reduction
+becomes an extension; this engine clamps it at zero. Enabling the negative branch on its own
+measures **−9.11 ± 10.92**, and that is the interesting part: underneath a clamp the six
+coefficients are mutually indistinguishable, so whatever values tuning had left down there were
+arbitrary. Removing the floor does not import a technique — it **uncovers untuned territory**. The
+six were therefore retuned above it by SPSA (3,055 iterations, 8 games each). The retune recovered
+the 9 Elo in full and found nothing beneath: the floor at zero was already the optimum. Two
+by-products are worth more than the null itself. At 550 games this same test read **+20.24 ± 14.72,
+LOS 99.66%** — 2.7σ — against +1.70 at 10,194, a reminder that an SPRT read at a twentieth of its
+distance is an anecdote *even when it carries three sigma*. And the mechanistic prediction that
+something which extends ought to pay more at depth was testable and proved false: 40+0.4 measured
+−0.71σ against 20+0.2, with the depths taken from the PGNs rather than assumed — 16.2 at 20+0.2,
+18.0 at 40+0.4, and 13.1 at the same time control on an AVX2 machine 2.6× slower.</sub>
+
 ---
 
 ## 3. Speed work (NPS)
