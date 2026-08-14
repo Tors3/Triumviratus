@@ -51,8 +51,10 @@ eight cores. 996 games, so ±16 is still wide.</sub>
 The two lists are not comparable: different time control, different pool, different draw rate.</sub>
 
 <sub>**7.0 is not rated anywhere** — it is not released. On the internal gate it measures
-**+37.93 ± 12.25** over 6.0, but that is 800 games against one opponent, which is a different
-measurement from a rating list and carries the caveat above about draw rates.</sub>
+**+27.54 ± 6.33** over 6.0 (2,996 games, 25+0.25, 256 MB, LOS 100%). That is still one opponent on
+one book, a different measurement from a rating list, and it carries the caveat above about draw
+rates. It supersedes an earlier +37.93 ± 12.25 taken on 800 games — the two are compatible, the
+earlier interval was twice as wide, and it predated two changes to the binary.</sub>
 
 ---
 
@@ -110,16 +112,19 @@ Two things change, and the second one is the real one:
 
 #### Ahead of 6.0
 
-| | date | TC | games | Elo |
-|---|---|---|---|---|
-| whole engine — network + re-tuned search | 2026-07-31 | **25+0.25** | 1287 | **+22.17 ± 9.70** |
-| network alone — epoch 799, search frozen | 2026-07-30 | 15+0.15 | 1442 | +23.41 ± 9.22 |
+| | date | TC | hash | games | Elo |
+|---|---|---|---|---|---|
+| **release gate — whole engine** | **2026-08-14** | **25+0.25** | **256 MB** | **2,996** | **+27.54 ± 6.33** |
+| whole engine — network + re-tuned search | 2026-07-31 | 25+0.25 | 64 MB | 1,287 | +22.17 ± 9.70 |
+| network alone — epoch 799, search frozen | 2026-07-30 | 15+0.15 | 64 MB | 1,442 | +23.41 ± 9.22 |
 
-<sub>Both against 6.0 with `rubicon-alea-v3`, 1 thread, UHO_4060_v4, AVX-512 PGO builds. The rows
-answer different questions and are **not** additive: the second freezes the search to isolate the
-network, and the two agree within their error bars. Ahead of 6.0 since epoch 189. Training is
-complete — stage 2 ended at epoch 799, and a stage-3 annealing tail was run and closed at zero.
-Per-checkpoint table and recipe: **[`NETWORKS.md`](NETWORKS.md)** · development log:
+<sub>All against 6.0 with `rubicon-alea-v3`, 1 thread, UHO_4060_v4, AVX-512 PGO builds. The rows
+answer different questions and are **not** additive: the third freezes the search to isolate the
+network. The top row is the release figure — three times the sample of any earlier run, and the
+first taken at the **256 MB** the rating lists use rather than the 64 MB of the development runs.
+All three agree within their intervals. Ahead of 6.0 since epoch 189. Training is complete — stage 2
+ended at epoch 799, and a stage-3 annealing tail was run and closed at zero. Per-checkpoint table and
+recipe: **[`NETWORKS.md`](NETWORKS.md)** · development log:
 **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
 
 

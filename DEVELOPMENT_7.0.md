@@ -114,18 +114,33 @@ tighter than the shipped one, where the high indices of `TMv2Eval[]` almost neve
 found nothing (largest per-parameter drift 1.6 σ over 1,000 iterations, and the resulting vector read
 −6.18 ± 8.29 at 60+0.6). The block is left where it was; only its units were fixed.</sub>
 
-**The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the 7.0 build of
-6 August, each loading its own network, AVX-512, one thread, 128 MB, UHO_4060_v4:
+**The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the current 7.0
+build, each loading its own network, AVX-512, one thread, **256 MB**, UHO_4060_v4:
 
-> **+37.93 ± 12.25 Elo** — LOS 100%, nElo +75.18 ± 24.08, 800 games at 30+0.3
-> (245 wins, 158 losses, 397 draws)
+> **+27.54 ± 6.33 Elo** — LOS 100%, nElo +54.37 ± 12.44, 2,996 games at 25+0.25
+> (842 wins, 605 losses, 1,549 draws; Ptnml [6, 252, 752, 475, 13], PairsRatio 1.89)
 
-The network alone was worth +23.41. The remaining ~14 Elo is the search work, which is the number
-that could not be read off the table above: the stages are each measured against a different
-baseline and at three different time controls, so they do not add up to anything.
+<sub>**This supersedes an earlier +37.93 ± 12.25**, taken on 6 August over 800 games at 30+0.3 with
+128 MB — and it is *not* a regression from it. The two are compatible at 1.5σ; the earlier figure
+carries twice the interval; and it predates the `NegExtAlpha` and `Rule50Formula` bakes, so it is
+not even the same binary. The pattern is the ordinary one: a positive estimate taken on a small
+sample runs high, because it gets looked at precisely when it is high. The most reliable figure
+available before this gate was the +22.17 ± 9.70 over 1,287 games at the same time control, and the
+new measurement sits **above** it, not below.</sub>
 
-⚠️ 800 games, stopped by hand — the interval is wide and the run is not a gate against a bound.
-It is a point estimate, and it is the last one that will change: **7.0 is not closed.**
+<sub>Hash is **256 MB**, not the 64–128 MB of the earlier runs, and that is deliberate: it is what
+the rating lists use, and a number measured where the transposition table saturates need not survive
+where it does not — see `TTTwoLevel`, whose +4.55 at 64 MB did not reproduce at 256. So this figure
+is not directly comparable with the older ones, in the direction that matters: it measures the
+engine where the engine will be measured.</sub>
+
+The network alone was worth +23.41. The remainder is the search work, which cannot be read off the
+table above: the stages are each measured against a different baseline and at three different time
+controls, so they do not add up to anything.
+
+⚠️ Stopped by hand at 2,996 of a planned 6,000. Finishing would tighten the interval from ±6.33 to
+about ±4.5 and would not move the conclusion. Worth noting that the run was stopped because the
+figure came in *below* expectation — the opposite of the direction in which an early stop biases.
 
 **Against another engine: Obsidian 16.0.** The first measurement of 7.0 outside its own family,
 12 August, one thread, 128 MB, 20+1, opening positions from the Norman Pollock database:
