@@ -231,6 +231,26 @@ something which extends ought to pay more at depth was testable and proved false
 −0.71σ against 20+0.2, with the depths taken from the PGNs rather than assumed — 16.2 at 20+0.2,
 18.0 at 40+0.4, and 13.1 at the same time control on an AVX2 machine 2.6× slower.</sub>
 
+<sub>**Tested and rejected: per-bucket evaluation scaling** — **−9.82 ± 11.44 over 920 games** at
+10+0.1, LOS 4.61%. The network has eight output buckets selected by piece count, but the single
+recalibration that maps its output onto the search margins is **global**. The motive was that the
+net minimises *prediction loss* uniformly across phases, not Elo, so one scale is forced to serve
+both a 32-piece opening and a 4-piece endgame. Eight per-bucket scales were exposed and tuned by
+SPSA (1,124 iterations, 12 games each, perturbation annealing ±5 → ±2.4); the tail was settled — the
+drift between its two halves was 0.29 RMS against displacements of 1.79 — and the vector came out
+`60 · 58 · 63 · 59 · 60 · 58 · 59 · 63`. Zero is still inside the interval, so this is not proof of
+harm; but **+5 is excluded at 2.3σ**, and for a bake decision "not better" and "worse" lead to the
+same place. Defaults stay at 60 and the shipped binary is byte-identical (bench 252074).</sub>
+
+<sub>The reason it could not work is worth more than the result. **A multiplicative scale can only
+stretch the evaluation uniformly.** If the net misjudges *which* positions are good, multiplying
+everything by 1.05 corrects nothing. What the Stockfish community calls "NNUE SPSA" tunes the
+**weights**, which changes *what the evaluation says about a position* — a different kind of
+intervention, not a larger version of the same one. One useful by-product: `B0`, the 1–4 piece
+bucket, did not move by 0.001 in 1,100 iterations. That is the bucket where the eval scale cannot
+change the result, and its staying put while `B7` moved three points is the internal control saying
+the tuner was following a real gradient rather than diffusing. The gradient was simply worth little.</sub>
+
 ---
 
 ## 3. Speed work (NPS)
