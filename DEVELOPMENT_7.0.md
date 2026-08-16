@@ -115,10 +115,27 @@ found nothing (largest per-parameter drift 1.6 σ over 1,000 iterations, and the
 −6.18 ± 8.29 at 60+0.6). The block is left where it was; only its units were fixed.</sub>
 
 **The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the current 7.0
-build, each loading its own network, AVX-512, one thread, **256 MB**, UHO_4060_v4:
+build, each loading its own network, AVX-512, one thread, UHO_4060_v4. Measured at three time
+controls to see whether the advantage survives longer thinking:
 
-> **+27.54 ± 6.33 Elo** — LOS 100%, nElo +54.37 ± 12.44, 2,996 games at 25+0.25
-> (842 wins, 605 losses, 1,549 draws; Ptnml [6, 252, 752, 475, 13], PairsRatio 1.89)
+| TC | hash | s/side | **depth** | games | Elo |
+|---|---:|---:|---:|---:|---:|
+| 5+0.05 | 64 MB | 7 | 12.4 | 1,926 | +30.02 ± 8.81 |
+| 25+0.25 | 256 MB | 35 | 17.3 | 3,170 | **+28.34 ± 6.19** |
+| 40+0.4 | 256 MB | 56 | **19.3** | 3,000 | **+33.22 ± 6.14** |
+
+LOS is 100% at all three. The longest point is also the strongest: PairsRatio 2.23, better than two
+won pairs for every lost one.
+
+<sub>**The advantage does not decay with depth**, which was the open question. Over seven plies —
+12.4 to 19.3 — the figure stays between 28 and 33, and the weighted slope is **+0.42 ± 1.56 Elo per
+ply**, indistinguishable from flat. Had this been a gain that only lives at shallow depth, the slope
+would have come out clearly negative. The depths are **measured from the PGNs**, not inferred from
+the time control, because two machines at the same TC were found to differ by 3 plies.</sub>
+
+<sub>⚠️ CCRL Blitz runs at roughly 160 s per side, some three times beyond the longest point here, so
+the curve still has to be extrapolated. Extrapolating a flat line is a much smaller act of faith
+than extrapolating a falling one, but it is an extrapolation.</sub>
 
 <sub>**This supersedes an earlier +37.93 ± 12.25**, taken on 6 August over 800 games at 30+0.3 with
 128 MB — and it is *not* a regression from it. The two are compatible at 1.5σ; the earlier figure
@@ -138,18 +155,29 @@ The network alone was worth +23.41. The remainder is the search work, which cann
 table above: the stages are each measured against a different baseline and at three different time
 controls, so they do not add up to anything.
 
-⚠️ Stopped by hand at 2,996 of a planned 6,000. Finishing would tighten the interval from ±6.33 to
-about ±4.5 and would not move the conclusion. Worth noting that the run was stopped because the
-figure came in *below* expectation — the opposite of the direction in which an early stop biases.
+⚠️ The 25+0.25 run was stopped by hand at 2,996 of a planned 6,000 because the figure came in
+*below* expectation — the opposite of the direction in which an early stop biases an estimate. It
+later accumulated to 3,170. The 40+0.4 run ran its full 3,000.
 
-**Against another engine: Obsidian 16.0.** The first measurement of 7.0 outside its own family,
-12 August, one thread, 128 MB, 20+1, opening positions from the Norman Pollock database:
+**Against another engine: Obsidian 16.0.** The only measurements of 7.0 outside its own family.
+One thread, 128 MB, three conditions:
 
-> **+3.0 ± 8.0 Elo** — 700 games, 37 wins, 31 losses, **632 draws** (50.43%)
+| date | TC | book | games | draws | Elo |
+|---|---|---|---:|---:|---:|
+| 12 Aug | 20+1 | Pollock | 700 | **90.3%** | +3.00 ± 8.00 |
+| 15 Aug | 8+0.1 | UHO_4060_v4 | 240 | 52.5% | −10.14 ± 22.50 |
+| 15 Aug | 20+0.2 | UHO_4060_v4 | 1,278 | 47.7% | −6.25 ± 10.20 |
+| **combined** | | | **2,218** | | **−1.22 ± 6.06** |
 
-A dead heat, and the error bar says so: the interval spans zero comfortably in both directions.
-What the result does establish is the order of magnitude — 7.0 is *at* Obsidian 16.0's level at
-this time control, not a class below or above it.
+The three are mutually consistent (Cochran's *Q* = 2.61 on 2 degrees of freedom), so combining them
+is legitimate as a meta-estimate across those conditions — though not as a single measurement, since
+the time control and the book both change between rows. Every individual row spans zero, and so does
+the combination: **[−7.28, +4.84]**.
+
+A dead heat, and now on 2,218 games rather than 700. What the result establishes is the order of
+magnitude — 7.0 is *at* Obsidian 16.0's level, not a class below or above it. What it does **not**
+establish is a sign: after three tries the best estimate is −1.2 Elo with a six-point interval, and
+distinguishing that from zero would take far more games than the question is worth.
 
 The number worth staring at is the draw count: **90.3%**. That is not a property of the engines
 alone, it is what balanced opening positions plus a fast time control produce, and it is why the
