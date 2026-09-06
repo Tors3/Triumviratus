@@ -100,6 +100,26 @@ a different measurement from a rating list. Ahead of 6.0 since epoch 189; stage 
 and a stage-3 annealing tail was run and closed at zero. Per-checkpoint table and recipe:
 **[`NETWORKS.md`](NETWORKS.md)** · development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
 
+#### Against other engines
+
+| Opponent | Result | Games | TC | Depth — ours / theirs |
+|---|---|---:|---|---|
+| **Hobbes 3.0** (AVX-512) | **+47.24 ± 16.14** (56.76%), LOS 100% | 518 | 40+0.4 | **17.97 / 18.57 ply** |
+
+<sub>1 thread, 256 MB, UHO_4060_v4, adjudication at 40/8/10cp and resignation at 600cp. Depths are
+measured from the PGN over 530 games and roughly 30,000 annotated moves per side.</sub>
+
+<sub>🔑 Note the last column. **Hobbes searches about half a ply deeper and still loses by 47 Elo** —
+the advantage is in evaluation, not in depth, which is the claim this release is built on. Our depth
+is also the more tightly held of the two (per-game quartiles 16.6–18.7 against 16.4–19.8), which is a
+property of the time management rather than of the search.</sub>
+
+<sub>The run was checked for a NUMA artefact before being reported — the test machine is dual-socket
+with all memory on one node, so half the cores read across the interconnect. Per-game mean depth is
+unimodal for both engines, symmetric between colours (0.08 ply for us, 0.27 for Hobbes) and flat
+between the first and second halves of the match (drift +0.00 and +0.06 ply). The slower socket is
+real but weighs equally on both sides.</sub>
+
 ---
 
 ## Triumviratus 6.0 — previous release
