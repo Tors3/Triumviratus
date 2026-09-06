@@ -67,6 +67,27 @@ const unsigned int  gEmbeddedNNUESize    = 1;
 
 namespace Triumviratus::Eval::NNUE {
 
+// ⭐ EvalBucketOverride (17/08/2026) — E' UNA SONDA, non una patch.
+// I bucket di output sono 8 e si scelgono con `(pezzi - 1) / 4`. Quindi OGNI cattura
+// che attraversa un confine cambia TESTA DI OUTPUT: la stessa posizione, a un ply di
+// distanza, viene valutata da pesi diversi. E succede esattamente nei nodi dove si sta
+// decidendo se catturare, cioe' dove un artefatto sistematico fa piu' danno.
+// 🔑 La domanda si risponde con un NUMERO, non con un SPRT: si forza la stessa
+// posizione sotto due bucket adiacenti e si misura il salto. Se e' di decine di
+// centipawn e' un difetto vero nella eval che stiamo per spedire; se e' di due o tre,
+// l'idea e' morta ed e' costato dieci minuti scoprirlo.
+// -1 = comportamento normale (default, byte-identico). 0..7 = forza quel bucket.
+// ⚠️ Diagnostica: in partita va lasciata a -1.
+int g_eval_bucket_override = -1;
+
+// Un solo punto di verita' per la scelta del bucket: era duplicata fra `evaluate` e
+// `mens_trace`, e due copie della stessa formula sono due posti dove sbagliare.
+static inline int nnue_output_bucket(int piece_count) {
+    if (g_eval_bucket_override >= 0 && g_eval_bucket_override < LayerStacks)
+        return g_eval_bucket_override;
+    return (piece_count - 1) / 4;
+}
+
 // Triumviratus: true se un net embeddato e' effettivamente disponibile a runtime
 // (incbin: size > 1; resource/universal: puntatore risolto). Il bridge lo usa per
 // decidere se il nome-default puo' essere instradato su <internal>.
@@ -167,7 +188,7 @@ NetworkOutput Network::evaluate(const Position&    pos,
 
     NNZInfo<L1> nnzInfo;
 
-    const int bucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    const int bucket = nnue_output_bucket(pos.count<ALL_PIECES>());
     Value     psqt_v, pos_v;
     {
         PROF_GUARD(prof_ft);
@@ -189,7 +210,7 @@ Network::MensLayerTrace Network::mens_trace(const Position&    pos,
     constexpr u64 alignment = CacheLineSize;
     alignas(alignment) TransformedFeatureType transformedFeatures[FeatureTransformer::BufferSize];
     NNZInfo<L1> nnzInfo;
-    const int  bucket = (pos.count<ALL_PIECES>() - 1) / 4;
+    const int  bucket = nnue_output_bucket(pos.count<ALL_PIECES>());
     const auto psqt   = featureTransformer.transform(pos, accumulatorStack, cache,
                                                      transformedFeatures, bucket, nnzInfo);
     MensLayerTrace t;

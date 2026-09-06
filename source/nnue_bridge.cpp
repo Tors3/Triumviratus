@@ -124,6 +124,19 @@ static const int sfc[12] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
 // SPSA-tuned for (pawn ~56 vs ~332) -> the pruning thresholds are mis-sized. This
 // multiplier re-aligns the eval with the existing margins; sweep it at fixed depth.
 static int g_eval_scale_pct = 60;   // BAKE 2026-07-16: vettore iter1800 (era 56)
+// --- EvalScale PER BUCKET (15/08/2026) --------------------------------------
+// La rete ha LayerStacks = 8 bucket di output, scelti per numero di pezzi
+// (network.cpp:170: bucket = (count<ALL_PIECES>() - 1) / 4), ma la ricalibrazione
+// sull'eval e' UNA SOLA e globale. La rete e' stata addestrata a minimizzare la
+// loss di PREDIZIONE uniformemente su tutte le fasi, non gli Elo: una scala unica
+// impone la stessa calibrazione a un'apertura con 32 pezzi e a un finale con 4,
+// dove la struttura dell'errore di eval non e' la stessa.
+// ⚠️ BYTE-IDENTICO coi default: tutti a 60 = il valore globale precedente, e
+//    l'aritmetica applicata e' esattamente la stessa (v * pct / 100).
+// `EvalScale` resta e scrive TUTTI gli otto, cosi' il vecchio comportamento e le
+// vecchie ricette continuano a valere; i B0..B7 lo raffinano per fase.
+// ⚠️ ORDINE: chi setta `EvalScale` DOPO i B0..B7 li sovrascrive tutti.
+static int g_eval_scale_b[8] = {60, 60, 60, 60, 60, 60, 60, 60};
 // 5.1 EvalTTWrite: ultimo valore UNADJUSTED (pre-rule50, pre-EvalScale) calcolato da nn_scale
 // su QUESTO thread = lo "unadjustedStaticEval" di SF, fifty-independent -> si cacha questo e si
 // ri-finalizza col fifty corrente (hit su TUTTE le trasposizioni, sempre esatto).
@@ -147,23 +160,65 @@ int g_eval_optimism = 1;  // [5.1 BAKE] ON di default (spsa_struct lo ha tenuto 
 // load/store atomici su int = stessa istruzione: zero costo, stesso comportamento.
 std::atomic<int> g_optimism[2] = {0, 0};
 
+// --- COSTANTI DEL BLEND, ESPOSTE (15/08/2026) --------------------------------
+// Sono tutte di Stockfish, ereditate col wrapper e MAI tarate su questa rete. E non
+// scalano l'eval: decidono COSA DICE. `EvalPosW` e' quanto fidarsi della testa
+// posizionale rispetto alla psqt; `EvalComplexDiv` quanto smorzare quando le due sono
+// in disaccordo; `EvalMatBase`/`EvalPawnMat` come l'eval cresce col materiale.
+// Calibrate per la rete di SF: la nostra e' TRANN2, con PawnPair, PassedPawns e
+// FullThreats in ingresso, quindi l'affidabilita' relativa delle due teste non ha
+// motivo di essere la stessa.
+// ⚠️ E' la differenza con la scala per bucket chiusa a -9,82 il 15/08: quella poteva
+//    solo STIRARE l'eval in modo uniforme, queste ne cambiano la forma.
+// ⚠️ DEGENERAZIONE: `EvalPsqtW` ed `EvalPosW` insieme contengono anche la direzione
+//    "scala tutto", che e' gia' coperta da EvalScale. Nel preset se ne tara UNO SOLO.
+// ✅ Default = i valori hardcoded di prima => byte-identico.
+int g_ev_psqt_w    = 125;    // peso psqt        (/128)
+int g_ev_pos_w     = 131;    // peso positional  (/128)
+int g_ev_cplx_div  = 18236;  // smorzamento per disaccordo fra le due teste
+int g_ev_pawn_mat  = 534;    // valore del pedone nel termine material
+int g_ev_mat_base  = 77871;  // base materiale della scala nnue
+int g_ev_opt_cplx  = 476;    // blend optimism <-> complessita'
+int g_ev_opt_base  = 7191;   // base materiale del termine optimism
+
+// ⭐ EvalOptSimple — port di SF de948f0f "Simplify optimism scaling formula" (10/08/2026).
+// SF ha tolto la dipendenza dal MATERIALE al termine optimism, rendendolo una costante,
+// e ha alzato la base materiale:
+//     -  v = (nnue * (77871 + material) + optimism * (7191 + material)) / 77871
+//     +  v = (nnue * (91000 + material) + optimism *  7675           ) / 91000
+// Passata STC non-reg <-1.75,0.25> su 110.624 partite e LTC su 153.366.
+// ⚠️ NON e' un guadagno: sono soglie di NON-REGRESSIONE. SF l'ha fusa perche' semplifica,
+//    non perche' porti Elo. Da noi ha pero' un interesse che da loro non ha: e' l'unico
+//    port della finestra che tocca la EVAL, ed e' proprio dove la nostra rete diverge di
+//    piu' dalla loro. Quelle costanti sono tarate sulla rete di SF; sulla nostra la forma
+//    piu' semplice potrebbe stare meglio o peggio, e non c'e' modo di saperlo a tavolino.
+// 0 = forma storica => BYTE-IDENTICO. 1 = forma SF.
+int g_ev_opt_simple = 0;
+int g_ev_mat_base2  = 91000;  // base materiale della forma nuova (SF: 91000)
+int g_ev_opt_const  = 7675;   // coefficiente optimism, ora COSTANTE (SF: 7675)
+
 static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
-    int nnue           = (125 * int(psqt) + 131 * int(positional)) / 128;
+    int nnue           = (g_ev_psqt_w * int(psqt) + g_ev_pos_w * int(positional)) / 128;
     int nnueComplexity = std::abs(int(psqt) - int(positional));
-    nnue -= nnue * nnueComplexity / 18236;
+    nnue -= nnue * nnueComplexity / g_ev_cplx_div;
 
     int npm = int(KnightValue) * pos.count<KNIGHT>() + int(BishopValue) * pos.count<BISHOP>()
             + int(RookValue) * pos.count<ROOK>() + int(QueenValue) * pos.count<QUEEN>();
-    int material = 534 * pos.count<PAWN>() + npm;
+    int material = g_ev_pawn_mat * pos.count<PAWN>() + npm;
 
     int v;
     if (g_eval_optimism) {
         int optimism = g_optimism[pos.side_to_move()];
-        optimism += optimism * nnueComplexity / 476;   // SF: blend optimism con la complessita'
-        v = int((std::int64_t(nnue) * (77871 + material)
-                 + std::int64_t(optimism) * (7191 + material)) / 77871);
+        optimism += optimism * nnueComplexity / g_ev_opt_cplx;   // SF: blend optimism con la complessita'
+        if (g_ev_opt_simple)
+            // SF de948f0f: optimism non scala piu' col materiale, e la base sale.
+            v = int((std::int64_t(nnue) * (g_ev_mat_base2 + material)
+                     + std::int64_t(optimism) * g_ev_opt_const) / g_ev_mat_base2);
+        else
+        v = int((std::int64_t(nnue) * (g_ev_mat_base + material)
+                 + std::int64_t(optimism) * (g_ev_opt_base + material)) / g_ev_mat_base);
     } else
-        v = int(std::int64_t(nnue) * (77871 + material) / 77871);
+        v = int(std::int64_t(nnue) * (g_ev_mat_base + material) / g_ev_mat_base);
 
     // --- Scomposizione per la eval-cache (EvalCacheOptSplit) ------------------
     // L'optimism entra LINEARMENTE: v = base + optimism * coeff, dove base e coeff
@@ -174,13 +229,16 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
     // costava −9,42 Elo perche' buttava via il 52% del tempo in forward NNUE.
     // Il coeff include GIA' EvalScale, cosi' il consumatore lo somma direttamente a un
     // valore gia' scalato. Resta fuori solo il rule50, che la cache smorza per conto suo.
-    g_last_opt_base  = int(std::int64_t(nnue) * (77871 + material) / 77871);
-    g_last_opt_coeff = int(std::int64_t(476 + nnueComplexity) * (7191 + material) * 1000
-                           * g_eval_scale_pct / (476LL * 77871LL * 100LL));
+    // Stesso bucket che network.cpp:170 usa per scegliere lo stack di output.
+    const int scale_pct = g_eval_scale_b[(pos.count<ALL_PIECES>() - 1) / 4];
+
+    g_last_opt_base  = int(std::int64_t(nnue) * (g_ev_mat_base + material) / g_ev_mat_base);
+    g_last_opt_coeff = int(std::int64_t(g_ev_opt_cplx + nnueComplexity) * (g_ev_opt_base + material) * 1000
+                           * scale_pct / ((long long)g_ev_opt_cplx * g_ev_mat_base * 100LL));
     g_last_unadjusted = v;   // PRE rule50/EvalScale: SF unadjustedStaticEval (fifty-independent)
     v -= v * rule50 / 199;
-    if (g_eval_scale_pct != 100)
-        v = int(std::int64_t(v) * g_eval_scale_pct / 100);  // re-calibrate to the search margins
+    if (scale_pct != 100)
+        v = int(std::int64_t(v) * scale_pct / 100);  // re-calibrate to the search margins
     v = std::clamp(v, int(VALUE_TB_LOSS_IN_MAX_PLY) + 1, int(VALUE_TB_WIN_IN_MAX_PLY) - 1);
     return v;
 }
@@ -270,7 +328,58 @@ static bool g_lazy_mirror = true;
 void        nn_set_incremental(int on) { g_incremental = on != 0; }
 void        nn_set_verify(int on) { g_verify = on != 0; }
 void        nn_set_lazy_mirror(int on) { g_lazy_mirror = on != 0; }
-void        nn_set_eval_scale(int pct) { g_eval_scale_pct = pct < 1 ? 1 : pct; }
+void        nn_set_eval_scale(int pct) {
+    g_eval_scale_pct = pct < 1 ? 1 : pct;
+    for (int b = 0; b < 8; ++b) g_eval_scale_b[b] = g_eval_scale_pct;  // globale = tutti
+}
+void        nn_set_eval_scale_bucket(int b, int pct) {
+    if (b >= 0 && b < 8) g_eval_scale_b[b] = pct < 1 ? 1 : pct;
+}
+
+// Costanti del blend, in UNA tabella: il nome sta qui e non sparso in uci_mt.cpp, cosi'
+// aggiungerne una non richiede di toccare due file e non si puo' dichiarare in UCI
+// un'opzione che nessuno legge (il modo piu' silenzioso di far misurare zero a un tuner).
+// I `min` non sono cosmetici: sono DIVISORI, e uno zero sarebbe una divisione per zero
+// dentro la eval, cioe' un crash a meta' partita invece di un errore al setoption.
+// Sonda EvalBucketOverride: definita in nnue/network.cpp, dove si sceglie il bucket.
+namespace Triumviratus::Eval::NNUE { extern int g_eval_bucket_override; }
+
+namespace {
+struct EvalConst { const char* name; int* var; int lo; int hi; };
+const EvalConst g_eval_consts[] = {
+    {"EvalPsqtW",         &g_ev_psqt_w,    40,   260},
+    {"EvalPosW",          &g_ev_pos_w,     40,   260},
+    {"EvalComplexDiv",    &g_ev_cplx_div, 4000, 60000},
+    {"EvalPawnMat",       &g_ev_pawn_mat, 200,  1200},
+    {"EvalMatBase",       &g_ev_mat_base, 20000, 200000},
+    {"EvalOptComplexDiv", &g_ev_opt_cplx, 100,   2000},
+    {"EvalOptMatBase",    &g_ev_opt_base, 1000,  30000},
+    // Port SF de948f0f. EvalOptSimple e' un TOGGLE, ma vive qui come spin 0/1: la
+    // tabella e' gia' enumerata da uci_mt per dichiarare le opzioni, quindi entrare
+    // qui vuol dire essere dichiarata e instradata senza toccare altro. Ed e' anche
+    // la forma giusta per il gestore generico, che fa atoi() e su una `check` non
+    // accenderebbe mai (vedi uci_mt.cpp:514).
+    {"EvalOptSimple",     &g_ev_opt_simple,   0,      1},
+    // SONDA (17/08): -1 = normale. 0..7 forza la testa di output, per misurare il
+    // salto di eval fra due bucket adiacenti sulla STESSA posizione. Non giocarci.
+    {"EvalBucketOverride", &Triumviratus::Eval::NNUE::g_eval_bucket_override, -1, 7},
+    {"EvalMatBase2",      &g_ev_mat_base2, 20000, 200000},
+    {"EvalOptConst",      &g_ev_opt_const,  1000,  30000},
+};
+}
+int nn_eval_const_count(void) { return int(sizeof(g_eval_consts) / sizeof(g_eval_consts[0])); }
+const char* nn_eval_const_name(int i) { return g_eval_consts[i].name; }
+int nn_eval_const_get(int i)  { return *g_eval_consts[i].var; }
+int nn_eval_const_lo(int i)   { return g_eval_consts[i].lo; }
+int nn_eval_const_hi(int i)   { return g_eval_consts[i].hi; }
+int nn_set_eval_const(const char* name, int value) {
+    for (const EvalConst& c : g_eval_consts)
+        if (!std::strcmp(c.name, name)) {
+            *c.var = value < c.lo ? c.lo : (value > c.hi ? c.hi : value);
+            return 1;
+        }
+    return 0;
+}
 int         nn_get_eval_scale(void) { return g_eval_scale_pct; }   // per normalizzare 'score cp' in stampa (undo EvalScale, SF-style)
 // 5.1 EvalTTWrite (SF-style): l'unadjusted dell'ultima nn_scale su questo thread (fifty-indep).
 int         nn_last_unadjusted(void) { return g_last_unadjusted; }
@@ -278,11 +387,14 @@ int         nn_last_opt_base(void)  { return g_last_opt_base; }
 int         nn_last_opt_coeff(void) { return g_last_opt_coeff; }
 // Ri-finalizza l'unadjusted col rule50 corrente: IDENTICO a un td_evaluate fresco (stesse op di
 // nn_scale 111-114) per QUALSIASI fifty -> la cache eval e' esatta su ogni trasposizione.
-int         nn_finalize(int unadjusted, int rule50) {
+// ⚠️ `bucket` va passato dal chiamante: qui non c'e' la Position. E' il bucket della
+//    posizione CORRENTE (la entry TT e' di questa posizione), (pezzi - 1) / 4.
+int         nn_finalize(int unadjusted, int rule50, int bucket) {
     int v = unadjusted;
     v -= v * rule50 / 199;
-    if (g_eval_scale_pct != 100)
-        v = int(std::int64_t(v) * g_eval_scale_pct / 100);
+    const int scale_pct = g_eval_scale_b[bucket < 0 ? 0 : (bucket > 7 ? 7 : bucket)];
+    if (scale_pct != 100)
+        v = int(std::int64_t(v) * scale_pct / 100);
     return std::clamp(v, int(VALUE_TB_LOSS_IN_MAX_PLY) + 1, int(VALUE_TB_WIN_IN_MAX_PLY) - 1);
 }
 

@@ -43,14 +43,20 @@ engines share the rating. Read the rating, not the rank.</sub>
 
 **CCRL 40/15** (40 moves in 15 minutes + increment):
 
-| Version | Rating | List |
-|---|---|---|
-| **Triumviratus 5.1 64-bit (1 CPU)** | **3605** | 2026-07-23 |
-| Triumviratus 5.0 64-bit (4 CPU) | 3603 | 2026-07-16 |
-| Triumviratus 5.0 64-bit (1 CPU) | 3570 | 2026-07-16 |
+| Version | Rating | Rank | Games | List |
+|---|---|---|---:|---|
+| **Triumviratus 6.0 64-bit (4 CPU)** | **3633** ±23 | **10–12** | 343 | 2026-09-04 |
+| Triumviratus 5.1 64-bit (1 CPU) | 3605 | — | — | 2026-07-23 |
+| Triumviratus 5.0 64-bit (4 CPU) | 3603 | — | — | 2026-07-16 |
+| Triumviratus 5.0 64-bit (1 CPU) | 3570 | — | — | 2026-07-16 |
 
-<sub>On this list 6.0 is **not yet rated** and 5.1 is the most recent entry, provisional on few games.
-The two lists are not comparable: different time control, different pool, different draw rate.</sub>
+<sub>6.0 entered this list on 4 September 2026, 16 Elo behind the first entry (Stockfish 18, 3649 ±12)
+— a gap **narrower than 6.0's own interval**. Read that interval before the rank: at 343 games it is
+±23, the widest near the top of the list and about twice that of the engines around it, which have
+700–2,000 games each. The 10–12 is a tie band shared with two other engines. The rating will move as
+games accumulate, and it can move either way.</sub>
+
+<sub>The two lists are not comparable: different time control, different pool, different draw rate.</sub>
 
 <sub>**7.0 is not rated anywhere** — it is not released. On the internal gate it measures
 **+28.34 ± 6.19** over 6.0 at 25+0.25 and **+33.22 ± 6.14** at 40+0.4 (3,170 and 3,000 games,

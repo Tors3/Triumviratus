@@ -59,12 +59,31 @@ void nn_set_lazy_mirror(int on);
 // Eval output scale in PERCENT (default 100 = x1.0). The SFNNv13 cp formula lands on
 // a different scale than the engine's SPSA-tuned (for SFNNv10) search margins expect;
 // this re-aligns the two. UCI option "EvalScale". Diagnostic sweep at fixed depth.
-void nn_set_eval_scale(int pct);
+void nn_set_eval_scale(int pct);          // scrive TUTTI gli 8 bucket (comportamento storico)
+// EvalScale per bucket di output (15/08/2026). bucket = (pezzi - 1) / 4, 0..7, come
+// network.cpp:170. Default tutti a 60 = byte-identico al vecchio scalare globale.
+void nn_set_eval_scale_bucket(int bucket, int pct);
+
+// --- Costanti del blend dell'eval (15/08/2026) -------------------------------
+// Le sette costanti che trasformano le due uscite della rete (psqt, positional) in
+// una valutazione: pesi del blend, smorzamento per disaccordo, scala col materiale,
+// termini dell'optimism. Sono di Stockfish, ereditate col wrapper, e MAI tarate su
+// questa rete. ⚠️ NON scalano l'eval — decidono COSA DICE, che e' la differenza con
+// EvalScale/EvalScaleB (scala per bucket, chiusa a -9,82 il 15/08).
+// L'enumerazione serve a uci_mt.cpp per dichiarare le opzioni senza duplicare i nomi.
+int         nn_eval_const_count(void);
+const char* nn_eval_const_name(int i);
+int         nn_eval_const_get(int i);
+int         nn_eval_const_lo(int i);
+int         nn_eval_const_hi(int i);
+int         nn_set_eval_const(const char* name, int value);   // 1 se il nome esiste
 int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
 int  nn_last_opt_base(void);    // EvalCacheOptSplit: eval con optimism=0 (pre-rule50, post-scale)
 int  nn_last_opt_coeff(void);   // EvalCacheOptSplit: coefficiente in MILLESIMI dell'optimism
 int  nn_last_unadjusted(void);  // unadjusted (pre-rule50/scale) dell'ultima nn_scale (thread-local)
-int  nn_finalize(int unadjusted, int rule50);  // ricostruisce l'eval finale dall'unadjusted
+// Ricostruisce l'eval finale dall'unadjusted. `bucket` = (pezzi - 1) / 4 della posizione
+// CORRENTE: serve a scegliere la scala per bucket, e qui non c'e' la Position.
+int  nn_finalize(int unadjusted, int rule50, int bucket);
 
 // Evaluate a position from scratch (full refresh).
 //   side_white : 1 if white is to move, 0 if black

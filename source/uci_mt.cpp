@@ -544,6 +544,17 @@ void uci_loop()
             printf("option name SyzygyProbeLimit type spin default 7 min 0 max 7\n");
 #ifndef TRIUMV_RELEASE
             printf("option name EvalScale type spin default 60 min 10 max 2000\n");  // % scala eval -> ricalibra ai margini search (TRANN1)
+            // Per-bucket (15/08/2026): la rete ha 8 stack di output scelti per numero di
+            // pezzi, la ricalibrazione era UNA sola. Default tutti 60 = byte-identico.
+            // Range stretto attorno al default: e' una rifinitura di fase, non una risonda.
+            for (int b = 0; b < 8; ++b)
+                printf("option name EvalScaleB%d type spin default 60 min 20 max 150\n", b);
+            // Costanti del blend: i nomi e i bound vengono dalla tabella in nnue_bridge.cpp,
+            // non riscritti qui — cosi' non si puo' dichiarare un'opzione che nessuno legge.
+            for (int i = 0, n = nn_eval_const_count(); i < n; ++i)
+                printf("option name %s type spin default %d min %d max %d\n",
+                       nn_eval_const_name(i), nn_eval_const_get(i),
+                       nn_eval_const_lo(i), nn_eval_const_hi(i));
             printf("option name EvalCache type check default true\n");
             printf("option name FinnyTables type check default true\n");   // BAKED ON: +6.9% NPS, eval bit-identica
             // SingleBoard + OccIncr consolidati nel codice 2026-06-07 (sempre ON, niente toggle)
@@ -619,6 +630,8 @@ void uci_loop()
             printf("option name DiverseSMPFine type spin default 96 min 0 max 512\n");  // BAKATO: +4.91 Elo LOS 88.6% @16+0.16 Threads=8, 1700g. 0=legacy a ply interi
             printf("option name MulticutTTMalus type check default false\n");           // port SF a47a1c1804: malus alla ttMove smascherata dal multicut
             printf("option name MulticutTTMalusScale type spin default 100 min 0 max 300\n");
+            printf("option name MulticutCorr type check default false\n");                  // port SF 218c74ec (PlentyChess): il multicut insegna alla correction history
+            printf("option name MulticutCorrScale type spin default 125 min 0 max 400\n");  // % di singular_depth come peso dell'update; candidato SPSA dopo l'SPRT
             printf("option name MultiCut type check default true\n");
             printf("option name TTPvAmount type spin default 1 min 0 max 2\n");   // ex-PV LMR reduction in ply (0=off); co-tunable
             printf("option name TTEvalNoDecay type spin default 1 min 0 max 1\n");   // BAKED ON 6/08/2026: riscrive in TT l'eval ORIGINALE invece del round-trip (che tronca verso zero e COMPONE). Gate +18,06 +/- 8,07, LOS 100%, LLR 2,95 su 2618g @20+0.2. 0 = comportamento pre-6/08.
@@ -817,6 +830,9 @@ void uci_loop()
             printf("option name LMRFAll type spin default 618 min 0 max 1200\n");        // scaling ALL-node
             printf("option name LMRFImprov type spin default 489 min 0 max 3000\n");
             printf("option name LMRFEvalCut type spin default 979 min 0 max 3000\n");
+            printf("option name LmrAlphaGap type spin default 0 min 0 max 24\n");
+            printf("option name LmrAlphaLo type spin default 64 min 0 max 512\n");
+            printf("option name LmrAlphaHi type spin default 96 min 0 max 512\n");
             printf("option name LMRFCutoff type spin default 1520 min 0 max 4000\n");
             printf("option name LMRFCont4 type spin default 0 min 0 max 2000\n");        // conthist 4-ply nella LMR fine: segnale ORFANO perso nel port di LMRFine (0=off, byte-identico)
             printf("option name LMRExpect type spin default 0 min 0 max 2000\n");    // bonus riduzione ad ALL-node con cutoffCnt alto (0=off)
@@ -1449,6 +1465,38 @@ void uci_loop()
         else if (strncmp(input, "setoption name EvalScale value ", 31) == 0)
         {
             nn_set_eval_scale(atoi(input + 31));
+            fflush(stdout);
+        }
+
+        // EvalScaleB0..B7 (15/08/2026): la stessa ricalibrazione, ma PER BUCKET di output
+        // della rete (bucket = (pezzi - 1) / 4, come network.cpp:170). Default tutti 60 =
+        // byte-identico al vecchio scalare unico.
+        // ⚠️ Va DOPO il ramo di EvalScale: "EvalScale" e' prefisso di "EvalScaleB0", quindi
+        //    con l'ordine invertito lo strncmp a 31 caratteri non li distinguerebbe... in
+        //    realta' non collide (il 31-esimo carattere e' 'v' contro 'B'), ma l'ordine
+        //    esplicito toglie il dubbio a chi legge.
+        else if (strncmp(input, "setoption name EvalScaleB", 25) == 0
+                 && input[25] >= '0' && input[25] <= '7'
+                 && strncmp(input + 26, " value ", 7) == 0)
+        {
+            nn_set_eval_scale_bucket(input[25] - '0', atoi(input + 33));
+            fflush(stdout);
+        }
+
+        // Costanti del blend (EvalPsqtW, EvalPosW, EvalComplexDiv, ...): un solo ramo,
+        // i nomi stanno nella tabella di nnue_bridge.cpp. Va PRIMA del generic handler,
+        // altrimenti verrebbero ingoiate da quello senza avere effetto.
+        else if (strncmp(input, "setoption name Eval", 19) == 0 && strstr(input, " value ")
+                 && [&] {
+                        char nm[64] = {0};
+                        const char* p = input + 15;                   // "setoption name " = 15 caratteri
+                        const char* v = strstr(input, " value ");
+                        size_t len = size_t(v - p);
+                        if (len == 0 || len >= sizeof(nm)) return false;
+                        memcpy(nm, p, len);
+                        return nn_set_eval_const(nm, atoi(v + 7)) != 0;
+                    }())
+        {
             fflush(stdout);
         }
 

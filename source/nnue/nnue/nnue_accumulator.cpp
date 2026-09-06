@@ -601,6 +601,22 @@ void update_accumulator_incremental(Color                     perspective,
                                                  thrAdded, pfBase, pfStride);
         // TRANN1: gli indici PawnPair/PassedPawns (folded, gia' offsettati)
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
+// ⛔ TRIUMV_PF_SMALL — MISURATO E RIGETTATO il 06/09/2026 (prima non aveva misura).
+// Prefetch delle righe PawnPair+PassedPawns, cioe' l'equivalente dei parametri
+// prefetchBase/prefetchStride che SF passa a PP_3Wide::append_changed_indices.
+//   Xeon Gold 6138 (Skylake-SP), build PGO clang node-identical (bench 252074 su
+//   entrambe), nps_ab_interleaved 150 pos depth 18 hash 256, macchina scarica:
+//     B/A = -0,63%   (mediana dei rapporti per-posizione)
+//     B piu' veloce in 59/150 posizioni (39,3%), z = 2,23, p = 0,025
+//     ⚠️ divergenza d'ordine 0,65%, grande quanto il segnale -> lettura DEBOLE
+// 🔑 Il segno lo prevedeva gia' la regola a :350: le righe PawnPair+PassedPawns
+//    sono ~4,8 MB e in questa misura stanno TUTTE nei 55 MB di L3 del socket, perche'
+//    gira un motore solo. Tabella che sta in cache => il prefetch e' solo un'istruzione
+//    in piu' nel percorso piu' caldo. La regola ha predetto il risultato.
+// ⚠️ RESTA APERTO il regime di partita: con 72 partite concorrenti l'L3 effettiva
+//    per processo scende a ~2,75 MB, le righe NON ci stanno piu' e il segno potrebbe
+//    invertirsi. nps_ab_interleaved non puo' misurarlo (vuole la macchina scarica).
+//    Stessa forma della lezione TTTwoLevel: +4,55 a hash 64, zero a hash 256.
 #ifdef TRIUMV_PF_SMALL
         const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
 #endif

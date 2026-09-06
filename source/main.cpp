@@ -10,8 +10,6 @@
 #include "threads.h"
 #include "nnue_bridge.h"
 
-//Added for policy network
-
 // Syzygy tablebase probing (Fathom)
 #include "syzygy.h"
 
@@ -198,7 +196,7 @@ int main()
         fflush(stdout);
     }
 
-    // (Policy-net: rimossa 2026-06-11 — capitolo chiuso, vedi notes/ §P5.)
+
 
     // Auto-load Syzygy tablebases from a "Syzygy" folder next to the exe
     // (x64\Release\Syzygy). The "SyzygyPath" UCI option overrides this at runtime.

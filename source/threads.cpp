@@ -66,14 +66,32 @@ tt_entry *hash_table = nullptr;
 //   (before td_make_move) so the make-move NNUE mirror hook can use it too.
 static const int nn_piece_code[12] = {1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14};
 
-// POLICY-NET: RIMOSSA dal motore (2026-06-11). Il capitolo e' stato chiuso con
-// tre misure conclusive (notes/ANALISI_CODICE_OTTIMIZZAZIONI.md §P5): ordering
-// −8.7, EntropyTM −16.7 LOS5%, PolicyEasyMove −14.35 LOS0.1% @2520g — la CNN
-// (top1 ~24%) non ha segnali Elo-utili ne' per l'ordering (saturo, prior
-// statico vs history adattiva) ne' per il time management (la confidenza di una
-// rete debole non e' affidabilita'; l'entropia misura l'ignoranza della rete,
-// non la complessita'). Il codice vive nella storia git (tag 3.8) per
-// l'eventuale R&D futuro (MCTS@root).
+// POLICY-NET: RIMOSSA dal motore. Due volte, per due ragioni diverse.
+//
+// 2026-06-11 (prima rimozione): ordering -85 nei nodi interni, -30 alla radice,
+// seeding offline -35, EntropyTM -16,7 LOS 5%, PolicyEasyMove -14,35 LOS 0,11%.
+// Tutte le misure erano pero' confondibili con IL COSTO: quella policy era una
+// CNN e il suo forward alla radice costava 18 ms, il 10-15% del budget di ogni
+// mossa a TC corto.
+//
+// 2026-08-22 (seconda rimozione): quella scusa non c'e' piu'. Rifatta con primo
+// strato sparso e uscita pigra, forward a 16-33 ns/mossa, degrado NPS misurato
+// **-0,79%** — praticamente gratis — e allenata sulle NOSTRE partite invece che
+// su T80 (top-1 35,99%, top-3 62,26% con 10,5 M parametri). I ganci restano
+// negativi lo stesso: PolicyLMP -22,83 +/- 8,20, PolicyTT -46,89 +/- 33,99,
+// PolicyOrder invariato. L'unico non-negativo, PolicyRootLmr, si e' fermato a
+// +1,36 +/- 2,71 su 7.400 partite (LLR 0,44): il valore SCENDE mentre la banda
+// si stringe, cioe' tende a zero.
+//
+// 🔴 LA RAGIONE, MISURATA: il first-move-cutoff senza TT e' al **79,2%** grazie
+// a continuation history a 6 ply + killer + countermove. Un prior statico con
+// top-1 al 36% non puo' migliorarlo, puo' solo disturbarlo. Non e' un problema
+// di qualita' della rete ne' di costo: e' che l'informazione che porta il motore
+// ce l'ha gia', piu' precisa e aggiornata per-sottoalbero.
+//
+// Codice, reti e misure complete: Archivio_Policy_7.0/. Non riaprire il capitolo
+// senza aver letto quel LEGGIMI: le due trappole (indicizzazione a8=0 vs a1=0 del
+// trainer, buffer quiet del MovePicker riusato fra i nodi) sono costate giorni.
 
 // ---- Bundle 3.9 (2026-06-11): micro-fix "correttezza/gratis"
 // (P1.4/P1.11/P1.13/ P1.10a/P2.1 dell'analisi). Ognuno dietro toggle default
@@ -691,6 +709,29 @@ void set_multicut(bool v) { g_multicut = v; }
 static bool g_multicut_ttmalus = false;
 int g_multicut_ttmalus_scale =
     100; // % di td_stat_bonus(depth), come le altre scale malus/bonus
+// ⭐ MulticutCorr (16/08/2026, port SF 218c74ec — l'idea e' di PlentyChess). Quando
+// il multicut scatta, la ricerca di esclusione ha appena stabilito che il valore vero
+// del nodo sta SOPRA la static eval: e' esattamente il campione che la correction
+// history esiste per imparare, e lo stavamo buttando via.
+// 🔑 E' l'UNICA patch della finestra 01/08-16/08 che SF ha passato a soglie da
+// GUADAGNO invece che da non-regressione: STC <0.00,2.00> su 151.072 partite e LTC
+// <0.50,2.50> su 109.866. Le altre (c5aef2bf, fa8b6add, c85637b3, de948f0f) sono
+// tutte <-1.75,0.25>, cioe' valgono ~0 Elo per costruzione.
+// ⚠️ Il nostro gate di multicut NON e' quello di SF: loro sparano sul VALORE
+// (`value >= beta`), noi sul BOUND (`singular_beta >= beta`), perche' la loro forma
+// aggressiva qui aveva misurato −13 Elo (vedi il bundle #3 a :678). L'evidenza da
+// imparare resta pero' `s` — il risultato della ricerca di esclusione, che e'
+// esattamente cio' che SF chiama `value` — e non `singular_beta`, che e' solo il
+// bound conservativo che restituiamo.
+// Default OFF = byte-identico.
+static bool g_multicut_corr = false;
+// Peso dell'update, in % di `singular_depth`. L'update ordinario (td_corr_update)
+// pesa `min(depth,16)`; qui la base e' singular_depth = (depth-1)/2, cioe' circa
+// META', perche' un fail-high a finestra nulla e profondita' ridotta e' evidenza piu'
+// debole di una ricerca piena. 125 porta il rapporto a ~0.6x dell'update normale, che
+// e' quello che usa SF (177/1024 su singularDepth contro il loro update ordinario).
+// ⚠️ E' il candidato naturale allo SPSA una volta che il toggle abbia passato un SPRT.
+int g_multicut_corr_scale = 125;
 
 // ttPv (UCI spin "TTPvAmount", 0..2, default 0=OFF). SF: un bit della TT (bit
 // 63 del data, era libero) ricorda se un nodo è/è stato PV. I nodi non-PV che
@@ -2138,6 +2179,26 @@ int g_lmrf_improv = 489;  // [5.1 BAKE 1024->411]  non-improving
 int g_lmrf_evalcut = 979; // [5.1 BAKE 1024->1517] eval+margin < alpha
 int g_lmrf_cutoff =
     1520; // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
+// ⭐ LmrAlphaGap (port SF `5f7348f0`, 19/08/2026 — "Reduce LMR less
+// aggressively in loose alpha windows"). SF: STC LLR 2.95 su 90.784 partite
+// <0.00,2.00>, LTC LLR 2.94 su 209.640 <0.50,2.50> — l'unica patch da GUADAGNO
+// della finestra 01/08-06/09, passata su ENTRAMBI i regimi.
+//
+// Il meccanismo: la riduzione diventa funzione CONTINUA del divario fra alpha e
+// la eval statica. Noi qui abbiamo solo il GRADINO `g_lmrf_evalcut` (binario:
+// eval+margine < alpha), che e' lo stesso segnale quantizzato a un bit. Questa
+// e' la rampa.
+//
+// Il clamp e' ASIMMETRIC0 apposta (SF: -64 / +96): punisce la mossa quiet la cui
+// eval sta sotto alpha piu' di quanto premi quella che ci sta sopra.
+//
+// ⚠️ Le tre costanti sono tarate sulla rete e sulla scala di eval di SF: da noi
+// vanno RITARATE, non ereditate (e' l'errore gia' pagato con `de948f0f`). Per
+// questo sono spin e non costanti.
+// 0 = OFF = byte-identico (canary bench 252074).
+int g_lmr_alpha_gap = 0;  // moltiplicatore in 1/1024 di ply. SF usa 3.
+int g_lmr_alpha_lo = 64;  // clamp inferiore del divario (alpha-eval), in cp
+int g_lmr_alpha_hi = 96;  // clamp superiore
 // ⭐ ContHist4LMR (2026-07-20, spin, 0 = OFF byte-identico) — SEGNALE ORFANO,
 // non feature nuova. Il ramo LMR *legacy* (`if (!g_lmr_fine)`, :4878-4965, oggi
 // irraggiungibile perche' LMRFine e' bakato ON) consultava la continuation
@@ -2836,6 +2897,18 @@ bool set_search_param(const char *name, int value) {
     g_lmrf_evalcut = value < 0 ? 0 : value;
     return true;
   }
+  if (!strcmp(name, "LmrAlphaGap")) {
+    g_lmr_alpha_gap = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "LmrAlphaLo")) {
+    g_lmr_alpha_lo = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "LmrAlphaHi")) {
+    g_lmr_alpha_hi = value < 0 ? 0 : value;
+    return true;
+  }
   if (!strcmp(name, "LMRFCutoff")) {
     g_lmrf_cutoff = value < 0 ? 0 : value;
     return true;
@@ -3525,6 +3598,14 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "DiverseSMPFine")) {
     g_diverse_smp_fine = value < 0 ? 0 : value;
+    return true;
+  }
+  if (!strcmp(name, "MulticutCorr")) {
+    g_multicut_corr = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "MulticutCorrScale")) {
+    g_multicut_corr_scale = value < 0 ? 0 : value;
     return true;
   }
   if (!strcmp(name, "MulticutTTMalus")) {
@@ -6394,7 +6475,9 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
     // trasposizione.
     q_raw_eval =
         (g_tt_static_eval && tt_eval != tt_eval_none)
-            ? (tt_flag == hash_flag_none ? nn_finalize(tt_eval, td.fifty)
+            ? (tt_flag == hash_flag_none
+                   ? nn_finalize(tt_eval, td.fifty,
+                                (count_bits(td.occupancies[both]) - 1) / 4)
                                          : tt_eval_redamp(tt_eval, td.fifty))
             : td_evaluate(td);
     int stand_pat = q_raw_eval;
@@ -7056,6 +7139,50 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
   }
 }
 
+// MulticutCorr: applica un bonus ESPLICITO alle stesse tavole che td_corr_update
+// aggiorna, saltando il suo calcolo di `diff` e la sua guardia sul bound. Serve al
+// sito multicut, dove il segnale non e' `best_score - static_eval` a fine nodo ma
+// `s - static_eval` prima ancora che il move loop cominci.
+// Il bonus passa comunque per td_corr_bucket_update, quindi asimmetria (CorrAsym),
+// decay e clamp restano quelli del motore: qui si cambia QUANDO si impara, non COME.
+// Il chiamante passa w = g_corr_lr_div per far transitare `target` come bonus esatto
+// (bonus = target * w / g_corr_lr_div), cosi' il clamp a ±lim/4 di SF resta l'unico
+// limitatore e resta applicato dove SF lo applica.
+static inline void td_corr_bonus(ThreadData &td, int idx, int target, int w) {
+  int lim = g_corr_cap * CORR_GRAIN;
+  td_corr_bucket_update(td.corr_hist[td.side][idx], target, w, lim);
+  if (g_corr_multi) {
+    int mi, ma;
+    td_corr_mm(td, mi, ma);
+    td_corr_bucket_update(td.corr_hist_minor[td.side][mi], target, w, lim);
+    td_corr_bucket_update(td.corr_hist_major[td.side][ma], target, w, lim);
+  }
+  if (g_corr_nonpawn) {
+    td_corr_bucket_update(
+        td.corr_hist_np[0][td.side][td_corr_index_np_white(td)], target, w,
+        lim);
+    td_corr_bucket_update(
+        td.corr_hist_np[1][td.side][td_corr_index_np_black(td)], target, w,
+        lim);
+  }
+  if (g_corr_cont) {
+    if (int16_t *cc = td_cont_corr_bucket(td)) {
+      int cv = *cc;
+      // stesso clamp int16 e stesso raddoppio del peso di td_corr_update: la
+      // cont_corr ha 589k entry e senza il x2 non impara in tempo utile.
+      int lim16 = lim < 32767 ? lim : 32767;
+      td_corr_bucket_update(cv, target, w * 2, lim16);
+      *cc = (int16_t)cv;
+    }
+  }
+  if (g_corr_material) {
+    td_corr_bucket_update(
+        td.corr_hist_material[td.side][td_corr_index_material(td)], target, w,
+        lim);
+  }
+}
+
+
 // Multi-ply continuation-history update: apply `bonus` to the 2/4-ply
 // (ContHistMulti) and 3/6-ply (ContHist36) buckets at a cutoff. No-op unless
 // one of those is on. Must be called with td.ply == the current node's ply
@@ -7505,7 +7632,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     // redamp (path validato +44).
     node_raw_eval =
         (g_tt_static_eval && tt_eval != tt_eval_none)
-            ? (tt_flag == hash_flag_none ? nn_finalize(tt_eval, td.fifty)
+            ? (tt_flag == hash_flag_none
+                   ? nn_finalize(tt_eval, td.fifty,
+                                (count_bits(td.occupancies[both]) - 1) / 4)
                                          : tt_eval_redamp(tt_eval, td.fifty))
             : td_evaluate(td);
     static_eval = node_raw_eval;
@@ -7939,6 +8068,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // move loop: non dipende dalla mossa in corso.
   td.ttmove_stack[td.ply] = tt_move;
 
+
   int moves_searched = 0;
   int quiets_searched = 0;
   int bad_caps_pruned = 0; // BadCapSkipAfter: bad capture SEE-potate a questo nodo
@@ -8084,6 +8214,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       if (eval + futility_margin <= alpha) {
         // Phase-2: once futility fires, ALL remaining quiets at this node
         // fail the same static-eval test -> skip the entire stage.
+        // ...tranne quando c'e' un pedone in zona promozione: li' lo stage va
+        // percorso fino in fondo, altrimenti l'esenzione qui sopra e' inutile
+        // perche' la spinta non verrebbe mai generata.
         if (use_picker) {
           mp.skip_quiets = true;
         }
@@ -8318,6 +8451,40 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
               td.history_moves[td_hbucket(td, tt_move)][get_move_piece(tt_move)]
                               [get_move_target(tt_move)],
               -malus);
+        }
+        // ⭐ MulticutCorr (port SF 218c74ec, idea PlentyChess): la ricerca di
+        // esclusione ha fallito alto SENZA la ttMove, quindi il valore vero del nodo
+        // e' almeno `s`. Se `s` supera la static eval, quella e' una sottostima
+        // MISURATA — il campione esatto che la correction history serve a imparare, e
+        // fino a oggi lo buttavamo via tornando da qui senza scrivere niente.
+        // ⚠️ Si impara da `s`, non da `singular_beta`: SF usa il risultato della
+        // ricerca (il loro `value`), mentre singular_beta e' solo il bound
+        // conservativo che restituiamo.
+        // Guardie, tutte mutuate da td_corr_update e nessuna cosmetica:
+        //  - excluded_move: registrare informazione sulla POSIZIONE mentre una mossa
+        //    e' esclusa significa registrarla falsa (vedi SingularNoPollute a :1286,
+        //    dove la stessa asimmetria e' documentata e voluta).
+        //  - banda TB: un verdetto Syzygy non e' una valutazione ma una certezza;
+        //    entrerebbe come errore di eval da ~29.900, saturerebbe il bucket e
+        //    manderebbe `decay = cv*abs_bonus/lim` in overflow di int (vedi :6978).
+        //  - il clamp a lim/4 e' di SF, ed e' anche cio' che rende impossibile
+        //    l'overflow qui: senza, `s - static_eval` puo' valere decine di migliaia.
+        if (g_multicut_corr && g_corr_hist && !in_check && !excluded_move &&
+            s > static_eval) {
+          const int corr_max = g_corr_tb_guard ? mate_score - 2 * max_ply
+                                               : mate_score - max_ply;
+          if (s < corr_max && s > -corr_max && static_eval < corr_max &&
+              static_eval > -corr_max) {
+            const int w = singular_depth * g_multicut_corr_scale / 100;
+            if (w > 0) {
+              const int lim = g_corr_cap * CORR_GRAIN;
+              long long bonus =
+                  (long long)(s - static_eval) * CORR_GRAIN * w / g_corr_lr_div;
+              if (bonus > lim / 4)
+                bonus = lim / 4; // `s > static_eval` => bonus > 0: un solo lato
+              td_corr_bonus(td, corr_idx, (int)bonus, g_corr_lr_div);
+            }
+          }
         }
         return singular_beta;
       }
@@ -8711,6 +8878,22 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             r += g_lmrf_improv;
           if (eval + g_lmr_eval_margin < alpha)
             r += g_lmrf_evalcut;
+          // LmrAlphaGap (SF 5f7348f0): la rampa continua sullo stesso segnale
+          // del gradino qui sopra. Stesse unita' (1/1024 di ply) del resto del
+          // blocco, che e' gia' un port di search.cpp.
+          // Il `!capture` di SF e' gia' garantito: questo ramo sta sotto il gate
+          // `is_quiet` (:8792). Resta da replicare `!is_decisive(alpha)`, che da
+          // noi e' |alpha| >= mate_score - max_ply (= 29936 = TB_VALUE_WIN, la
+          // stessa soglia usata dalla banda tablebase di td_corr_update).
+          if (g_lmr_alpha_gap &&
+              (alpha < 0 ? -alpha : alpha) < mate_score - max_ply) {
+            int gap = alpha - eval;
+            if (gap < -g_lmr_alpha_lo)
+              gap = -g_lmr_alpha_lo;
+            else if (gap > g_lmr_alpha_hi)
+              gap = g_lmr_alpha_hi;
+            r += (long long)g_lmr_alpha_gap * gap;
+          }
           if (td.cutoff_cnt[td.ply] > 1) {
             r += g_lmrf_cutoff;
             // LMRExpect (Reckless 0efe38e, STC +3.08 / LTC +4.13): "aspettativa
