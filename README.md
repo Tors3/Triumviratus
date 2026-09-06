@@ -112,11 +112,6 @@ Both engines ran the same instruction set in each match — AVX-512 against Hobb
 Stormphrax, whose AVX-512 build will not run on the test machine. The two rows are different
 regimes and are not comparable with each other.</sub>
 
-<sub>🔑 Note the last column. **Hobbes searches about half a ply deeper and still loses by 47 Elo** —
-the advantage is in evaluation, not in depth, which is the claim this release is built on. Our depth
-is also the more tightly held of the two (per-game quartiles 16.6–18.7 against 16.4–19.8), which is a
-property of the time management rather than of the search.</sub>
-
 <sub>The run was checked for a NUMA artefact before being reported — the test machine is dual-socket
 with all memory on one node, so half the cores read across the interconnect. Per-game mean depth is
 unimodal for both engines, symmetric between colours (0.08 ply for us, 0.27 for Hobbes) and flat
