@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [6.0 (current release)](#triumviratus-60--current-release) · [7.0 (in development)](#triumviratus-70--in-development) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [7.0 (current release)](#triumviratus-70--current-release) · [6.0 (previous release)](#triumviratus-60--previous-release) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -58,65 +58,25 @@ games accumulate, and it can move either way.</sub>
 
 <sub>The two lists are not comparable: different time control, different pool, different draw rate.</sub>
 
-<sub>**7.0 is not rated anywhere** — it is not released. On the internal gate it measures
-**+28.34 ± 6.19** over 6.0 at 25+0.25 and **+33.22 ± 6.14** at 40+0.4 (3,170 and 3,000 games,
-256 MB, LOS 100% at both), and the advantage is flat across seven plies of depth. That is still one
-opponent on one book, a different measurement from a rating list, and it carries the caveat above
-about draw rates. It supersedes an earlier +37.93 ± 12.25 taken on 800 games — the two are compatible, the
-earlier interval was twice as wide, and it predated two changes to the binary.</sub>
+<sub>Both tables are **6.0**. 7.0 is the current release but has not appeared on either list yet;
+its measured advantage over 6.0 is below.</sub>
 
 ---
 
-## Triumviratus 6.0 — current release
+## Triumviratus 7.0 — current release
 
-> [!IMPORTANT]
-> **+52.98 ± 12.25 Elo over 5.1** — 40+0.4, 760 games, LOS 100%, nElo +108.57, SPRT `[0,5]` passed
-> (LLR 2.95). Release binary vs release binary (AVX-512), each loading its own network
-> (6.0 → `rubicon-alea-v3`, 5.1 → `rubicon-alea-v1`), 1 thread, 256 MB, UHO 2024 book.
+7.0 is a **network project**, not a search project: a July 2026 audit put the remaining gap to the
+strongest engines at **≈ 25–40 Elo of network**, not of search.
 
-Three architectural changes carry most of it — a new network **architecture** (`TRANN1`: the SFNNv13
-feature set plus two extra input blocks, pawn-pair and passed-pawn), the own-lineage network
-**`nn-rubicon-alea-v3`** trained for it, and **TMv2** time management — followed by a long tail of
-search work: an unconditional check extension removed, a quiescence search that turned out to be
-examining a single move per node, quiet checks removed from quiescence, continuation-history and
-killer-move fixes, and a pre-release audit that found seven latent defects.
+Two things change, and the second is the real one:
 
-<sub>The incremental gains listed in [`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md) are **not additive** —
-each is measured against the state immediately before it, and they overlap.</sub>
-
-#### Against other engines
-
-| Opponent | Result | Games | TC | Book |
-|---|---|---|---|---|
-| **Berserk 14** | **+8.7 Elo** (51.25%), 95% CI [+2.2, +15.2] | 600 | 60+1 | Perfect2023 |
-| Pawnocchio 1.9.1 | **+41.89 ± 11.08**, LOS 100% | — | 20+0.2 | UHO |
-
-> [!NOTE]
-> Networks, SPSA tunes, time management, the full incremental table, the corrections and the
-> retractions are all in **[`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md)**, to keep this page short.
-> How each network was trained: **[`NETWORKS.md`](NETWORKS.md)**.
-
----
-
-## Triumviratus 7.0 — in development
-
-> [!IMPORTANT]
-> **6.0 is and remains the official release.** The 7.0 network is finished and chosen; there is no
-> 7.0 release yet.
-
-7.0 is a **network project**, not a search project. The search is measurably close to exhausted for
-this project's effort budget: a full audit in July 2026 found the remaining gap to the strongest
-engines is **≈ 25–40 Elo of network**, not of search.
-
-Two things change, and the second one is the real one:
-
-- **Architecture** moves from **`TRANN1` to `TRANN2`** — the project's own network line, now built on
-  the SFNNv16 skip structure instead of SFNNv13, and still carrying the **`PassedPawns`** block that
-  no other engine has. Pawn→pawn threat inputs are dropped because the pawn-pair block already covers
-  them: total inputs 87,904 → 86,992.
-- **Training method.** The two networks before it grew by grafting a new input block onto a frozen
-  predecessor, which is cheap but can only *add* what the new block expresses. The new line —
-  **`legio-septima`** — trains **base and feature blocks together, from scratch**, in two stages on a
+- **Architecture** moves from **`TRANN1` to `TRANN2`** — the project's own line, now built on the
+  SFNNv16 skip structure instead of SFNNv13, still carrying the **`PassedPawns`** block that no other
+  engine has. Pawn→pawn threat inputs are dropped because the pawn-pair block already covers them:
+  total inputs 87,904 → 86,992.
+- **Training method.** The two networks before it grew by grafting a new block onto a frozen
+  predecessor, which is cheap but can only *add* what the new block expresses. The new line,
+  **`legio-septima`**, trains base and feature blocks **together, from scratch**, in two stages on a
   much larger corpus of public data re-labelled with Leela's BT4 network.
 
 #### Ahead of 6.0
@@ -129,16 +89,32 @@ Two things change, and the second one is the real one:
 | whole engine — network + re-tuned search | 2026-07-31 | 25+0.25 | 64 MB | — | 1,287 | +22.17 ± 9.70 |
 | network alone — epoch 799, search frozen | 2026-07-30 | 15+0.15 | 64 MB | — | 1,442 | +23.41 ± 9.22 |
 
-<sub>All against 6.0 with `rubicon-alea-v3`, 1 thread, UHO_4060_v4, AVX-512 PGO builds. The rows
-answer different questions and are **not** additive: the last freezes the search to isolate the
-network. The first three are one measurement taken at three time controls, at the **256 MB** the
-rating lists use rather than the 64 MB of the development runs; **the advantage is flat across seven
-plies** (slope +0.42 ± 1.56 Elo per ply), and the depths are measured from the PGNs rather than
-inferred. All rows agree within their intervals. Ahead of 6.0 since epoch 189. Training is complete —
-stage 2 ended at epoch 799, and a stage-3 annealing tail was run and closed at zero. Per-checkpoint table and
-recipe: **[`NETWORKS.md`](NETWORKS.md)** · development log:
-**[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
+<sub>All against 6.0 with `rubicon-alea-v3`, 1 thread, UHO_4060_v4, AVX-512 PGO builds, LOS 100% on
+the gate rows. The rows answer different questions and are **not** additive: the last freezes the
+search to isolate the network. The first three are one measurement at three time controls, taken at
+the **256 MB** the rating lists use rather than the 64 MB of development runs; **the advantage is
+flat across seven plies** (slope +0.42 ± 1.56 Elo per ply), with depths measured from the PGNs rather
+than inferred. It supersedes an earlier +37.93 ± 12.25 on 800 games — compatible, but that interval
+was twice as wide and predated two changes to the binary. This is one opponent on one book, which is
+a different measurement from a rating list. Ahead of 6.0 since epoch 189; stage 2 ended at epoch 799
+and a stage-3 annealing tail was run and closed at zero. Per-checkpoint table and recipe:
+**[`NETWORKS.md`](NETWORKS.md)** · development log: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)**.</sub>
 
+---
+
+## Triumviratus 6.0 — previous release
+
+**+52.98 ± 12.25 Elo over 5.1** (40+0.4, 760 games, LOS 100%, SPRT `[0,5]` passed), and the version
+still carrying the project's ratings on both CCRL lists. Three changes carry most of it: the `TRANN1`
+network architecture, the `nn-rubicon-alea-v3` network trained for it, and TMv2 time management —
+followed by a long tail of search work and a pre-release audit that found seven latent defects.
+
+<sub>Full incremental table, networks, SPSA tunes, corrections and retractions:
+**[`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md)** · how each network was trained:
+**[`NETWORKS.md`](NETWORKS.md)**. The incremental gains listed there are **not additive** — each is
+measured against the state immediately before it, and they overlap.</sub>
+
+---
 
 ## License
 
