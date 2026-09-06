@@ -102,12 +102,15 @@ and a stage-3 annealing tail was run and closed at zero. Per-checkpoint table an
 
 #### Against other engines
 
-| Opponent | Result | Games | TC | Depth — ours / theirs |
+| Opponent | Result | Games | Conditions | Depth — ours / theirs |
 |---|---|---:|---|---|
-| **Hobbes 3.0** (AVX-512) | **+47.24 ± 16.14** (56.76%), LOS 100% | 518 | 40+0.4 | **17.97 / 18.57 ply** |
+| **Hobbes 3.0** | **+47.24 ± 16.14** (56.76%), LOS 100% | 518 | 40+0.4, 1 thread, 256 MB | **17.97 / 18.57 ply** |
+| **Stormphrax 8.0.0** | **+14.95 ± 11.96** (52.15%), LOS 99.29% | 1,000 | 15+0.1, 4 threads, 1024 MB | **16.08 / 16.11 ply** |
 
-<sub>1 thread, 256 MB, UHO_4060_v4, adjudication at 40/8/10cp and resignation at 600cp. Depths are
-measured from the PGN over 530 games and roughly 30,000 annotated moves per side.</sub>
+<sub>UHO_4060_v4, adjudication at 40/8/10cp and resignation at 600cp, depths measured from the PGNs.
+Both engines ran the same instruction set in each match — AVX-512 against Hobbes, AVX2 against
+Stormphrax, whose AVX-512 build will not run on the test machine. The two rows are different
+regimes and are not comparable with each other.</sub>
 
 <sub>🔑 Note the last column. **Hobbes searches about half a ply deeper and still loses by 47 Elo** —
 the advantage is in evaluation, not in depth, which is the claim this release is built on. Our depth
