@@ -29,8 +29,21 @@
 #define mate_value 31000
 #define mate_score 30000
 
-// max ply that we can reach within a search
-#define max_ply 64
+// max ply that we can reach within a search.
+// 🔴 2026-09-07: era 64. Oltre questo ply td_negamax (:7569) e td_quiescence
+// (:6489) NON cercano piu': restituiscono la eval statica, in silenzio. A 10s e
+// 1 thread la seldepth resta sotto i 30, ma le misure SMP del 07/09 (10 s, 16-40
+// thread) hanno toccato **seldepth 42-54**, e a TC lungo con molti thread il
+// tetto si raggiunge davvero — proprio nelle linee forzate, dove fermarsi costa
+// di piu'. Stockfish usa MAX_PLY = 246.
+// Costo: gli array ply-indicizzati di ThreadData sono [max_ply + 8]; il solo
+// quadratico e' pv_table, 20 KB -> 72 KB. Su una ThreadData da 21,25 MB e' lo
+// 0,24%. Le costanti derivate (TB_VALUE_WIN in syzygy.cpp, le bande corr_max in
+// threads.cpp) sono scritte in funzione di max_ply e restano corrette da sole:
+// il minimo score TB e' TB_VALUE_WIN - max_ply = mate_score - 2*max_ply, che e'
+// esattamente il bordo che CorrTBGuard usa.
+// Vincolo invariato: mate_value - mate_score = 1000 deve superare max_ply.
+#define max_ply 128
 
 // MVV LVA [attacker][victim]
 extern int mvv_lva[12][12];

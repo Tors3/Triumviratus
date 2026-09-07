@@ -9,7 +9,16 @@
 #include <atomic>
 #include <mutex>
 
-#define MAX_THREADS 64
+// 🔴 2026-09-07: era 64, cioe' MENO dei 80 thread del rig di test — su questa
+// macchina non si potevano usare tutti i core, e le macchine da torneo (TCEC) ne
+// hanno di piu'. thread_data e' un std::vector ridimensionato in init_threads,
+// quindi la costante NON costa memoria a riposo: alzarla non alloca niente
+// (ogni ThreadData pesa 21,25 MB e nasce solo quando `Threads` la chiede).
+// Le sole tabelle statiche dimensionate qui sono vote_moves/vote_w del voto fra
+// thread, 6 KB di stack. Il massimo ANNUNCIATO in UCI resta comunque
+// min(hardware_concurrency, MAX_THREADS), quindi sulle macchine piccole non
+// cambia nulla.
+#define MAX_THREADS 512
 
 // Thread-local data structure
 struct ThreadData {
@@ -144,6 +153,9 @@ struct ThreadData {
     // move loop. Serve al figlio per sapere se la mossa che l'ha generato era la TT-move
     // del padre — uno dei quattro segnali con cui Reckless scala il prior bonus.
     int ttmove_stack[max_ply + 8] = {0};
+    // TTPvInherit (2026-09-07): store_pv del nodo a ogni ply, letto dal figlio
+    // fail-low per ereditare il flag (SF: ss->ttPv |= (ss-1)->ttPv).
+    bool ttpv_stack[max_ply + 8] = {false};
 
     // P4 TroubleMaking: se != 0, alla root si cerca SOLO questa mossa (verifica
     // null-window del candidato "trouble"). Per-thread -> SMP-safe.
@@ -178,6 +190,13 @@ struct ThreadData {
     U64 fh_tt = 0;        // cut-node con tt_move presente
     U64 fh_tt_first = 0;  // cut-node con tt_move presente E cutoff sulla 1a mossa
     U64 fh_probe = 0;     // cut-node con ENTRY TT presente (a prescindere dalla mossa) -> disambigua move-rate vs entry-hit
+    // TTAVAIL (CutoffStats, 2026-09-07): statistiche TT all'INGRESSO di ogni nodo
+    // della main search (ply>0, depth>=1), per profondita' [depth clampata a 63].
+    // Serve a misurare la disponibilita' della TT-move (tt_move != 0) e l'hit-rate
+    // dell'entry, confrontabili con lo stesso contatore patchato in Stockfish.
+    U64 tt_probe_n[64] = {0};
+    U64 tt_probe_hit[64] = {0};
+    U64 tt_probe_mv[64] = {0};
 
     // Correction history: learned (search - static_eval) gap bucketed by
     // [side][pawn-structure key]. Size MUST match CORR_SIZE (1<<14) in threads.cpp.

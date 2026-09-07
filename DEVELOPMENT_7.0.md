@@ -17,7 +17,7 @@
 <div align="center">
 
 [The network](#1-the-network) · [Measured Elo](#2-measured-elo-incremental) ·
-[Speed work](#3-speed-work-nps) ·
+[Speed work](#3-speed-work-nps) · [Search structure](#4-search-structure-measured-not-assumed) ·
 [6.0 log](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md)
 
 </div>
@@ -78,6 +78,8 @@ and reported under the table.
 | 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
 | 8 | → **negative extension on alpha** | `NegExtAlpha` 1 → 2: when the TT move does not even reach alpha the node is neither singular nor promising, so the extension shrinks further. One parameter, nothing else touched | 30+0.3 | 3,958 | **+6.50 ± 5.77** (LOS 98.64%) |
 | 9 | → **eval-stability window made honest** | `TMv2EvalPrevAvg=1` with `TMv2EvalWindow` 10 → 20. The counter compared the score against a moving average that had **already absorbed that same score**, so the measured difference was exactly half the real one and the parameter meant double what it said. The pair keeps the effective threshold identical — taken **on readability, not on Elo** | — | — | **no measurable change by construction** |
+| 10 | → **four Stockfish-19 structural differences, bundled** | probcut-from-TT freed from its in-check and capture-only gates; null-move verification only from depth 16 as upstream does, instead of at every depth; no internal iterative reduction at ALL nodes; correction history also learning on fail-low nodes | 10+0.1 | **11,182** | **+5.31 ± 3.44** (LOS 99.88%, LLR 1.66) |
+| 11 | → **history pruning widened** | `ContHistPruneDepth` 2 → 6 with `HistPruneMargin` 2097 → 1200. Not a port: it comes from measuring our own tree shape against Stockfish's — see §4 | 10+0.1 | **19,228** | **+4.48 ± 2.65** (LOS 99.95%, LLR 2.33) |
 
 <sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
 The audit that led to it started from a genuine defect: the third arm of the negative-extension
@@ -279,6 +281,45 @@ bucket, did not move by 0.001 in 1,100 iterations. That is the bucket where the 
 change the result, and its staying put while `B7` moved three points is the internal control saying
 the tuner was following a real gradient rather than diffusing. The gradient was simply worth little.</sub>
 
+<sub>**Stage 10 was bundled deliberately, and the arithmetic of that choice is worth stating.** Nine
+switches were written, each isolating one structural difference from Stockfish 19, each defaulting
+to the historical behaviour so the bench signature stayed byte-identical at 279,691. Seven were
+screened at 10+0.1; four came out with a positive lean and were combined. The sum of their point
+estimates was **+10.6**, and that is *not* what a bundle of them was expected to be worth: selecting
+the positive subset of a noisy group biases the estimate upward by construction, so the prediction
+written down **before** the run was +2 to +6. It measured **+5.31 ± 3.44**. The reason to bundle at
+all is volume — under `[0, 2]` a patch worth +2 needs on the order of 66,000 games to close, so four
+of them separately is about 44 hours of rig time, while four that jointly carry ~5 close in two.
+The price is attribution: the bundle does not say which of the four carries it, and one of them
+(`ProbCutTTAll`) returns *before* the null-move step the second one modifies, so they are not
+strictly independent.</sub>
+
+<sub>The screening also produced one clean negative, which is more useful than the borderline
+positives. Our transposition table stores, on a fail-low node, the best of the moves that failed —
+something Stockfish does not do. Switching that off measured **−3.90 ± 6.28** with a 47% smaller
+tree: the entry is doing real work, the current behaviour is right, and that question is now closed
+rather than open. Two more were flat and were dropped: gating null move to cut-nodes as upstream
+does (−1.64), and refusing reverse futility when the TT move is quiet (−0.65).</sub>
+
+<sub>**Stage 11 came from a measurement rather than from upstream, and its two parameters are one
+hypothesis.** Taken separately they are inert, and this is measured, not argued: with the depth cap
+at 2, lowering the margin moves the bench by 0.2%; with the margin at 2097, raising the cap changes
+**nothing at all** — the node count is identical to the byte. The reason is arithmetic. At a reduced
+depth of 3 to 6 the threshold `−2097 × depth` demands a history more negative than the two tables
+summed can physically reach, since each is bounded by ±7000. So the cap admits nodes at which the
+condition can never fire. Moved together — cap 6, margin 1200 — the tree changes by 3.9% and the
+pair measures **+4.48 ± 2.65** over 19,228 games. The methodological residue is the part worth
+keeping: **a switch that does not move the bench is not "neutral", it is not connected**, and the
+first formulation of this test was already queued for a full night that would have measured zero by
+construction. It was caught by re-running the bench-bite check after the previous bake — which is
+why that check now runs after *every* bake, not once.</sub>
+
+<sub>⚠️ Neither stage 10 nor stage 11 has been confirmed in the shipping regime. Both were decided at
+10+0.1 with a 64 MB hash, and this engine has twice seen a sign change between that and 60+0.6 at
+256 MB — `TTTwoLevel` was worth +4.55 at the small hash and exactly zero at the large one. An
+ablation of all six baked defaults at 60+0.6 / hash 256 is queued and is the gate that has to pass
+before either figure is treated as shipped.</sub>
+
 ---
 
 ## 3. Speed work (NPS)
@@ -403,3 +444,68 @@ them. A prefetch pays only when the table cannot fit in cache, and only one line
 of the row is sequential and the hardware streamer already has it. And a frequency permutation
 helps only where the layout has no structure to begin with: `HalfKA` maps 64 consecutive squares to
 64 consecutive rows, so permuting it replaces sequential access with scattered access and loses.</sub>
+
+---
+
+## 4. Search structure: measured, not assumed
+
+A single number had been sitting in this project's notes since June and steering work: our
+transposition table was said to supply a move at **28%** of nodes against Stockfish's **46.5%**,
+and that gap had motivated several changes in a row. It is not reproducible.
+
+The check was to compile the *same* counter into both engines — twenty lines, incrementing per
+depth bucket at the point where each search reads its TT entry — and run them over identical
+positions: 32 of them, 3 million nodes each, one thread, 256 MB.
+
+| depth | our nodes | our TT move | Stockfish nodes | its TT move |
+|---|---:|---:|---:|---:|
+| 1–3 | **73.5%** | 17.0% | **58.4%** | 15.5% |
+| 4–6 | 17.8% | 31.4% | 20.9% | 24.2% |
+| 7–9 | 6.4% | 44.2% | 11.1% | 29.1% |
+| 10–13 | 2.0% | 63.0% | 6.8% | 38.1% |
+| 14+ | 0.3% | 82.6% | 2.8% | 54.6% |
+| **all** | | **22.4%** | | **21.4%** |
+
+**Move availability is the same — 22.4% against 21.4%, marginally in our favour.** The deficit that
+several months of work had been aimed at does not exist.
+
+What the same measurement *does* show is a different defect, and it is in the shape of the tree
+rather than in the table: **73.5% of our nodes live at depth 1–3 against Stockfish's 58.4%, and
+0.3% of them get past depth 14 against 2.8%.** The tree is wide at the base and short at the top.
+That is the same thing visible at fixed time — 21 plies against 27 in four seconds — seen from
+the inside. Stage 11 above is the first change taken directly from this reading, and the direction
+it points is to prune harder at low depth, not to chase entries into the table.
+
+<sub>The entry hit rate does differ sharply — 53.9% for Stockfish against our 23.4% — but that is a
+consequence of the shape rather than a cause: an engine that explores fewer, deeper nodes revisits
+the same positions more often. It is the wrong number to optimise directly.</sub>
+
+### Limits raised, and one guard that had to come with them
+
+Four constants, none of which changes the search: the bench signature is unaffected by all of them.
+
+- **`max_ply` 64 → 128.** Past that ply the search silently stops searching — both the main routine
+  and quiescence return the static evaluation instead. At one thread and short time control the
+  selective depth stays under 30, but at 24 threads and fifteen seconds it was measured at 49, and
+  the regime this engine is aimed at is deeper still. Stockfish uses 246. Every derived constant was
+  already written in terms of `max_ply` and rescales correctly on its own — the tablebase value band
+  is `mate_score − max_ply`, and the guard that keeps tablebase verdicts out of the correction
+  history is `mate_score − 2·max_ply`, which is exactly the lowest score the band can produce. The
+  only quadratic cost is the principal-variation table, 20 KB → 72 KB against a 21.25 MB per-thread
+  structure.
+- **`Hash` ceiling 1024 → 65536 MB**, and **`MAX_THREADS` 64 → 512**. The thread cap was below the
+  80 hardware threads of the machine the engine is tested on, so it could not use its own rig; the
+  per-thread structure is allocated on demand, so the constant costs nothing at rest.
+- **A guard on transposition-table allocation failure**, and it is the reason the hash ceiling is
+  not merely a number. Under the old 1024 MB cap a failed allocation was unreachable; at 65536 it is
+  an ordinary outcome, and the code went straight from a null pointer into `memset`. It now falls
+  back from large pages to the heap and then to 64 MB, and the reported line says what was actually
+  allocated rather than what was asked for — previously, after a fallback, it printed
+  "4096 MB, large pages ON" while holding a 64 MB heap table, so the only diagnostic a user sees was
+  wrong precisely in the case where it matters.
+
+<sub>One build-system defect found in passing, and worth fixing before it costs someone a
+measurement: the Makefile carries **no header dependencies**. Editing `tt.h`, `threads.h` or
+`search.h` recompiles nothing, so a change to any of them followed by a measurement silently
+measures the previous binary. It happened once during this session and was caught only because the
+diagnostic string it should have changed did not change.</sub>

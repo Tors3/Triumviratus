@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
+#include <new>       // std::nothrow (init_hash_table)
 #include "profile.h"
 
  // Hash flags
@@ -170,19 +171,49 @@ inline void init_hash_table(int mb) {
     const U64 bytes = hash_entries * sizeof(tt_entry);
     if (g_large_pages) {
         hash_table = static_cast<tt_entry*>(Triumviratus::aligned_large_pages_alloc(bytes));
-        std::memset(hash_table, 0, bytes);   // VirtualAlloc azzera su Win; memset copre il fallback aligned_alloc
-        tt_on_large_pages = true;
+        // 🔴 2026-09-07 (port di SF 7c37212e). aligned_large_pages_alloc puo'
+        // tornare **nullptr**: su Linux e' std_aligned_alloc che fallisce, su
+        // Windows la VirtualAlloc di fallback. Prima si andava dritti al memset
+        // -> segfault. Irraggiungibile finche' il tetto era 1024 MB; con 65536
+        // una richiesta che la macchina non regge e' uno scenario normale, ed e'
+        // il motivo per cui questa guardia arriva INSIEME al tetto nuovo.
+        // Ripiego sull'heap: se regge, la partita continua senza large pages.
+        if (!hash_table) {
+            printf("info string Hash: %d MB su large pages non allocabili, ripiego su heap\n", mb);
+            hash_table = new (std::nothrow) tt_entry[hash_entries]();
+            tt_on_large_pages = false;
+        } else {
+            std::memset(hash_table, 0, bytes);   // VirtualAlloc azzera su Win; memset copre il fallback aligned_alloc
+            tt_on_large_pages = true;
+        }
     } else {
-        hash_table = new tt_entry[hash_entries]();   // () = zero-inizializzata
+        hash_table = new (std::nothrow) tt_entry[hash_entries]();   // () = zero-inizializzata
+        tt_on_large_pages = false;
+    }
+    // Nemmeno l'heap regge: NON si prosegue con un puntatore nullo (ogni probe
+    // sarebbe un segfault). Si torna alla dimensione di default, che e' sempre
+    // allocabile, e lo si dice sul canale che la GUI legge.
+    if (!hash_table) {
+        printf("info string Hash: %d MB NON allocabili, ripiego su 64 MB\n", mb);
+        fflush(stdout);
+        hash_entries = ((U64)64 * 1024 * 1024) / sizeof(tt_entry);
+        hash_entries &= ~3ULL;
+        hash_table = new tt_entry[hash_entries]();
         tt_on_large_pages = false;
     }
 
     // Report esplicito (per misurare "bene"): distingue disabilitato da fallback.
     // "unavailable" = privilegio mancante O RAM fisica non contigua (frammentazione,
     // err 1450): su Windows desktop e' spesso il secondo, non c'e' rimedio nel motore.
-    const char* lp = !g_large_pages ? "off (disabled)"
-                   : Triumviratus::has_large_pages() ? "ON" : "off (unavailable)";
-    printf("info string Hash: %d MB, large pages %s\n", mb, lp);
+    // 🔴 2026-09-07: la riga riportava `mb` e has_large_pages() invece di cio' che e'
+    // stato allocato DAVVERO. Dopo un ripiego diceva "4096 MB, large pages ON" mentre
+    // la tabella era di 64 MB su heap: la sola diagnostica che l'utente vede mentiva
+    // proprio nel caso in cui serve.
+    const int actual_mb = (int)(hash_entries * sizeof(tt_entry) / (1024 * 1024));
+    const char* lp = !g_large_pages          ? "off (disabled)"
+                   : tt_on_large_pages       ? "ON"
+                                             : "off (unavailable)";
+    printf("info string Hash: %d MB, large pages %s\n", actual_mb, lp);
 }
 
 // Clear hash table

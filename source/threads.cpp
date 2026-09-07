@@ -381,7 +381,11 @@ void set_qs_checks(bool v) { g_qs_checks = v; }
 // NMPVerifDepth.
 static bool g_nmp_verif = true;
 void set_nmp_verif(bool v) { g_nmp_verif = v; }
-int g_nmp_verif_depth = 1; // spin "NMPVerifDepth" (SPSA)
+// ⭐ BAKATO 07/09/2026 (bundle s22): era 1, cioe' la null move veniva SEMPRE
+// confermata da una ricerca reale. Stockfish verifica solo da depth >= 16
+// (`if (nmpMinPly || depth < 16) return nullValue`). A 16 il fail-high della null
+// a bassa profondita' si accetta senza pagare la verifica: -6,7% di albero.
+int g_nmp_verif_depth = 16; // spin "NMPVerifDepth" (SPSA)
 
 // P1.7 (UCI "LMPImproving"): move-count pruning SF-style (base + d^2*quad/100)
 // / (2 - improving), SENZA il cap depth<=8 della lmp_table (oggi oltre d8
@@ -1147,11 +1151,11 @@ int g_hist_init_capt = 249; // [0,2000]
 // Q-19 (Caissa Search.cpp:1897-1954): addenda al blocco LMRFine, in millesimi
 // di ply. (a) ply-scaled PV: riduci MENO vicino alla radice — LMRFine non ha
 // NESSUN termine di ply.
-int g_lmrf_ply = 524; // [0,2048]  (Caissa: 1024)
+int g_lmrf_ply = 426; // [0,2048]  (Caissa: 1024)
 // (b) killer/counter: Caissa le riduce ~2.6 ply in meno. Qui in millesimi,
 // additivo al
 //     `reduction--` intero di KillerLMRFix (che resta).
-int g_lmrf_killer = 797; // [0,4000]
+int g_lmrf_killer = 764; // [0,4000]
 
 // Q-18 helper: bonus piatto -> scalato sul numero di mosse cercate prima della
 // best.
@@ -2161,7 +2165,7 @@ int g_lmr_div_x100 = 447; // bigger divisor = LESS reduction [3.7 BAKE 345->310;
 static bool g_lmr_fine = true; // 5.1 BAKE (spsa_struct iter1216, media ultimi
                                // 100 @20+0.2): ON di default
 int g_lmrf_cut =
-    3687; // [5.1 BAKE 3995->3184] cut-node: riduzione forte (il divario #1)
+    4629; // [5.1 BAKE 3995->3184] cut-node: riduzione forte (il divario #1)
 int g_lmrf_cut_nott =
     2397; // [5.1 BAKE 1059->2092] extra sui cut-node senza TT move
 int g_lmrf_ttcap =
@@ -2169,16 +2173,25 @@ int g_lmrf_ttcap =
 int g_lmrf_ttpv =
     617; // [5.1 BAKE 2766->2210] ttPv: riduci MENO (protezione del ramo ex-PV)
 int g_lmrf_pv = 437; // [5.1 BAKE 1017->1551] PV node: riduci MENO
-int g_lmrf_ss = 664; // [5.1 BAKE 445->923]   statScore (history continua): r -=
+// ⭐ BAKED ON (2026-09-07): vettore SPSA a 8 parametri, SPRT +2,08 +/- 3,13 su 13.192
+// partite a 12+0.12 hash 64 (LLR 0,64, stabile su dodici report consecutivi fra +1,63 e
+// +2,74). Tarato da uno SPSA a 10.006 iterazioni / ~40.000 partite, 8 parametri con
+// perturbazione al 10% del range -- il regime che il Mega-SPSA (124 param, c al 4%) non
+// aveva. Valori precedenti: ss 664, all 618, cut 3687, cutoff 1520, improv 489,
+// corr 866, ply 524, killer 797.
+// 🔴 QUESTO CAMBIA LA FIRMA DEL BENCH: 252074 non e' piu' il canary.
+// ⚠️ Tarato E misurato entrambi a 12+0.12 hash 64. La regola di regime (§1.11) vuole la
+//    conferma a hash 256: TTTwoLevel valeva +4,55 a hash 64 e zero a 256.
+int g_lmrf_ss = 695; // [5.1 BAKE 445->923]   statScore (history continua): r -=
                      // statScore*g/4096
 int g_lmrf_corr =
-    866; // [5.1 BAKE 160->478]   correctionValue (eval incerta -> riduci meno)
-int g_lmrf_all = 618;     // [5.1 BAKE 272->723]   scaling ALL-node: r +=
+    897; // [5.1 BAKE 160->478]   correctionValue (eval incerta -> riduci meno)
+int g_lmrf_all = 557;     // [5.1 BAKE 272->723]   scaling ALL-node: r +=
                           // r*g/(256*depth+285)  [ci mancava]
-int g_lmrf_improv = 489;  // [5.1 BAKE 1024->411]  non-improving
+int g_lmrf_improv = 356;  // [5.1 BAKE 1024->411]  non-improving
 int g_lmrf_evalcut = 979; // [5.1 BAKE 1024->1517] eval+margin < alpha
 int g_lmrf_cutoff =
-    1520; // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
+    1655; // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
 // ⭐ LmrAlphaGap (port SF `5f7348f0`, 19/08/2026 — "Reduce LMR less
 // aggressively in loose alpha windows"). SF: STC LLR 2.95 su 90.784 partite
 // <0.00,2.00>, LTC LLR 2.94 su 209.640 <0.50,2.50> — l'unica patch da GUADAGNO
@@ -2197,6 +2210,47 @@ int g_lmrf_cutoff =
 // questo sono spin e non costanti.
 // 0 = OFF = byte-identico (canary bench 252074).
 int g_lmr_alpha_gap = 0;  // moltiplicatore in 1/1024 di ply. SF usa 3.
+
+// ============================================================================
+// Switch di studio 2026-09-07 (tutti default = comportamento storico, bench
+// 279691 byte-identico). Uno per ipotesi, per SPRT separati. Vedi
+// STUDY_PLAN_7.0_2026-09-07.md §2.
+// ============================================================================
+// TTCutDepthOverride (SF step 6 `|| depth > 4`): il cutoff TT incoerente col tipo
+// di nodo (bound fail-high a un all-node o viceversa) viene comunque accettato
+// sopra questa profondita'. 0 = mai (storico).
+int g_ttcut_depth_override = 0;
+// TTFailLowMove: 1 = storico, lo store di un nodo fail-low porta la "migliore
+// delle fallite" come TT move. 0 = come SF: nessuna mossa sui bound UPPER
+// (TTMoveKeep conserva quella gia' presente per la stessa posizione).
+int g_tt_faillow_move = 1;
+// TTPvInherit (SF: `if (bestValue <= alpha) ss->ttPv |= (ss-1)->ttPv`): un nodo
+// fail-low eredita il flag ttPv del padre nello store.
+int g_ttpv_inherit = 0;
+// NMPCutNodeOnly (SF step 10 `cutNode &&`): null move solo ai cut-node.
+int g_nmp_cutnode_only = 0;
+// IIRNoAllNode (SF step 11 `!allNode`): niente IIR ai nodi ALL (ne' PV ne' cut).
+  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
+  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
+int g_iir_no_allnode = 1;
+// ProbCutTTAll (SF step 13): il probcut da TT (bound LOWER, depth >= depth-4,
+// score >= beta+margine) vale 1 = anche fuori scacco, 2 = anche con TT move
+// non-cattura, 3 = anche ai nodi PV. 0 = solo in scacco (storico).
+  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
+  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
+int g_probcut_tt_all = 2;
+// RFPTTMoveGate (SF step 9 `(!ttData.move || ttCapture)`): niente RFP quando la
+// TT move e' una quiet.
+int g_rfp_ttmove_gate = 0;
+// CorrFailLowAll (SF step 24): ai nodi fail-low la correction history si aggiorna
+// SEMPRE (SF non ha best move su un fail-low, quindi il gate "best quiet" non
+// esiste); 2 = anche col peso 18/12 di SF sui fail-low.
+  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
+  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
+int g_corr_faillow_all = 1;
+// AlphaDepthDecAmt (SF step 22 `depth -= 3` per 3 < depth < 12): quanto ridurre la
+// depth delle mosse restanti quando una mossa alza alpha. 1 = storico.
+int g_alpha_depth_dec_amt = 1;
 int g_lmr_alpha_lo = 64;  // clamp inferiore del divario (alpha-eval), in cp
 int g_lmr_alpha_hi = 96;  // clamp superiore
 // ⭐ ContHist4LMR (2026-07-20, spin, 0 = OFF byte-identico) — SEGNALE ORFANO,
@@ -2226,11 +2280,25 @@ extern std::atomic<int>
 int g_opt_strength =
     170; // [5.1 BAKE 137->89]  optimism = strength*score/(|score|+div)
 int g_opt_div = 272; // [5.1 BAKE 81->72]
+// ⭐ BAKATI INSIEME il 07/09/2026 (run s20_histprune_sf): +4,48 ± 2,65 su 19.228
+// partite, LOS 99,95%, LLR 2,33, 10+0.1 hash 64.
+// Sono UNA sola ipotesi — «la nostra history pruning e' troppo timida, Stockfish
+// non ha nessun cap di profondita'» — e vanno mossi insieme, perche' presi uno
+// alla volta sono inerti: col cap a 2 abbassare il margine non cambia un nodo
+// (bench 260161 contro 259746), e alzare il cap col margine a 2097 non cambia
+// NEMMENO UN BYTE (bench identico), perche' a prune_depth 3-6 la soglia
+// -2097*depth chiede una history piu' negativa di quanto le due tabelle sommate
+// possano essere (|main| + |cont| <= 2*HISTORY_MAX = 14000).
+// 🔑 Da qui la lezione di metodo: un interruttore che non muove il bench non e'
+// "neutro", e' NON COLLEGATO — e va riformulato prima di spenderci una notte.
+// Movente: il 07/09 abbiamo misurato che il 73,5% dei nostri nodi vive a depth
+// 1-3 contro il 58,4% di SF. L'albero e' largo alla base, e questa e' la leva
+// che lo stringe li'.
 int g_histprune_margin =
-    2097; // [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning: prune
-          // late quiet if combined hist < -margin*depth
+    1200; // era 2097 [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning:
+          // prune late quiet if combined hist < -margin*depth
 int g_conthist_prune_depth =
-    2; // gate profondita' conthist-prune (SF usa lmrDepth<6). UCI
+    6; // era 2. gate profondita' conthist-prune (SF usa lmrDepth<6). UCI
        // ContHistPruneDepth. PASSO2: col blocco LmrDepthPrune si alza ~6.
 // LmrDepthPrune (SF): pota futility+conthist sulla profondita' RIDOTTA dalla
 // LMR per la mossa (prune_depth = depth-1-lmr_table[depth][movecount]) invece
@@ -2897,6 +2965,15 @@ bool set_search_param(const char *name, int value) {
     g_lmrf_evalcut = value < 0 ? 0 : value;
     return true;
   }
+  if (!strcmp(name, "TTCutDepthOverride")) { g_ttcut_depth_override = value < 0 ? 0 : value; return true; }
+  if (!strcmp(name, "TTFailLowMove")) { g_tt_faillow_move = value != 0; return true; }
+  if (!strcmp(name, "TTPvInherit")) { g_ttpv_inherit = value != 0; return true; }
+  if (!strcmp(name, "NMPCutNodeOnly")) { g_nmp_cutnode_only = value != 0; return true; }
+  if (!strcmp(name, "IIRNoAllNode")) { g_iir_no_allnode = value != 0; return true; }
+  if (!strcmp(name, "ProbCutTTAll")) { g_probcut_tt_all = value < 0 ? 0 : (value > 3 ? 3 : value); return true; }
+  if (!strcmp(name, "RFPTTMoveGate")) { g_rfp_ttmove_gate = value != 0; return true; }
+  if (!strcmp(name, "CorrFailLowAll")) { g_corr_faillow_all = value < 0 ? 0 : (value > 2 ? 2 : value); return true; }
+  if (!strcmp(name, "AlphaDepthDecAmt")) { g_alpha_depth_dec_amt = value < 1 ? 1 : (value > 6 ? 6 : value); return true; }
   if (!strcmp(name, "LmrAlphaGap")) {
     g_lmr_alpha_gap = value < 0 ? 0 : value;
     return true;
@@ -7047,10 +7124,17 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
                                   int best_score, int bound, int depth,
                                   bool in_check, int best_move,
                                   int excluded_move) {
-  if (!g_corr_hist || in_check || excluded_move || best_move == 0)
+  if (!g_corr_hist || in_check || excluded_move)
     return;
-  if (get_move_capture(best_move) || get_move_promoted(best_move))
-    return; // quiet best only
+  // CorrFailLowAll: su un fail-low SF non ha best move, quindi aggiorna sempre
+  // (e con peso 18 contro 12). Storico: solo se la "migliore delle fallite" e' quiet.
+  const bool faillow_all = g_corr_faillow_all && bound == hash_flag_alpha;
+  if (!faillow_all) {
+    if (best_move == 0)
+      return;
+    if (get_move_capture(best_move) || get_move_promoted(best_move))
+      return; // quiet best only
+  }
   // 🔴 FIX 2026-08-02 — la soglia era `mate_score` (30000), ma uno score da tablebase vale
   // `TB_VALUE_WIN - ply` = **29873..29936** (syzygy.cpp:29): la banda TB passava INTERA.
   // Un verdetto Syzygy non e' una valutazione, e' una certezza: entrava in `diff` come se
@@ -7098,6 +7182,8 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
     return; // upper bound: only push eval down
   int target = diff * CORR_GRAIN;
   int w = (depth < 16) ? depth : 16; // deeper search = more trust
+  if (faillow_all && g_corr_faillow_all >= 2)
+    w = w * 3 / 2; // SF: 18/128 sui fail-low contro 12/128 con best move
   int lim = g_corr_cap * CORR_GRAIN; // clamp stored value to the cap
   td_corr_bucket_update(td.corr_hist[td.side][idx], target, w, lim);
   if (g_corr_multi) {
@@ -7380,6 +7466,15 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // NUOVO è ridurre meno la LMR sui nodi non-PV che la TT marca ex-PV. Gated da
   // g_ttpv (OFF = byte-identico).
   bool store_pv = g_ttpv_amount > 0 && (pv_node || (tt_hit && tt_pv));
+  td.ttpv_stack[td.ply] = store_pv; // TTPvInherit: letto dal figlio fail-low
+  // TTAVAIL (diagnostica, solo con CutoffStats=1): disponibilita' della TT-move
+  // per profondita'. Il probe qui sopra e' quello di OGNI nodo della main search.
+  if (g_cutoff_stats && td.ply && depth >= 1) {
+    const int db = depth > 63 ? 63 : depth;
+    td.tt_probe_n[db]++;
+    td.tt_probe_hit[db] += tt_hit ? 1 : 0;
+    td.tt_probe_mv[db] += tt_move ? 1 : 0;
+  }
 
   // Skip the TT cutoff during a singular search (excluded_move set): we are
   // deliberately re-searching this position without the TT move.
@@ -7408,7 +7503,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         // A differenza di PromoQS e TTEvalNoDecay questo RESTRINGE l'albero: piu'
         // cutoff accettati = meno nodi, nessun costo da ripagare.
         const bool cut_coherent =
-            (g_ttcut_exact && tt_flag == hash_flag_exact) || (is_cut_node == tt_fh);
+            (g_ttcut_exact && tt_flag == hash_flag_exact) || (is_cut_node == tt_fh) ||
+            (g_ttcut_depth_override > 0 && depth > g_ttcut_depth_override);
         ttcut_ok = (!tt_fh || tt_depth >= depth + 1) && cut_coherent &&
                    td.fifty < g_ttcut_fifty;
       }
@@ -7579,7 +7675,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // riduciamo di 1 ply per ottenere a basso costo una hash move. (Se l'IID
   // sopra ha trovato una mossa, tt_move != 0 -> questa riduzione NON scatta.)
   if (depth >= g_iir_min_depth && !tt_move && !excluded_move && !follow_pv &&
-      !(g_iir_not_in_check && in_check))
+      !(g_iir_not_in_check && in_check) &&
+      !(g_iir_no_allnode && !pv_node && !is_cut_node))
     depth -= g_iir_amount; // Q-15: niente IIR su follow-PV; fix opz. in-check
   // NB (2026-07-16): l'IIR spara ANCHE in scacco, annullando la check-ext (+1
   // poi -1). Fix "&& !in_check" candidato +1.5 LTC (SF/Alexandria) ma NON
@@ -7595,8 +7692,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // ProbCut sotto scacco (SF step 12, default off): se la TT ricorda una
   // cattura con bound LOWER e score >= beta+margin a profondita' adeguata,
   // taglia subito (~4 Elo SF).
-  if (g_probcut_incheck_margin && in_check && !pv_node && !excluded_move &&
-      tt_hit && tt_move && get_move_capture(tt_move) &&
+  if (g_probcut_incheck_margin && (in_check || g_probcut_tt_all >= 1) &&
+      (!pv_node || g_probcut_tt_all >= 3) && !excluded_move &&
+      tt_hit && tt_move && (get_move_capture(tt_move) || g_probcut_tt_all >= 2) &&
       tt_flag == hash_flag_beta && tt_depth >= depth - 4 &&
       tt_score >= beta + g_probcut_incheck_margin && tt_score < mate_score &&
       tt_score > -mate_score && beta < mate_score && beta > -mate_score)
@@ -7765,6 +7863,11 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       rfp_ok =
           td.history_moves[td_hbucket(td, tt_move)][get_move_piece(tt_move)]
                           [get_move_target(tt_move)] > g_rfp_hist_thresh;
+    // RFPTTMoveGate (SF step 9): con una TT move quiet il fail-high statico non
+    // basta. Dopo il blocco RFPHistThresh, che altrimenti lo sovrascriverebbe.
+    if (g_rfp_ttmove_gate && tt_move && !get_move_capture(tt_move) &&
+        !get_move_promoted(tt_move))
+      rfp_ok = false;
     int rfp_depth = depth - ((g_improving && improving) ? 1 : 0);
     int rfp_margin = g_rfp_margin * rfp_depth;
     if (opp_worsening)
@@ -7793,7 +7896,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // il padre ha appena nullato); (b) durante una search di verifica niente
   // null.
   if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score &&
-      eval >= beta &&
+      eval >= beta && (!g_nmp_cutnode_only || is_cut_node) &&
       // F-018.8a NMPStaticMargin (default OFF): la STATIC eval (non quella
       // TT-improved) deve superare beta di un margine depth-dipendente (SF:
       // 21*depth - 421).
@@ -9104,8 +9207,13 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
         // depth-1 per il resto del loop (Berserk/SF; il TT store finale usa la
         // depth ridotta).
         if (g_alpha_depth_dec && score < beta && score > -mate_score &&
-            score < mate_score && depth >= 2 && depth <= 11)
-          depth--;
+            score < mate_score && depth <= 11) {
+          if (g_alpha_depth_dec_amt <= 1) {
+            if (depth >= 2)
+              depth--;
+          } else if (depth > g_alpha_depth_dec_amt)
+            depth -= g_alpha_depth_dec_amt; // SF: depth -= 3 per 3 < depth < 12
+        }
 
         if (score >= beta) {
           // CutoffStats (diagnostica, off-default): fail-high node.
@@ -9330,9 +9438,14 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
 
   td_corr_update(td, corr_idx, static_eval, best_score, hash_flag, depth,
                  in_check, best_move, excluded_move);
+  // TTPvInherit: il fail-low eredita il ttPv del padre (SF step 23).
+  if (g_ttpv_inherit && hash_flag == hash_flag_alpha && td.ply >= 1 &&
+      td.ttpv_stack[td.ply - 1])
+    store_pv = true;
   if (!excluded_move)
-    store_tt(td.hash_key, best_move, best_score, depth, hash_flag, td.ply,
-             store_pv,
+    store_tt(td.hash_key,
+             (hash_flag == hash_flag_alpha && !g_tt_faillow_move) ? 0 : best_move,
+             best_score, depth, hash_flag, td.ply, store_pv,
              tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
 
   return best_score;
@@ -10217,6 +10330,9 @@ void search_position_mt(int depth) {
     thread_data[i].fh_tt = 0;
     thread_data[i].fh_tt_first = 0;
     thread_data[i].fh_probe = 0;
+    memset(thread_data[i].tt_probe_n, 0, sizeof(thread_data[i].tt_probe_n));
+    memset(thread_data[i].tt_probe_hit, 0, sizeof(thread_data[i].tt_probe_hit));
+    memset(thread_data[i].tt_probe_mv, 0, sizeof(thread_data[i].tt_probe_mv));
   }
 
   search_threads.clear();
@@ -10468,6 +10584,31 @@ void search_position_mt(int depth) {
              ftt ? 100.0 * (double)ftt1 / (double)ftt : 0.0,
              nott ? 100.0 * (double)nott1 / (double)nott : 0.0);
     }
+    // TTAVAIL: hit-rate dell'entry e disponibilita' della TT-move per fascia di
+    // profondita' (1-3, 4-6, 7-9, 10-13, 14+) e totale. Stesso formato della
+    // patch di misura in Stockfish, cosi' le due righe si confrontano a colpo d'occhio.
+    {
+      const int lo[5] = {1, 4, 7, 10, 14}, hi[5] = {3, 6, 9, 13, 63};
+      U64 tn = 0, th = 0, tm = 0;
+      char buf[512];
+      int off = snprintf(buf, sizeof buf, "info string TTAVAIL");
+      for (int b = 0; b < 5; b++) {
+        U64 n = 0, hh = 0, mm = 0;
+        for (int i = 0; i < num_threads; i++)
+          for (int d = lo[b]; d <= hi[b]; d++) {
+            n += thread_data[i].tt_probe_n[d];
+            hh += thread_data[i].tt_probe_hit[d];
+            mm += thread_data[i].tt_probe_mv[d];
+          }
+        tn += n; th += hh; tm += mm;
+        off += snprintf(buf + off, sizeof buf - off, " d%d-%d n=%llu hit=%.1f%% mv=%.1f%%",
+                        lo[b], hi[b] == 63 ? 99 : hi[b], (unsigned long long)n,
+                        n ? 100.0 * hh / n : 0.0, n ? 100.0 * mm / n : 0.0);
+      }
+      snprintf(buf + off, sizeof buf - off, " | all n=%llu hit=%.1f%% mv=%.1f%%",
+               (unsigned long long)tn, tn ? 100.0 * th / tn : 0.0, tn ? 100.0 * tm / tn : 0.0);
+      printf("%s\n", buf);
+    }
   }
 
   printf("bestmove ");
@@ -10482,3 +10623,4 @@ void search_position_mt(int depth) {
   printf("\n");
   fflush(stdout);
 }
+
