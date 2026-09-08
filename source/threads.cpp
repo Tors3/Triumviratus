@@ -381,11 +381,7 @@ void set_qs_checks(bool v) { g_qs_checks = v; }
 // NMPVerifDepth.
 static bool g_nmp_verif = true;
 void set_nmp_verif(bool v) { g_nmp_verif = v; }
-// ⭐ BAKATO 07/09/2026 (bundle s22): era 1, cioe' la null move veniva SEMPRE
-// confermata da una ricerca reale. Stockfish verifica solo da depth >= 16
-// (`if (nmpMinPly || depth < 16) return nullValue`). A 16 il fail-high della null
-// a bassa profondita' si accetta senza pagare la verifica: -6,7% di albero.
-int g_nmp_verif_depth = 16; // spin "NMPVerifDepth" (SPSA)
+int g_nmp_verif_depth = 1; // spin "NMPVerifDepth" (SPSA) // spin "NMPVerifDepth" (SPSA)
 
 // P1.7 (UCI "LMPImproving"): move-count pruning SF-style (base + d^2*quad/100)
 // / (2 - improving), SENZA il cap depth<=8 della lmp_table (oggi oltre d8
@@ -2230,24 +2226,25 @@ int g_ttpv_inherit = 0;
 // NMPCutNodeOnly (SF step 10 `cutNode &&`): null move solo ai cut-node.
 int g_nmp_cutnode_only = 0;
 // IIRNoAllNode (SF step 11 `!allNode`): niente IIR ai nodi ALL (ne' PV ne' cut).
-  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
-  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
-int g_iir_no_allnode = 1;
+// I quattro switch qui sotto (IIRNoAllNode, ProbCutTTAll, CorrFailLowAll e
+// NMPVerifDepth) sono stati misurati insieme a 10+0.1 hash 64 su 11.207 partite:
+// il lato con gli switch accesi fa 49,23% contro 50,77%, cioe' **perdono ~5 Elo**.
+// Restano dichiarati per poterli riprovare singolarmente, spenti di default.
+// 📌 Convenzione di misura: fastchess riporta Elo/Points/LOS del PRIMO motore
+// elencato. `_rig_locale/run.sh` mette `test` per primo, quindi Elo positivo =
+// la patch guadagna. Se si legge un run vecchio, controllare l'ordine nel README.
+int g_iir_no_allnode = 0;
 // ProbCutTTAll (SF step 13): il probcut da TT (bound LOWER, depth >= depth-4,
 // score >= beta+margine) vale 1 = anche fuori scacco, 2 = anche con TT move
 // non-cattura, 3 = anche ai nodi PV. 0 = solo in scacco (storico).
-  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
-  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
-int g_probcut_tt_all = 2;
+int g_probcut_tt_all = 0;
 // RFPTTMoveGate (SF step 9 `(!ttData.move || ttCapture)`): niente RFP quando la
 // TT move e' una quiet.
 int g_rfp_ttmove_gate = 0;
 // CorrFailLowAll (SF step 24): ai nodi fail-low la correction history si aggiorna
 // SEMPRE (SF non ha best move su un fail-low, quindi il gate "best quiet" non
 // esiste); 2 = anche col peso 18/12 di SF sui fail-low.
-  // ⭐ BAKATO 07/09/2026 col bundle s22_bundle_pos: +5,31 ± 3,44 su 11.182 partite,
-  // LOS 99,88%, LLR 1,66, 10+0.1 hash 64. Vedi STUDIO_2026-09-07_RISULTATI.md.
-int g_corr_faillow_all = 1;
+int g_corr_faillow_all = 0;
 // AlphaDepthDecAmt (SF step 22 `depth -= 3` per 3 < depth < 12): quanto ridurre la
 // depth delle mosse restanti quando una mossa alza alpha. 1 = storico.
 // ⭐ BAKATO 08/09/2026 (run s10_alphadepthdec3): +8,64 ± 3,39 su 12.022 partite,
@@ -2258,7 +2255,10 @@ int g_corr_faillow_all = 1;
 // battere quello, e non meritano lo stesso sforzo. Sul bench toglie il 44,7%
 // dell'albero, ed e' la terza leva di potatura della sessione — coerente con la
 // misura del 07/09 (73,5% dei nostri nodi a depth 1-3 contro il 58,4% di SF).
-int g_alpha_depth_dec_amt = 3;
+// AlphaDepthDecAmt: 3 = la forma di SF (Step 22, depth -= 3 quando alpha si
+// alza), 1 = la nostra. Misurato a 10+0.1 su 12.026 partite: il lato a 3 fa
+// 48,75% contro 51,25%, quindi la forma di SF qui **perde ~8,6 Elo**.
+int g_alpha_depth_dec_amt = 1;
 int g_lmr_alpha_lo = 64;  // clamp inferiore del divario (alpha-eval), in cp
 int g_lmr_alpha_hi = 96;  // clamp superiore
 // ⭐ ContHist4LMR (2026-07-20, spin, 0 = OFF byte-identico) — SEGNALE ORFANO,
@@ -2288,25 +2288,18 @@ extern std::atomic<int>
 int g_opt_strength =
     170; // [5.1 BAKE 137->89]  optimism = strength*score/(|score|+div)
 int g_opt_div = 272; // [5.1 BAKE 81->72]
-// ⭐ BAKATI INSIEME il 07/09/2026 (run s20_histprune_sf): +4,48 ± 2,65 su 19.228
-// partite, LOS 99,95%, LLR 2,33, 10+0.1 hash 64.
-// Sono UNA sola ipotesi — «la nostra history pruning e' troppo timida, Stockfish
-// non ha nessun cap di profondita'» — e vanno mossi insieme, perche' presi uno
-// alla volta sono inerti: col cap a 2 abbassare il margine non cambia un nodo
-// (bench 260161 contro 259746), e alzare il cap col margine a 2097 non cambia
-// NEMMENO UN BYTE (bench identico), perche' a prune_depth 3-6 la soglia
-// -2097*depth chiede una history piu' negativa di quanto le due tabelle sommate
-// possano essere (|main| + |cont| <= 2*HISTORY_MAX = 14000).
-// 🔑 Da qui la lezione di metodo: un interruttore che non muove il bench non e'
-// "neutro", e' NON COLLEGATO — e va riformulato prima di spenderci una notte.
-// Movente: il 07/09 abbiamo misurato che il 73,5% dei nostri nodi vive a depth
-// 1-3 contro il 58,4% di SF. L'albero e' largo alla base, e questa e' la leva
-// che lo stringe li'.
+// ContHistPruneDepth + HistPruneMargin: la coppia (6, 1200) allarga la history
+// pruning verso la forma di SF, che non ha cap di profondita'. Misurata a 10+0.1
+// su 19.241 partite: 49,36% contro 50,64%, cioe' **perde ~4,5 Elo**. I due vanno
+// mossi INSIEME — separati sono inerti: col cap a 2 il margine sposta lo 0,2% del
+// bench, e col margine a 2097 il cap non cambia un byte, perche' a prune_depth
+// 3-6 la soglia -2097*depth chiede una history piu' negativa di quanto le due
+// tabelle sommate possano essere (|main| + |cont| <= 2*HISTORY_MAX = 14000).
 int g_histprune_margin =
-    1200; // era 2097 [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning:
+    2097; // era 2097 [3.7 BAKE 1602->1691; BAKED #1 era 1000]. history pruning:
           // prune late quiet if combined hist < -margin*depth
 int g_conthist_prune_depth =
-    6; // era 2. gate profondita' conthist-prune (SF usa lmrDepth<6). UCI
+    2; // era 2. gate profondita' conthist-prune (SF usa lmrDepth<6). UCI
        // ContHistPruneDepth. PASSO2: col blocco LmrDepthPrune si alza ~6.
 // LmrDepthPrune (SF): pota futility+conthist sulla profondita' RIDOTTA dalla
 // LMR per la mossa (prune_depth = depth-1-lmr_table[depth][movecount]) invece

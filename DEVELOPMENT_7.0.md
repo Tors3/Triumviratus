@@ -17,7 +17,7 @@
 <div align="center">
 
 [The network](#1-the-network) · [Measured Elo](#2-measured-elo-incremental) ·
-[Speed work](#3-speed-work-nps) · [Search structure](#4-search-structure-measured-not-assumed) ·
+[Speed work](#3-speed-work-nps) · [Search structure](#4-search-structure-a-measurement) ·
 [6.0 log](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md)
 
 </div>
@@ -78,9 +78,6 @@ and reported under the table.
 | 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
 | 8 | → **negative extension on alpha** | `NegExtAlpha` 1 → 2: when the TT move does not even reach alpha the node is neither singular nor promising, so the extension shrinks further. One parameter, nothing else touched | 30+0.3 | 3,958 | **+6.50 ± 5.77** (LOS 98.64%) |
 | 9 | → **eval-stability window made honest** | `TMv2EvalPrevAvg=1` with `TMv2EvalWindow` 10 → 20. The counter compared the score against a moving average that had **already absorbed that same score**, so the measured difference was exactly half the real one and the parameter meant double what it said. The pair keeps the effective threshold identical — taken **on readability, not on Elo** | — | — | **no measurable change by construction** |
-| 10 | → **four Stockfish-19 structural differences, bundled** | probcut-from-TT freed from its in-check and capture-only gates; null-move verification only from depth 16 as upstream does, instead of at every depth; no internal iterative reduction at ALL nodes; correction history also learning on fail-low nodes | 10+0.1 | **11,182** | **+5.31 ± 3.44** (LOS 99.88%, LLR 1.66) |
-| 11 | → **history pruning widened** | `ContHistPruneDepth` 2 → 6 with `HistPruneMargin` 2097 → 1200. Not a port: it comes from measuring our own tree shape against Stockfish's — see §4 | 10+0.1 | **19,228** | **+4.48 ± 2.65** (LOS 99.95%, LLR 2.33) |
-| 12 | → **effort cut after alpha rises** | `AlphaDepthDecAmt` 1 → 3. Once a move has raised alpha the node holds a *real* best; the moves after it only have to beat that one, so upstream drops three plies where we dropped one | 10+0.1 | 12,022 | **+8.64 ± 3.39** (LOS 100%, **LLR 2.95 — bound crossed**) |
 
 <sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
 The audit that led to it started from a genuine defect: the third arm of the negative-extension
@@ -282,89 +279,6 @@ bucket, did not move by 0.001 in 1,100 iterations. That is the bucket where the 
 change the result, and its staying put while `B7` moved three points is the internal control saying
 the tuner was following a real gradient rather than diffusing. The gradient was simply worth little.</sub>
 
-<sub>**Stage 10 was bundled deliberately, and the arithmetic of that choice is worth stating.** Nine
-switches were written, each isolating one structural difference from Stockfish 19, each defaulting
-to the historical behaviour so the bench signature stayed byte-identical at 279,691. Seven were
-screened at 10+0.1; four came out with a positive lean and were combined. The sum of their point
-estimates was **+10.6**, and that is *not* what a bundle of them was expected to be worth: selecting
-the positive subset of a noisy group biases the estimate upward by construction, so the prediction
-written down **before** the run was +2 to +6. It measured **+5.31 ± 3.44**. The reason to bundle at
-all is volume — under `[0, 2]` a patch worth +2 needs on the order of 66,000 games to close, so four
-of them separately is about 44 hours of rig time, while four that jointly carry ~5 close in two.
-The price is attribution: the bundle does not say which of the four carries it, and one of them
-(`ProbCutTTAll`) returns *before* the null-move step the second one modifies, so they are not
-strictly independent.</sub>
-
-<sub>The screening also produced one clean negative, which is more useful than the borderline
-positives. Our transposition table stores, on a fail-low node, the best of the moves that failed —
-something Stockfish does not do. Switching that off measured **−3.90 ± 6.28** with a 47% smaller
-tree: the entry is doing real work, the current behaviour is right, and that question is now closed
-rather than open. Two more were flat and were dropped: gating null move to cut-nodes as upstream
-does (−1.64), and refusing reverse futility when the TT move is quiet (−0.65).</sub>
-
-<sub>**Stage 11 came from a measurement rather than from upstream, and its two parameters are one
-hypothesis.** Taken separately they are inert, and this is measured, not argued: with the depth cap
-at 2, lowering the margin moves the bench by 0.2%; with the margin at 2097, raising the cap changes
-**nothing at all** — the node count is identical to the byte. The reason is arithmetic. At a reduced
-depth of 3 to 6 the threshold `−2097 × depth` demands a history more negative than the two tables
-summed can physically reach, since each is bounded by ±7000. So the cap admits nodes at which the
-condition can never fire. Moved together — cap 6, margin 1200 — the tree changes by 3.9% and the
-pair measures **+4.48 ± 2.65** over 19,228 games. The methodological residue is the part worth
-keeping: **a switch that does not move the bench is not "neutral", it is not connected**, and the
-first formulation of this test was already queued for a full night that would have measured zero by
-construction. It was caught by re-running the bench-bite check after the previous bake — which is
-why that check now runs after *every* bake, not once.</sub>
-
-<sub>**Stage 12 is the only test of this campaign that crossed its bound** rather than being stopped
-by hand — LLR 2.95 against a threshold of 2.94 — and it is also the largest. It removes 44.7% of the
-bench tree, the most violent cut of the session, and it is the third result in a row pointing the
-same way: this engine was pruning too little, in exactly the region where the measurement in §4 says
-its tree is too wide.</sub>
-
-<sub>Two candidates then **died as a consequence of the bakes**, and taking them out was worth more
-than measuring them. `NMPEvalScale` moved the bench by 1.9% before stage 12 and by 0.04% after —
-63 nodes out of 149,224; the widened futility depth went from −1.2% to −0.01%. The accepted changes
-had already pruned the ground those two would have covered. A patch that does not change the tree
-cannot carry measurable Elo, so both left the queue instead of consuming two hours each. This is the
-second time in two days that re-running the bench-bite check after a bake changed what was worth
-testing — the first time it rescued stage 11 from a formulation that would have measured zero by
-construction.</sub>
-
-<sub>Three ports were **rejected on 15,000 games each**, and at a ±3 band those are verdicts rather
-than triage: the SEE gate moved onto the reduced depth (**−2.66 ± 3.00**), the fail-low node
-inheriting its parent's ttPv flag (**−2.11 ± 2.98**), and accepting a TT cutoff incoherent with the
-node type above depth 4 (**−0.16 ± 2.97**, flat). All three are upstream behaviour that does not
-transfer here.</sub>
-
-### Stages 10–12, checked together
-
-The three stages above were each decided at 10+0.1 with a 64 MB hash, and this engine has twice
-seen a sign change between that and the shipping regime — `TTTwoLevel` was worth +4.55 at the
-small hash and exactly zero at the large one. So the seven defaults they consist of were reverted
-in a single run and measured **at 25+0.25 with a 256 MB hash**, four times the hash and two and a
-half times the clock, at a mean depth of **16.8 plies** against the 13.3–13.9 the stages were
-decided at.
-
-> **−20.24 ± 8.62** over 1,598 games, LOS 0.00%, pentanomial `[5, 238, 403, 151, 2]`
-> — the engine *without* the three stages, against the engine with them.
-
-The sum of the three point estimates at 10+0.1 was +18.4. Deeper and with four times the memory
-they measure **−20.2 in ablation**, so the gains do not merely survive the regime change, they are
-marginally larger there. The run was stopped at 1,598 games because at this magnitude there is
-nothing left to resolve: the band is ±8.6 and zero sits more than two bands away.
-
-<sub>Two things this does and does not establish. It fixes the **magnitude** of the set, not the
-value of any one stage — the ablation moves all seven parameters together, so it says nothing about
-which of them carries the total, and stage 12 alone accounted for +8.64 of it at short time control.
-And it is not the 60+0.6 gate: 25+0.25 is closer to shipping than 10+0.1 but not equal to it, and
-the full ablation at 60+0.6 remains queued.</sub>
-
-<sub>One check worth recording because it costs nothing and proves something a diff cannot. With all
-seven parameters returned to their original values the bench signature is **279,691 exactly** — the
-canary from before any of this work began. The entire search change of this campaign is therefore
-those seven numbers and nothing else; the raised ply ceiling, hash limit and thread cap that landed
-in the same commits are confirmed, not merely assumed, to leave the search untouched.</sub>
-
 ---
 
 ## 3. Speed work (NPS)
@@ -492,7 +406,7 @@ helps only where the layout has no structure to begin with: `HalfKA` maps 64 con
 
 ---
 
-## 4. Search structure: measured, not assumed
+## 4. Search structure: a measurement
 
 A single number had been sitting in this project's notes since June and steering work: our
 transposition table was said to supply a move at **28%** of nodes against Stockfish's **46.5%**,
@@ -511,15 +425,17 @@ positions: 32 of them, 3 million nodes each, one thread, 256 MB.
 | 14+ | 0.3% | 82.6% | 2.8% | 54.6% |
 | **all** | | **22.4%** | | **21.4%** |
 
-**Move availability is the same — 22.4% against 21.4%, marginally in our favour.** The deficit that
-several months of work had been aimed at does not exist.
+**Move availability is the same — 22.4% against 21.4%, marginally in our favour.** The premise
+several months of work had rested on does not hold.
 
-What the same measurement *does* show is a different defect, and it is in the shape of the tree
-rather than in the table: **73.5% of our nodes live at depth 1–3 against Stockfish's 58.4%, and
-0.3% of them get past depth 14 against 2.8%.** The tree is wide at the base and short at the top.
-That is the same thing visible at fixed time — 21 plies against 27 in four seconds — seen from
-the inside. Stage 11 above is the first change taken directly from this reading, and the direction
-it points is to prune harder at low depth, not to chase entries into the table.
+What the same measurement does show is a difference in the **shape** of the tree rather than in the
+table: **73.5% of our nodes live at depth 1–3 against Stockfish's 58.4%, and 0.3% of them get past
+depth 14 against 2.8%.** The tree is wide at the base and short at the top — the same thing visible
+at fixed time, 21 plies against 27 in four seconds, seen from the inside.
+
+<sub>What to *do* about that is not settled by the histogram, and the obvious inference — prune
+harder low in the tree — is the one thing this measurement cannot license on its own. It says where
+the nodes are, not whether they are wasted. Candidates in both directions are being screened.</sub>
 
 <sub>The entry hit rate does differ sharply — 53.9% for Stockfish against our 23.4% — but that is a
 consequence of the shape rather than a cause: an engine that explores fewer, deeper nodes revisits
