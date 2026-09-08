@@ -336,11 +336,34 @@ inheriting its parent's ttPv flag (**−2.11 ± 2.98**), and accepting a TT cuto
 node type above depth 4 (**−0.16 ± 2.97**, flat). All three are upstream behaviour that does not
 transfer here.</sub>
 
-<sub>⚠️ None of stages 10 to 12 has been confirmed in the shipping regime. All were decided at
-10+0.1 with a 64 MB hash, and this engine has twice seen a sign change between that and 60+0.6 at
-256 MB — `TTTwoLevel` was worth +4.55 at the small hash and exactly zero at the large one. An
-ablation of all seven baked defaults at 60+0.6 / hash 256 is queued and is the gate that has to pass
-before either figure is treated as shipped.</sub>
+### Stages 10–12, checked together
+
+The three stages above were each decided at 10+0.1 with a 64 MB hash, and this engine has twice
+seen a sign change between that and the shipping regime — `TTTwoLevel` was worth +4.55 at the
+small hash and exactly zero at the large one. So the seven defaults they consist of were reverted
+in a single run and measured **at 25+0.25 with a 256 MB hash**, four times the hash and two and a
+half times the clock, at a mean depth of **16.8 plies** against the 13.3–13.9 the stages were
+decided at.
+
+> **−20.24 ± 8.62** over 1,598 games, LOS 0.00%, pentanomial `[5, 238, 403, 151, 2]`
+> — the engine *without* the three stages, against the engine with them.
+
+The sum of the three point estimates at 10+0.1 was +18.4. Deeper and with four times the memory
+they measure **−20.2 in ablation**, so the gains do not merely survive the regime change, they are
+marginally larger there. The run was stopped at 1,598 games because at this magnitude there is
+nothing left to resolve: the band is ±8.6 and zero sits more than two bands away.
+
+<sub>Two things this does and does not establish. It fixes the **magnitude** of the set, not the
+value of any one stage — the ablation moves all seven parameters together, so it says nothing about
+which of them carries the total, and stage 12 alone accounted for +8.64 of it at short time control.
+And it is not the 60+0.6 gate: 25+0.25 is closer to shipping than 10+0.1 but not equal to it, and
+the full ablation at 60+0.6 remains queued.</sub>
+
+<sub>One check worth recording because it costs nothing and proves something a diff cannot. With all
+seven parameters returned to their original values the bench signature is **279,691 exactly** — the
+canary from before any of this work began. The entire search change of this campaign is therefore
+those seven numbers and nothing else; the raised ply ceiling, hash limit and thread cap that landed
+in the same commits are confirmed, not merely assumed, to leave the search untouched.</sub>
 
 ---
 
