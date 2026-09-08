@@ -2250,7 +2250,15 @@ int g_rfp_ttmove_gate = 0;
 int g_corr_faillow_all = 1;
 // AlphaDepthDecAmt (SF step 22 `depth -= 3` per 3 < depth < 12): quanto ridurre la
 // depth delle mosse restanti quando una mossa alza alpha. 1 = storico.
-int g_alpha_depth_dec_amt = 1;
+// ⭐ BAKATO 08/09/2026 (run s10_alphadepthdec3): +8,64 ± 3,39 su 12.022 partite,
+// LOS 100%, LLR 2,95 — l'unico dei test di studio ad aver ATTRAVERSATO la soglia
+// 2,94 invece di essere fermato a mano. 10+0.1 hash 64.
+// Stockfish (Step 22) scende di 3 ply quando una mossa alza alpha; noi scendevamo
+// di 1. Il nodo ha gia' trovato un best "vero": le mosse restanti devono solo
+// battere quello, e non meritano lo stesso sforzo. Sul bench toglie il 44,7%
+// dell'albero, ed e' la terza leva di potatura della sessione — coerente con la
+// misura del 07/09 (73,5% dei nostri nodi a depth 1-3 contro il 58,4% di SF).
+int g_alpha_depth_dec_amt = 3;
 int g_lmr_alpha_lo = 64;  // clamp inferiore del divario (alpha-eval), in cp
 int g_lmr_alpha_hi = 96;  // clamp superiore
 // ⭐ ContHist4LMR (2026-07-20, spin, 0 = OFF byte-identico) — SEGNALE ORFANO,

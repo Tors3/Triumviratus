@@ -846,7 +846,7 @@ void uci_loop()
             printf("option name ProbCutTTAll type spin default 2 min 0 max 3\n");      // BAKE 07/09/2026 (bundle s22)
             printf("option name RFPTTMoveGate type spin default 0 min 0 max 1\n");
             printf("option name CorrFailLowAll type spin default 1 min 0 max 2\n");    // BAKE 07/09/2026 (bundle s22)
-            printf("option name AlphaDepthDecAmt type spin default 1 min 1 max 6\n");
+            printf("option name AlphaDepthDecAmt type spin default 3 min 1 max 6\n");   // BAKE 08/09/2026 (s10)
             printf("option name LmrAlphaLo type spin default 64 min 0 max 512\n");
             printf("option name LmrAlphaHi type spin default 96 min 0 max 512\n");
             printf("option name LMRFCutoff type spin default 1655 min 0 max 4000\n");

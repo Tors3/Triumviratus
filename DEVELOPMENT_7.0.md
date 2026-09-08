@@ -80,6 +80,7 @@ and reported under the table.
 | 9 | → **eval-stability window made honest** | `TMv2EvalPrevAvg=1` with `TMv2EvalWindow` 10 → 20. The counter compared the score against a moving average that had **already absorbed that same score**, so the measured difference was exactly half the real one and the parameter meant double what it said. The pair keeps the effective threshold identical — taken **on readability, not on Elo** | — | — | **no measurable change by construction** |
 | 10 | → **four Stockfish-19 structural differences, bundled** | probcut-from-TT freed from its in-check and capture-only gates; null-move verification only from depth 16 as upstream does, instead of at every depth; no internal iterative reduction at ALL nodes; correction history also learning on fail-low nodes | 10+0.1 | **11,182** | **+5.31 ± 3.44** (LOS 99.88%, LLR 1.66) |
 | 11 | → **history pruning widened** | `ContHistPruneDepth` 2 → 6 with `HistPruneMargin` 2097 → 1200. Not a port: it comes from measuring our own tree shape against Stockfish's — see §4 | 10+0.1 | **19,228** | **+4.48 ± 2.65** (LOS 99.95%, LLR 2.33) |
+| 12 | → **effort cut after alpha rises** | `AlphaDepthDecAmt` 1 → 3. Once a move has raised alpha the node holds a *real* best; the moves after it only have to beat that one, so upstream drops three plies where we dropped one | 10+0.1 | 12,022 | **+8.64 ± 3.39** (LOS 100%, **LLR 2.95 — bound crossed**) |
 
 <sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
 The audit that led to it started from a genuine defect: the third arm of the negative-extension
@@ -314,10 +315,31 @@ first formulation of this test was already queued for a full night that would ha
 construction. It was caught by re-running the bench-bite check after the previous bake — which is
 why that check now runs after *every* bake, not once.</sub>
 
-<sub>⚠️ Neither stage 10 nor stage 11 has been confirmed in the shipping regime. Both were decided at
+<sub>**Stage 12 is the only test of this campaign that crossed its bound** rather than being stopped
+by hand — LLR 2.95 against a threshold of 2.94 — and it is also the largest. It removes 44.7% of the
+bench tree, the most violent cut of the session, and it is the third result in a row pointing the
+same way: this engine was pruning too little, in exactly the region where the measurement in §4 says
+its tree is too wide.</sub>
+
+<sub>Two candidates then **died as a consequence of the bakes**, and taking them out was worth more
+than measuring them. `NMPEvalScale` moved the bench by 1.9% before stage 12 and by 0.04% after —
+63 nodes out of 149,224; the widened futility depth went from −1.2% to −0.01%. The accepted changes
+had already pruned the ground those two would have covered. A patch that does not change the tree
+cannot carry measurable Elo, so both left the queue instead of consuming two hours each. This is the
+second time in two days that re-running the bench-bite check after a bake changed what was worth
+testing — the first time it rescued stage 11 from a formulation that would have measured zero by
+construction.</sub>
+
+<sub>Three ports were **rejected on 15,000 games each**, and at a ±3 band those are verdicts rather
+than triage: the SEE gate moved onto the reduced depth (**−2.66 ± 3.00**), the fail-low node
+inheriting its parent's ttPv flag (**−2.11 ± 2.98**), and accepting a TT cutoff incoherent with the
+node type above depth 4 (**−0.16 ± 2.97**, flat). All three are upstream behaviour that does not
+transfer here.</sub>
+
+<sub>⚠️ None of stages 10 to 12 has been confirmed in the shipping regime. All were decided at
 10+0.1 with a 64 MB hash, and this engine has twice seen a sign change between that and 60+0.6 at
 256 MB — `TTTwoLevel` was worth +4.55 at the small hash and exactly zero at the large one. An
-ablation of all six baked defaults at 60+0.6 / hash 256 is queued and is the gate that has to pass
+ablation of all seven baked defaults at 60+0.6 / hash 256 is queued and is the gate that has to pass
 before either figure is treated as shipped.</sub>
 
 ---
