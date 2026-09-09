@@ -854,8 +854,11 @@ void uci_loop()
             printf("option name LMRExpect type spin default 0 min 0 max 2000\n");    // bonus riduzione ad ALL-node con cutoffCnt alto (0=off)
             // ⭐ 5.1 EVAL optimism (SF), default OFF = byte-identico
             printf("option name EvalOptimism type spin default 1 min 0 max 1\n");
-            printf("option name EvalOptStrength type spin default 170 min 0 max 600\n");
-            printf("option name EvalOptDiv type spin default 272 min 1 max 600\n");
+            // 🔴 I default DICHIARATI devono seguire il bake: un tuner che legge `uci`
+            // ripartirebbe da un theta che il motore non ha piu' (gia' successo con
+            // NMPEvalDiv, che dichiarava 100 mentre il codice era a 256).
+            printf("option name EvalOptStrength type spin default 182 min 0 max 600\n");  // [BAKE 09/09 170->182]
+            printf("option name EvalOptDiv type spin default 288 min 1 max 600\n");       // [BAKE 09/09 272->288]
             printf("option name FutilityDepth type spin default 7 min 2 max 16\n");   // gate profondita' futility (cut-SPSA): alzare = pota piu' in profondita'
             printf("option name SEEPruneDepth type spin default 3 min 1 max 18\n");   // gate profondita' SEE (cut-SPSA): alzare = pota piu' in profondita'. min 3->1 il 2026-07-10: il default era INCOLLATO al min dichiarato -> SPSA poteva solo salire (il clamp compilato e' gia' <1->1)
             printf("option name SEELmrDepth type check default false\n");            // S-05: gate/margine SEE su prune_depth (LMR-ridotta) invece che su depth piena

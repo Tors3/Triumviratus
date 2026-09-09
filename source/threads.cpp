@@ -1147,11 +1147,11 @@ int g_hist_init_capt = 249; // [0,2000]
 // Q-19 (Caissa Search.cpp:1897-1954): addenda al blocco LMRFine, in millesimi
 // di ply. (a) ply-scaled PV: riduci MENO vicino alla radice — LMRFine non ha
 // NESSUN termine di ply.
-int g_lmrf_ply = 426; // [0,2048]  (Caissa: 1024)
+int g_lmrf_ply = 524; // [0,2048]  (Caissa: 1024)
 // (b) killer/counter: Caissa le riduce ~2.6 ply in meno. Qui in millesimi,
 // additivo al
 //     `reduction--` intero di KillerLMRFix (che resta).
-int g_lmrf_killer = 764; // [0,4000]
+int g_lmrf_killer = 797; // [0,4000]
 
 // Q-18 helper: bonus piatto -> scalato sul numero di mosse cercate prima della
 // best.
@@ -2160,8 +2160,14 @@ int g_lmr_div_x100 = 447; // bigger divisor = LESS reduction [3.7 BAKE 345->310;
 // Coefficienti in 1/1024 ply, SPSA-tunabili.
 static bool g_lmr_fine = true; // 5.1 BAKE (spsa_struct iter1216, media ultimi
                                // 100 @20+0.2): ON di default
+// 🔴 08/09/2026 — vettore rimesso ai valori PRE-SPSA. Lo SPRT di validazione del
+// vettore tarato (13.192 partite, 12+0.12 hash 64) da' **-2,08 ± 3,13** per il
+// vettore nuovo: lo zero e' dentro la banda, quindi non c'e' evidenza a favore
+// del cambio, e questi otto valori sono quelli tarati storicamente.
+// Vettore SPSA rifiutato: SS=695 All=557 Cut=4629 Cutoff=1655 Improv=356
+//                         Corr=897 Ply=426 Killer=764
 int g_lmrf_cut =
-    4629; // [5.1 BAKE 3995->3184] cut-node: riduzione forte (il divario #1)
+    3687; // [5.1 BAKE 3995->3184] cut-node: riduzione forte (il divario #1)
 int g_lmrf_cut_nott =
     2397; // [5.1 BAKE 1059->2092] extra sui cut-node senza TT move
 int g_lmrf_ttcap =
@@ -2178,16 +2184,16 @@ int g_lmrf_pv = 437; // [5.1 BAKE 1017->1551] PV node: riduci MENO
 // 🔴 QUESTO CAMBIA LA FIRMA DEL BENCH: 252074 non e' piu' il canary.
 // ⚠️ Tarato E misurato entrambi a 12+0.12 hash 64. La regola di regime (§1.11) vuole la
 //    conferma a hash 256: TTTwoLevel valeva +4,55 a hash 64 e zero a 256.
-int g_lmrf_ss = 695; // [5.1 BAKE 445->923]   statScore (history continua): r -=
+int g_lmrf_ss = 664; // [5.1 BAKE 445->923]   statScore (history continua): r -=
                      // statScore*g/4096
 int g_lmrf_corr =
-    897; // [5.1 BAKE 160->478]   correctionValue (eval incerta -> riduci meno)
-int g_lmrf_all = 557;     // [5.1 BAKE 272->723]   scaling ALL-node: r +=
+    866; // [5.1 BAKE 160->478]   correctionValue (eval incerta -> riduci meno)
+int g_lmrf_all = 618;     // [5.1 BAKE 272->723]   scaling ALL-node: r +=
                           // r*g/(256*depth+285)  [ci mancava]
-int g_lmrf_improv = 356;  // [5.1 BAKE 1024->411]  non-improving
+int g_lmrf_improv = 489;  // [5.1 BAKE 1024->411]  non-improving
 int g_lmrf_evalcut = 979; // [5.1 BAKE 1024->1517] eval+margin < alpha
 int g_lmrf_cutoff =
-    1655; // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
+    1520; // [5.1 BAKE 1100->1626] figlio con cutoffCnt alto: riduci di piu'
 // ⭐ LmrAlphaGap (port SF `5f7348f0`, 19/08/2026 — "Reduce LMR less
 // aggressively in loose alpha windows"). SF: STC LLR 2.95 su 90.784 partite
 // <0.00,2.00>, LTC LLR 2.94 su 209.640 <0.50,2.50> — l'unica patch da GUADAGNO
@@ -2285,9 +2291,13 @@ int g_lmr_expect =
 extern int g_eval_optimism; // definito in nnue_bridge.cpp
 extern std::atomic<int>
     g_optimism[2]; // F-019: atomic (main scrive, helper leggono)
+// 🔴 BAKE 09/09/2026: co-tunati insieme ai sei del blend eval (nnue_bridge.cpp:176),
+// stesso vettore SPSA, stessa doppia conferma (+2,71 a 10+0.1, +3,75 a 20+0.2 hash 256).
+// Salgono ENTRAMBI, il che lascia l'optimism quasi invariato sui punteggi grandi e ne
+// cambia la forma su quelli piccoli.
 int g_opt_strength =
-    170; // [5.1 BAKE 137->89]  optimism = strength*score/(|score|+div)
-int g_opt_div = 272; // [5.1 BAKE 81->72]
+    182; // [BAKE 170->182]  optimism = strength*score/(|score|+div)
+int g_opt_div = 288; // [BAKE 272->288]
 // ContHistPruneDepth + HistPruneMargin: la coppia (6, 1200) allarga la history
 // pruning verso la forma di SF, che non ha cap di profondita'. Misurata a 10+0.1
 // su 19.241 partite: 49,36% contro 50,64%, cioe' **perde ~4,5 Elo**. I due vanno

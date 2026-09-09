@@ -78,6 +78,7 @@ and reported under the table.
 | 7 | → **rule50 formula aligned** | `Rule50Formula=1`: the pair that de-damps and re-damps the eval stored in the table inverted `v*(200-fifty)/214`, a formula from an older wrapper, while the damping actually applied is `v*(199-rule50)/199`. Taken **on correctness, not on Elo** — see below | 15+0.15 | 6,002 | **+1.04 ± 4.90** (neutral) |
 | 8 | → **negative extension on alpha** | `NegExtAlpha` 1 → 2: when the TT move does not even reach alpha the node is neither singular nor promising, so the extension shrinks further. One parameter, nothing else touched | 30+0.3 | 3,958 | **+6.50 ± 5.77** (LOS 98.64%) |
 | 9 | → **eval-stability window made honest** | `TMv2EvalPrevAvg=1` with `TMv2EvalWindow` 10 → 20. The counter compared the score against a moving average that had **already absorbed that same score**, so the measured difference was exactly half the real one and the parameter meant double what it said. The pair keeps the effective threshold identical — taken **on readability, not on Elo** | — | — | **no measurable change by construction** |
+| 10 | → **evaluation blend constants, tuned on this network** | The eight numbers that turn the network's two outputs into a score — the ratio between the psqt and positional heads, the damping applied when they disagree, how the scale grows with material, and the two that shape the optimism the search adds — were **Stockfish's**, inherited with the wrapper and never tuned for a network carrying three input blocks theirs does not have. SPSA co-tune, then confirmed in the shipping regime | 20+0.2, hash 256 | 10,000 | **+3.75 ± 3.49** (LOS 98.25%) |
 
 <sub>Stage 8 is worth recording for how it was found, because the obvious reading is the wrong one.
 The audit that led to it started from a genuine defect: the third arm of the negative-extension
@@ -114,9 +115,47 @@ tighter than the shipped one, where the high indices of `TMv2Eval[]` almost neve
 found nothing (largest per-parameter drift 1.6 σ over 1,000 iterations, and the resulting vector read
 −6.18 ± 8.29 at 60+0.6). The block is left where it was; only its units were fixed.</sub>
 
+<sub>Stage 10 is the only stage that touches the **evaluation** rather than the search, and the
+argument for looking there was structural rather than empirical. `nn_scale` takes the network's two
+raw outputs and produces the number every search margin is compared against:
+`nnue = (125·psqt + 131·positional)/128`, damped by `nnue·|psqt−positional|/18236`, then scaled by
+`(77871 + material)/77871` with the optimism term folded in through `(7191 + material)`. Those five
+numbers, and the two that shape optimism at the root, are Stockfish's, chosen for **Stockfish's
+network**. Ours is SFNNv16 plus `FullThreats`, `PawnPair` and `PassedPawns`, so there is no reason
+the relative trust between the two heads, or how much to damp them when they disagree, should be the
+same. One of the eight was deliberately **left alone**: `EvalPsqtW`. Together with `EvalPosW` it
+contains the direction "scale everything", which `EvalScale` already covers, so tuning both would
+have spent a parameter on a degeneracy — only the *ratio* was allowed to move.</sub>
+
+<sub>The measurement is in two independent reads, and the second is the one that matters. SPSA
+(mirror, 8+0.08, 1,989 iterations, 7,956 games) produced the vector; it read **+2.71 ± 3.35, LOS
+94.4% over 11,654 games** at 10+0.1 with 64 MB — but that is the *same regime the tuning ran in*,
+so it establishes only that the vector is not SPSA overfitting. The real question was whether it
+survives where the engine ships, and there were two distinct reasons to doubt it: hash, because on
+this engine `TTTwoLevel` was worth +4.55 at 64 MB and exactly zero at 256; and depth, because these
+constants change the *scale* of the evaluation while reverse futility, razoring and null-move
+compare that scale against margins which grow with depth — 11 plies at 10 seconds against 17 at 20.
+Re-measured at 20+0.2 with 256 MB the effect does not decay, it **grows**: +3.75 ± 3.49, LOS 98.25%,
+PairsRatio 1.09 over 10,000 games. Signature 252,074 → **242,956**.</sub>
+
+<sub>Two caveats, both worth stating. **No single parameter reached significance in the SPSA**: after
+1,989 iterations the largest per-parameter gradient statistic was 1.75σ (`EvalOptMatBase`, −10%),
+with `EvalMatBase` at 1.26σ (+9%) moving in the opposite direction — which is coherent, since the
+two appear as a ratio and the pair says *weigh optimism less against the evaluation* — and the
+remaining six were flat. The whole averaged vector was taken anyway, and deliberately: SPSA moves θ
+**jointly**, so the six that look flat have drifted alongside the two that move, and shipping a
+subset would break whatever joint point the tuning found. The SPRTs then measure the vector, not the
+parameters, and that is what was confirmed. **And the SPRT did not cross its bound** — LLR 1.05 of
+2.94 at the cap. With a true effect near +3 and bounds `[0, 2]` it would take roughly 40,000 games
+to, and the question the run was built to answer was not "how large" but "does it survive the shipping
+regime", which 10,000 games answer.</sub>
+
 **The whole engine, against 6.0.** Not a stage: the shipped 6.0 binary against the current 7.0
 build, each loading its own network, AVX-512, one thread, UHO_4060_v4. Measured at three time
-controls to see whether the advantage survives longer thinking:
+controls to see whether the advantage survives longer thinking.
+
+> ⚠️ These three rows **predate stage 10** and are therefore a lower bound on the shipped engine.
+> They will be re-measured against the release build.
 
 | TC | hash | s/side | **depth** | games | Elo |
 |---|---:|---:|---:|---:|---:|
@@ -186,11 +225,11 @@ structure makes the ones that decide count for a lot. It also means this pairing
 games than usual to separate anything: at a 90% draw rate, resolving 5 Elo would take tens of
 thousands of games. It is a calibration point, not a gate.
 
-> ⚠️ **The engine signature changes at every stage: `bench` goes 207,259 → 225,898 (stage 2) →
-> 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6).** The current
-> signature is **205,355**; any script or procedure still checking an earlier value is verifying
-> the wrong constant, and each of those is valid only for binaries built before the corresponding
-> bake.
+> ⚠️ **The engine signature changes at almost every stage: `bench` goes 207,259 → 225,898 (stage 2)
+> → 251,855 (stage 3) → 261,287 (stage 4) → 249,466 (stage 5) → 205,355 (stage 6) → … → 252,074
+> (through stages 7–9) → 242,956 (stage 10).** The current signature is **242,956**; any script or
+> procedure still checking an earlier value is verifying the wrong constant, and each of those is
+> valid only for binaries built before the corresponding bake.
 
 <sub>Stage 6 shrinks the tree by 17.7%, which is most of where its Elo comes from. Once the eval
 read back from the table stops contracting toward zero on every revisit, the margins that compare
@@ -278,6 +317,29 @@ intervention, not a larger version of the same one. One useful by-product: `B0`,
 bucket, did not move by 0.001 in 1,100 iterations. That is the bucket where the eval scale cannot
 change the result, and its staying put while `B7` moved three points is the internal control saying
 the tuner was following a real gradient rather than diffusing. The gradient was simply worth little.</sub>
+
+<sub>**Tested and rejected: six structural differences against Stockfish's search**, each isolated
+behind a UCI switch declared at its historical default so the shipped binary stayed byte-identical,
+each given 10,000 games at 10+0.1 with 64 MB on the clean baseline. `DoDeeper=1` **−0.14 ± 3.74**
+(LOS 47.1%) · `NegExtOrder=1` **+0.24 ± 3.62** (55.2%) · `CutNodeProp=1` **−1.21 ± 3.79** (26.5%,
+9,180 games) · `HindsightRed=true` **−1.88 ± 3.69** (16.0%) · `LMRCheckExempt=1` **−2.43 ± 3.64**
+(9.5%) · `PostLMRHist=true` **−3.61 ± 3.63** (2.5%). Six ports, roughly 59,000 games, nothing to
+take. Two of them had positive readings on *earlier* baselines — `HindsightRed` had read +2.51 ±
+4.27 and `SEELmrDepth` +2.66 — and did not survive re-measurement on a baseline that no longer
+exists; that is the ordinary fate of a lean taken on a binary that has since changed underneath it.</sub>
+
+<sub>The queue that produced those six was ordered by a measurement rather than by intuition, after
+a method error worth recording. Candidates had been dropped from it because `bench` did not move —
+but the bench is **eight positions**, and it answers two binary questions (is the change
+byte-identical, does the option actually reach the engine) and no quantitative one. Two candidates
+were reinstated once a proper sweep was written: node counts at fixed depth over 150 book positions,
+one process per (option, position) so that neither the transposition table nor history leaks between
+them, with the baseline verified deterministic (40 positions run twice, zero differences). The sweep
+separates options that genuinely move the tree — `DoDeeper` −4.44% median nodes, `HindsightRed`
+−4.28%, `NegExtOrder` −2.01% — from ones that fire almost never: `NMPEvalScale` and
+`FutilityDepth=11` were identical in 85% of positions and moved the rest by under 0.3%, so they were
+left out of the queue entirely rather than spending two hours each to measure noise. The ranking did
+not predict the Elo — nothing does — but it decided what was worth the machine time.</sub>
 
 ---
 

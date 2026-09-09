@@ -23,18 +23,31 @@ param(
   # Serve a ri-verificare una matrice esistente dopo aver toccato i CANARY invece dei
   # sorgenti: sei build PGO sono ore, i due controlli sono secondi.
   [switch]$NoBuild,
-  # Bench atteso della matrice. ARMATO a 252074 il 12/08/2026 (firma della 7.0 dopo i
-  # bake di CapturedMailbox, TTEvalNoDecay, Rule50Formula, NegExtAlpha, TMv2EvalPrevAvg,
-  # CorrTBGuard e mate-stop). Verificato identico su Windows clang-cl/PGO e su Linux
-  # clang++/ThinLTO con fancy-magics invece di PEXT: due implementazioni indipendenti
-  # degli attacchi scorrevoli che producono lo stesso albero.
+  # Bench atteso della matrice. RIARMATO a 242956 il 09/09/2026, bake del vettore
+  # blend eval (le otto costanti che trasformano le due uscite della rete in un
+  # punteggio, tarate su QUESTA rete: +3,75 ± 3,49 LOS 98,3% a 20+0.2 hash 256).
+  # Era 252074 dal 12/08 (bake di CapturedMailbox, TTEvalNoDecay, Rule50Formula,
+  # NegExtAlpha, TMv2EvalPrevAvg, CorrTBGuard e mate-stop).
+  # 🔑 Il 242956 e' stato PREVISTO prima del bake, applicando il vettore via
+  # `setoption` al binario vecchio, e la build bakata ha dato lo stesso numero: e' la
+  # prova che nel sorgente e' entrato esattamente il vettore misurato e nient'altro.
+  # Verificato su Linux clang++/ThinLTO; su Windows clang-cl/PGO deve dare lo stesso,
+  # perche' le due build hanno implementazioni diverse degli attacchi scorrevoli
+  # (PEXT contro fancy-magics) e devono comunque produrre lo stesso albero.
   # ⚠️ Se cambia il SORGENTE la firma cambia ed e' giusto che il canary si lamenti:
   #    aggiorna QUESTO numero nello stesso commit del bake, non dopo.
   # Vuoto = canary disarmato: resta solo l'invariante "tutte le varianti uguali".
-  [string]$ExpectedBench = "252074",
+  [string]$ExpectedBench = "242956",
   # Cartella di raccolta. Vuoto = _release\Triumviratus_<Version>. Serve per le build
   # datate di prova, che non devono sovrascrivere la release ufficiale.
-  [string]$RelDir = ""
+  [string]$RelDir = "",
+  # -Only avx512,avx2 : costruisce SOLO queste varianti invece della matrice intera.
+  # ⚠️ Il risultato NON e' una release: il canary "tutte le varianti hanno lo stesso
+  #    bench" perde forza a due varianti, e mancano i binari per le CPU non coperte.
+  #    Serve per il lavoro quotidiano (un binario da mandare a un tester, uno per il
+  #    gate locale), non per pubblicare. Lo script rifiuta di scrivere nella cartella
+  #    di release ufficiale quando e' parziale: usa -RelDir.
+  [string[]]$Only = @()
 )
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -69,6 +82,22 @@ $cfg = switch ($Version) {
       Variants = @("avx512","avx2")
     } }
 }
+if ($Only.Count) {
+  # Con `-File`, PowerShell passa gli argomenti come stringhe LETTERALI: `-Only avx512,avx2`
+  # arriva come UN elemento "avx512,avx2" e non come due. Si accetta comunque, perche' e' il
+  # modo naturale di scriverlo, e si separa qui.
+  $Only = @($Only | ForEach-Object { $_ -split '\s*,\s*' } | Where-Object { $_ })
+  $bad = @($Only | Where-Object { $_ -notin $cfg.Variants })
+  if ($bad.Count) {
+    throw "varianti sconosciute per la ${Version}: $($bad -join ', ')  —  disponibili: $($cfg.Variants -join ', ')"
+  }
+  $cfg.Variants = @($cfg.Variants | Where-Object { $_ -in $Only })
+  if (-not $RelDir) {
+    throw "-Only e' una matrice PARZIALE e non puo' scrivere nella cartella di release ufficiale. Passa anche -RelDir (es. -RelDir _build_parziale)."
+  }
+  Write-Host "⚠️  MATRICE PARZIALE: $($cfg.Variants -join ', ') — non e' una release" -ForegroundColor Yellow
+}
+
 $outDir = "$($cfg.SrcDir)\x64\Release"
 $rel    = if ($RelDir) { if ([System.IO.Path]::IsPathRooted($RelDir)) { $RelDir } else { "$root\$RelDir" } }
           else { "$root\_release\Triumviratus_$Version" }
@@ -81,9 +110,14 @@ if (-not $SkipWindows) {
   if ($NoBuild) {
       Write-Host "  -NoBuild: nessuna ricompilazione, si raccoglie da $outDir" -ForegroundColor Yellow
   } else {
-      $bp = @{ Arch = "all"; Release = $true; Name = "Triumviratus_$Version" }
+      $bp = @{ Release = $true; Name = "Triumviratus_$Version" }
       if ($cfg.Net) { $bp['Net'] = $cfg.Net }
-      & $cfg.Builder @bp
+      # Il builder prende UNA variante per volta; "all" e' la sua scorciatoia per la
+      # matrice intera. Con -Only lo si chiama una volta per variante.
+      if ($Only.Count) { foreach ($a in $cfg.Variants) {
+                           Write-Host "`n--- PGO $a ---" -ForegroundColor Cyan
+                           & $cfg.Builder @bp -Arch $a } }
+      else            { & $cfg.Builder @bp -Arch "all" }
   }
   foreach ($a in $cfg.Variants) {
     $src = "$outDir\Triumviratus_${Version}_$a.exe"
@@ -158,7 +192,12 @@ foreach ($a in $cfg.Variants) {
     $benches[$a] = $n
     Write-Host ("  {0,-12} {1}" -f $a, $n)
 }
-$uniq = $benches.Values | Sort-Object -Unique
+# 🔴 14/08/2026 — l'@() NON e' decorativo. Senza, quando tutte le varianti concordano
+# (cioe' nel caso di SUCCESSO) `Sort-Object -Unique` restituisce una STRINGA scalare, e
+# `$uniq[0]` ne indicizza il primo CARATTERE: "252074"[0] = "2". Il canary falliva quindi
+# proprio quando la matrice era giusta, accusando "bench 2, atteso 252074", e da disarmato
+# suggeriva di pinnare `-ExpectedBench 2`. Trovato alla PRIMA esecuzione da armato.
+$uniq = @($benches.Values | Sort-Object -Unique)
 if ($uniq.Count -gt 1) {
     throw "CANARY FALLITO: la matrice non e' node-identical ($($uniq -join ' / ')). Una variante cerca un albero diverso: NON rilasciare."
 }

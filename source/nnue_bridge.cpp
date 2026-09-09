@@ -172,14 +172,25 @@ std::atomic<int> g_optimism[2] = {0, 0};
 //    solo STIRARE l'eval in modo uniforme, queste ne cambiano la forma.
 // ⚠️ DEGENERAZIONE: `EvalPsqtW` ed `EvalPosW` insieme contengono anche la direzione
 //    "scala tutto", che e' gia' coperta da EvalScale. Nel preset se ne tara UNO SOLO.
-// ✅ Default = i valori hardcoded di prima => byte-identico.
-int g_ev_psqt_w    = 125;    // peso psqt        (/128)
-int g_ev_pos_w     = 131;    // peso positional  (/128)
-int g_ev_cplx_div  = 18236;  // smorzamento per disaccordo fra le due teste
-int g_ev_pawn_mat  = 534;    // valore del pedone nel termine material
-int g_ev_mat_base  = 77871;  // base materiale della scala nnue
-int g_ev_opt_cplx  = 476;    // blend optimism <-> complessita'
-int g_ev_opt_base  = 7191;   // base materiale del termine optimism
+// 🔴 BAKE 09/09/2026 — co-tune SPSA di questi sei (+ EvalOptStrength/EvalOptDiv in
+// threads.cpp), 1.989 iterazioni mirror a 8+0.08. Non sono piu' i numeri di Stockfish:
+// sono i primi tarati su QUESTA rete. Due letture indipendenti, in regimi diversi:
+//     10+0.1  hash  64   +2,71 ± 3,35   LOS 94,4%   11.654 partite  (s28)
+//     20+0.2  hash 256   +3,75 ± 3,49   LOS 98,3%   10.000 partite  (s30)
+// 🔑 La seconda e' quella che conta: e' il regime di SPEDIZIONE, e l'effetto CRESCE
+//    invece di svanire. Era il rischio vero — TTTwoLevel valeva +4,55 a hash 64 e
+//    zero a 256 — ed e' stato misurato, non assunto.
+// 📌 `g_ev_psqt_w` resta 125: NON e' stato tarato di proposito. Insieme a `g_ev_pos_w`
+//    contiene la direzione "scala tutto", gia' coperta da EvalScale; tararli entrambi
+//    avrebbe sprecato un parametro su una degenerazione. Si e' mosso solo il RAPPORTO.
+// Canary: 252074 -> 242956.
+int g_ev_psqt_w    = 125;    // peso psqt        (/128)  — non tarato (degenere con pos_w)
+int g_ev_pos_w     = 126;    // peso positional  (/128)  [BAKE 131->126]
+int g_ev_cplx_div  = 19139;  // smorzamento per disaccordo fra le due teste [BAKE 18236->19139]
+int g_ev_pawn_mat  = 551;    // valore del pedone nel termine material      [BAKE 534->551]
+int g_ev_mat_base  = 84768;  // base materiale della scala nnue             [BAKE 77871->84768]
+int g_ev_opt_cplx  = 461;    // blend optimism <-> complessita'             [BAKE 476->461]
+int g_ev_opt_base  = 6456;   // base materiale del termine optimism         [BAKE 7191->6456]
 
 // ⭐ EvalOptSimple — port di SF de948f0f "Simplify optimism scaling formula" (10/08/2026).
 // SF ha tolto la dipendenza dal MATERIALE al termine optimism, rendendolo una costante,

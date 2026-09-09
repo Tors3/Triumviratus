@@ -40,6 +40,10 @@ CXX="${RELCXX:-clang++}"
 PGO_POS="${PGO_POS:-200}"
 PGO_WORKERS="${PGO_WORKERS:-$(nproc)}"
 OBJDUMP="${OBJDUMP:-llvm-objdump}"
+# 🔴 Canary ARMATO di default dal 09/09/2026, come il gemello Windows: prima era
+# disarmato se non si passava CANARY=..., e un canary che va ricordato a mano non e'
+# un canary. 242956 = bake del vettore blend eval. Disarmarlo: CANARY= ./build...
+CANARY="${CANARY-242956}"
 
 RELEASE=0
 VARIANTS=()
