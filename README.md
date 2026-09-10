@@ -73,6 +73,19 @@ UHO 2024 (+0.85/+0.94), LOS 100% at both points, depths measured from the PGNs. 
 measurements, speed work and training: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md)** ·
 **[`NETWORKS.md`](NETWORKS.md)**.</sub>
 
+#### Against other engines
+
+| Opponent | TC | Games | Elo |
+|---|---|---:|---:|
+| Stormphrax 8.0.0 | 25+0.25 | 1,000 | +50.03 ± 11.93 |
+| Hobbes 3.0 | 25+0.25 | 1,000 | +47.19 ± 12.19 |
+| Hobbes 3.0 | 15+0.15 | 1,972 | +50.93 ± 8.99 |
+| Cinder 0.6.1 | 25+0.25 | 1,000 | −9.73 ± 11.42 |
+
+<sub>Release binaries, 1 thread, 128 MB, UHO 2024 (+0.85/+0.94), the same instruction set on both
+sides. One thread and an unbalanced book widen the gaps compared with a rating list: on CCRL 40/15
+these engines and 6.0 are within a few Elo of each other.</sub>
+
 ---
 
 ## Triumviratus 6.0 — previous release

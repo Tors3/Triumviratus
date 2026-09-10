@@ -106,6 +106,23 @@ is no significant change with depth. Depths are measured from the PGNs, not infe
 control. The 5+0.05 row pools two runs of the same binary, 3,000 and 6,000 games (+30.19 ± 7.35 and
 +22.67 ± 5.25, compatible); each run draws its openings at random, so the two are independent.
 
+**Against other engines.** The same release binaries, one thread, 128 MB, UHO 2024 (+0.85/+0.94),
+each engine on its own build for the same instruction set: AVX-512 against Hobbes, AVX2 against
+Stormphrax and Cinder, whose AVX-512 builds need instructions the test machine lacks (VNNI, and for
+Cinder the Ice Lake extensions as well).
+
+| opponent | TC | games | score | Elo |
+|---|---|---:|---:|---:|
+| Stormphrax 8.0.0 | 25+0.25 | 1,000 | 57.15% | **+50.03 ± 11.93** |
+| Hobbes 3.0 | 25+0.25 | 1,000 | 56.75% | **+47.19 ± 12.19** |
+| Hobbes 3.0 | 15+0.15 | 1,972 | 57.28% | **+50.93 ± 8.99** |
+| Cinder 0.6.1 | 25+0.25 | 1,000 | 48.60% | **−9.73 ± 11.42** |
+
+The Hobbes run at 15+0.15 was stopped at 2,000 games, of which 1,972 form complete pairs. On CCRL
+40/15, at four threads, these three engines and 6.0 sit within four Elo of each other; at one thread
+and on an unbalanced book the spread is far wider, so the table compares the engines under these
+conditions and does not predict a rating.
+
 > ⚠️ The current engine signature is **`bench` 240,503**. It moved from 242,956 when continuation
 > history at plies 2 and 4 was switched off: an SPRT over 36,620 games found it worth nothing
 > (+0.76 ± 1.89 for removing it), and removing it drops two tables and two random reads per scored
