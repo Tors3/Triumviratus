@@ -1242,7 +1242,9 @@ int g_capfut_depth =
 // fu tarato a EvalScale=56; a 60 il fattore giusto e' ~3.2. Legandolo a
 // nn_get_eval_scale() il ponte non si ri-scalibra al prossimo bake di
 // EvalScale. Default 392 = NORM_CP (la costante con cui threads.cpp:~5051
-// converte score->cp mostrati): e' la stima onesta, non un numero inventato. E'
+// converte score->cp mostrati): e' la stima onesta, non un numero inventato.
+// (NORM_CP era 392 con la rete della 5.1; dal 10/09/2026 il DISPLAY usa 449 per
+// legio-septima. Questo e' un parametro di RICERCA e non cambia con quello.) E'
 // spin perche' l'SPSA lo assesti nel blocco CapFut*.
 int g_capfut_vic_scale = 582; // CapFutVicScale, /10000 insieme a EvalScale
 // --- Other missing SF-master cut features (ported 2026-06-23, ALL default
@@ -2433,8 +2435,9 @@ static bool g_tt_prefetch = true;
 static bool g_goodcap_ttquiet = false;
 // UCI_ShowWDL (analisi): quando ON, le info-line riportano " wdl W D L"
 // (permille, stm-relative, somma 1000) accanto allo score. Modello logistico a
-// un parametro ancorato all'UNICO punto di calibrazione noto (NORM_CP=392
-// intrinseco = +100cp normalizzato = P(win)~50%, misurato su 191k posizioni).
+// un parametro ancorato al punto di calibrazione (NORM_CP=449 intrinseco = +100cp
+// normalizzato = P(win)~50%, rifatto il 10/09/2026 su 10,7M posizioni della 7.0;
+// era 392, misurato sulla rete della 5.1).
 // Larghezza b=100 -> patta ~46% a posizione pari (coerente col draw-ratio
 // osservato ~49%). Default OFF = output storico invariato. Stima onesta, non un
 // fit materiale-dipendente alla SF.
@@ -10267,7 +10270,7 @@ static void print_search_info(ThreadData &td, int depth, int score,
       int es = nn_get_eval_scale();
       double cpn = (es == 100) ? (double)score : (double)score * 100.0 / es;
       cpn = cpn * 100.0 /
-            392.0; // stessa normalizzazione del display cp (NORM_CP)
+            449.0; // stessa normalizzazione del display cp (NORM_CP, ricalibrato 10/09/2026)
       const double b = 100.0;
       double w = 1.0 / (1.0 + exp(-(cpn - 100.0) / b));
       double l = 1.0 / (1.0 + exp(-(-cpn - 100.0) / b));
@@ -10317,10 +10320,15 @@ static void print_search_info(ThreadData &td, int depth, int score,
     // [5.1 release 2026-07-03] Normalizzazione WDL del DISPLAY (SF
     // NormalizeToPawnValue-style): la scala intrinseca di rubicon-alea e' ~4x
     // gonfiata rispetto alla convenzione "100cp = 50% probabilita' di
-    // vittoria". NORM_CP misurato empiricamente con fit logistico su 191.514
-    // posizioni (1953 partite 5.1, TC 6-60s): P(win)=50% a +392 displayed
-    // (win% 51.3 nel bucket 342-442). SOLO display: search/TM/TT intatti.
-    constexpr int NORM_CP = 392;
+    // vittoria". SOLO display: search/TM/TT intatti.
+    // 🔴 RICALIBRATO il 10/09/2026 per legio-septima: 392 -> 449. Il 392 veniva da un
+    // fit su 191.514 posizioni di partite della 5.1, cioe' della rete rubicon-alea; la
+    // 7.0 ha un'altra rete e le costanti della miscela ritarate. Rifatto il fit su
+    // 84.660 partite 7.0 contro 7.0 (10,7 milioni di posizioni, profondita' >= 10):
+    // P(win)=50% a +118 cp mostrati e P(loss)=50% a -111, media simmetrica 115,
+    // quindi 392 x 115/100 = 449. Stabile col time control: 452 a 10+0.1, 447 a 20+0.2,
+    // 444 a 25+0.25. Lo zero era gia' centrato (fra -10 e +30 cp patte al 94-98%).
+    constexpr int NORM_CP = 449;
     cp = (int)((long long)cp * 100 / NORM_CP);
     printf("info depth %d seldepth %d%s score cp %d%s nodes %llu nps %llu time "
            "%d tbhits %llu%s pv ",

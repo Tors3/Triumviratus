@@ -238,3 +238,10 @@ Four constants, none of which changes the search: the bench signature is unaffec
   straight from a null pointer into `memset`. It now falls back from large pages to the heap and
   then to 64 MB, and the reported line says what was actually allocated rather than what was asked
   for.
+- **Displayed score recalibrated for this network.** The constant that maps the internal score to
+  `score cp` had been fitted on the 5.1 network, and on 7.0 it overstated every score by about 15%:
+  a displayed +1.15 was the point of a 50% win probability, where the convention Stockfish follows
+  puts it at +1.00. Refitted on 84,660 games of 7.0 against itself — 10.7 million positions — it
+  goes from 392 to **449**, and the value holds across time controls (452 at 10+0.1, 447 at 20+0.2,
+  444 at 25+0.25). Display only: the search, the tree and the bench signature are unchanged. Drawn
+  positions already read zero.
