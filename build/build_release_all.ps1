@@ -160,6 +160,10 @@ if (-not $SkipAndroid) {
 
 # --- 3. Licenza GPLv3 (motore Stockfish-derived) + checksum -> OBBLIGO GPL ---
 $copying = "$($cfg.SrcDir)\COPYING"
+# Nel clone del repo pubblico COPYING sta alla RADICE, non accanto ai sorgenti: il
+# bootstrap copia solo source\ in Triumviratus_7\. Senza questo ripiego la release
+# usciva col solo avviso "COPYING MANCA", cioe' senza licenza.
+if (-not (Test-Path $copying)) { $copying = "$root\COPYING" }
 if (Test-Path $copying) { Copy-Item $copying "$rel\COPYING" -Force; Write-Host "  COPYING (GPLv3) raccolto" -ForegroundColor Green }
 else { Write-Warning "COPYING (GPLv3) MANCA in $($cfg.SrcDir) - la release NON puo' uscire senza licenza" }
 # NB: line-ending LF, non CRLF. Le release notes dicono di verificare con `sha256sum -c` su

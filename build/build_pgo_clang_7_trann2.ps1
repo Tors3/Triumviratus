@@ -289,7 +289,11 @@ $variants = switch ($Arch) {
     # (vedi Build-Variant) e una sola build copre AMD e Intel. `avx512-intel` resta
     # costruibile a mano ma sarebbe identica ad `avx512`: fuori dalla matrice.
     # Lo split resta invece necessario su AVX2: +2,3% su AMD, -1,17% su Intel.
-    "all"  { @("avx512icl","avx512","avx2","avx2-intel","avx2-nopext") }
+    # 🔴 10/09/2026: qui mancava "vnni512", da quando la matrice ha preso l'asse del
+    # vendor (28547c4). L'intestazione ne dichiarava sei, build_release_all.ps1 se ne
+    # aspetta sei, e il builder ne costruiva cinque: il canary se n'e' accorto solo
+    # alla fine, dopo ore, con "manca la variante vnni512".
+    "all"  { @("avx512icl","vnni512","avx512","avx2","avx2-intel","avx2-nopext") }
     default { @($Arch) }
 }
 foreach ($v in $variants) { Build-Variant $v }
