@@ -94,6 +94,18 @@ inline int unpack_ext_eval(U64 ext, U64 hash_key) {
 // Global TT
 extern tt_entry* hash_table;
 extern U64 hash_entries;
+// Vero quando hash_entries e' una potenza di due: allora l'indice di bucket si
+// ricava con un AND invece che con un `%`, dando lo STESSO indice.
+// ⚠️ IN PRATICA NON SI ATTIVA MAI, e il commento precedente diceva il contrario.
+// hash_entries = byte / sizeof(tt_entry) con sizeof(tt_entry) = 24: 24 non divide
+// una potenza di due in una potenza di due, quindi a NESSUNA taglia realistica il
+// conto torna. A 256 MB le entry sono 11.184.808. Verificato su 16, 64, 128, 256,
+// 512 e 1024 MB: mai. Il ramo resta perche' e' corretto e si accenderebbe da solo
+// se un giorno la entry diventasse di 16 o 32 byte, ma NON crederci come
+// ottimizzazione viva: oggi si passa sempre dal modulo.
+// Il tentativo di togliere quella divisione con un reciproco esatto e' documentato
+// piu' sotto, sopra tt_base_index: misurato NEUTRO e rimosso.
+extern bool g_tt_pow2;
 extern int current_age;
 
 // 4-way set-associative TT on/off (UCI option "TT4Way"). Default off reproduces
@@ -209,6 +221,10 @@ inline void init_hash_table(int mb) {
     // stato allocato DAVVERO. Dopo un ripiego diceva "4096 MB, large pages ON" mentre
     // la tabella era di 64 MB su heap: la sola diagnostica che l'utente vede mentiva
     // proprio nel caso in cui serve.
+    // Unico punto in cui si fissa il flag: e' dopo TUTTE le riassegnazioni di
+    // hash_entries (allocazione normale e ripiego a 64 MB), quindi non puo'
+    // restare indietro rispetto alla tabella viva.
+    g_tt_pow2 = hash_entries != 0 && (hash_entries & (hash_entries - 1)) == 0;
     const int actual_mb = (int)(hash_entries * sizeof(tt_entry) / (1024 * 1024));
     const char* lp = !g_large_pages          ? "off (disabled)"
                    : tt_on_large_pages       ? "ON"
@@ -267,17 +283,39 @@ inline int tt_ways() { return g_tt_twolevel ? 2 : (g_tt_4way ? 4 : 1); }
 // First slot index of the bucket for this key. For 4-way, there are
 // (hash_entries/4) buckets, each 4 slots wide; hash_entries is always a multiple
 // of 4 (= mb * 65536), so base + 3 stays in bounds.
+// (MODULO SENZA DIVISIONE via reciproco esatto: provato e RIMOSSO il 10/09/2026.
+//  Le entry sono da 24 byte, quindi il numero di entry non e' MAI una potenza di
+//  due - 256 MB danno 11.184.808 - e la scorciatoia con la maschera qui sotto non
+//  si attiva a nessuna dimensione di hash. Restava una `divq` da 36-95 cicli
+//  davanti al caricamento della entry.
+//  Sostituita con q = floor(key*floor(2^64/d) / 2^64) piu' UNA sottrazione
+//  condizionata: esatta, verificata su 20 milioni di casi contro % e identica su
+//  otto dimensioni di hash (16, 32, 64, 128, 256, 384, 512, 1024 MB), firma bench
+//  compresa. Il divisore e' sceso da 37,2 a 13,7 cicli/nodo.
+//  RISULTATO: NEUTRO. A thread singolo 5.633,3 +- 24,3 cicli/nodo contro 5.651,1
+//  +- 24,0. E anche con DUE processi sullo stesso core fisico, che e' il regime dei
+//  match a concorrenza alta dove il divisore non pipelinato e' condiviso fra i
+//  thread fratelli: 590.729 +- 6.759 nps combinati contro 594.005 +- 4.477.
+//  🔑 La trappola da non ripetere: una build DIAGNOSTICA che sostituiva il modulo
+//  con una maschera sbagliata dava +2,5% di nps, e quel numero era falso. Cambiando
+//  l'indice cambia l'albero, quindi cambia il MISTO di nodi, e i cicli per nodo non
+//  sono piu' confrontabili. Una build che altera il comportamento non puo' misurare
+//  una differenza di velocita': serve la versione a comportamento identico.)
 inline U64 tt_base_index(U64 key) {
+    // hash_entries potenza di due -> lo sono anche entries/2 ed entries/4, e per
+    // un divisore potenza di due `key % b` e' per definizione `key & (b - 1)`:
+    // stesso indice, stessa partita, senza passare dal divisore.
     if (g_tt_twolevel) {
         U64 buckets = hash_entries >> 1;     // entries/2 bucket da 2 slot (entries multiplo di 4 -> base+1 in bounds)
         if (buckets == 0) buckets = 1;
-        return (key % buckets) << 1;
+        return (g_tt_pow2 ? (key & (buckets - 1)) : (key % buckets)) << 1;
     }
     if (g_tt_4way) {
         U64 buckets = hash_entries >> 2;
         if (buckets == 0) buckets = 1;
-        return (key % buckets) << 2;
+        return (g_tt_pow2 ? (key & (buckets - 1)) : (key % buckets)) << 2;
     }
+    if (g_tt_pow2) return key & (hash_entries - 1);
     return key % hash_entries;
 }
 

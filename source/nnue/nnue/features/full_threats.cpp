@@ -329,7 +329,10 @@ void FullThreats::append_changed_indices(Color                   perspective,
         // sentinella FeatRows, che `push_back_if_lt` scarta esattamente come prima.
         const IndexType index = feat_row(make_index(perspective, attacker, from, to, attacked, ksq));
 
-#ifdef TRIUMV_PROFILE
+// 🔴 Sotto PROFILE_LIGHT questi contatori spariscono: stanno DENTRO il ciclo degli
+// indici, il punto piu' caldo dell'update, e con loro attivi la misura della fase
+// includeva l'instrumentazione. Stessa trappola degli istogrammi (nnue_accumulator.cpp).
+#if defined(TRIUMV_PROFILE) && !defined(TRIUMV_PROFILE_LIGHT)
         // Quante tuple vengono generate e poi BUTTATE (map < 0 => riga == FeatRows).
         // Il prefetch qui sotto parte comunque: in regime memory-bound e' traffico sprecato.
         prof_n_thr_seen++;

@@ -42,8 +42,8 @@ PGO_WORKERS="${PGO_WORKERS:-$(nproc)}"
 OBJDUMP="${OBJDUMP:-llvm-objdump}"
 # 🔴 Canary ARMATO di default dal 09/09/2026, come il gemello Windows: prima era
 # disarmato se non si passava CANARY=..., e un canary che va ricordato a mano non e'
-# un canary. 242956 = bake del vettore blend eval. Disarmarlo: CANARY= ./build...
-CANARY="${CANARY-242956}"
+# un canary. 240503 = bake di ContHistMulti spento (10/09); era 242956, vettore blend eval. Disarmarlo: CANARY= ./build...
+CANARY="${CANARY-240503}"
 
 RELEASE=0
 VARIANTS=()
@@ -104,6 +104,54 @@ mkdir -p "$OUT"
 cd "$SRC"
 [ -f nn-legio-septima.nnue ] || echo "[!] nn-legio-septima.nnue assente alla build-root: la rete NON sara' embeddata"
 
+# --- FLAG PROVATE E SCARTATE ------------------------------------------------
+# -mbranches-within-32B-boundaries (provata il 09/09/2026, NON adottata).
+# Su Skylake (questo rig e' modello 85) l'erratum JCC ha una mitigazione a
+# microcodice che ESCLUDE dalla cache di micro-operazioni i salti a cavallo di un
+# confine di 32 byte. Si vedeva: la copertura DSB era 22,3%, bassissima. La flag
+# fa esattamente il suo mestiere e la porta a 31,4%, con 600 micro-operazioni per
+# nodo in meno a carico del decoder.
+# 🔑 E non cambia NULLA: 5.673,3 +- 27,0 cicli/nodo contro 5.666,6 +- 28,6, su 16
+# coppie alternate. Il meccanismo era reale e il collo di bottiglia era altrove -
+# il top-down dice backend 37,4% contro frontend 18,6%, cioe' la macchina aspetta
+# la memoria, e consegnarle le istruzioni piu' in fretta non la fa aspettare meno.
+# Vale come misura NEGATIVA da non ripetere: chi vedra' quel 22% di copertura
+# pensera' che sia un difetto da correggere, e non lo e'.
+
+# --- LA CPU DI QUESTA MACCHINA REGGE LA VARIANTE? ---------------------------
+# 🔴 Lezione del 09/09/2026. `--release all` e' morto sulla vnni512 con un traceback
+# Python di pgo_train.py ("motore terminato inaspettatamente"), cinque minuti dopo
+# l'avvio e senza una parola sulla causa vera: il PGO deve ESEGUIRE il binario che
+# sta addestrando, e su questo rig (Xeon Gold 6138 = Skylake-SP, AVX-512 SENZA VNNI)
+# il binario vnni512 muore di istruzione illegale al primo `vpdpbusd`. Il canary ISA
+# non poteva vederlo: gira DOPO la build, e la build non ci arriva mai.
+# 🔑 Un target che la macchina di build non sa eseguire non e' costruibile con PGO,
+# punto. vnni512 e avx512icl vanno costruite su una macchina che ha quelle istruzioni
+# (il portatile: vedi bootstrap_release_laptop.ps1).
+needed_isa_for() {
+  case "$1" in
+    vnni512)     echo 'avx512_vnni' ;;
+    avx512icl)   echo 'avx512_vnni avx512_vbmi avx512_bitalg avx512_vpopcntdq' ;;
+    avx512)      echo 'avx512f avx512bw avx512dq avx512vl' ;;
+    avx2|avx2-intel) echo 'avx2 bmi2' ;;
+    avx2-nopext) echo 'avx2' ;;
+    *) echo '' ;;
+  esac
+}
+CPUFLAGS=" $(grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2-) "
+for v in "${VARIANTS[@]}"; do
+  for f in $(needed_isa_for "$v"); do
+    case "$CPUFLAGS" in
+      *" $f "*) ;;
+      *) echo "[!] variante '$v': questa CPU non ha '$f'." >&2
+         echo "    Il PGO esegue il binario che addestra, quindi qui morirebbe di" >&2
+         echo "    istruzione illegale a meta' addestramento. Costruiscila su una" >&2
+         echo "    macchina che ha quell'istruzione (vedi bootstrap_release_laptop.ps1)." >&2
+         exit 1 ;;
+    esac
+  done
+done
+
 RELGOAL=""; SUFFIX=""
 if [ $RELEASE -eq 1 ]; then RELGOAL="RELGOAL=release"; SUFFIX="_release"; fi
 
@@ -118,7 +166,11 @@ for v in "${VARIANTS[@]}"; do
   # non riconosce nemmeno.
   make clean >/dev/null
   # shellcheck disable=SC2086
+  # EXTRACXXFLAGS: define extra per una misura A/B (es. -DTRIUMV_FROZEN da solo).
+  # Passato sulla riga di comando di make, quindi make lo propaga da se' ai
+  # sub-make delle fasi PGO via MAKEFLAGS: non serve un export come in Stockfish.
   make $ARGS $RELGOAL CXX="$CXX" BOOK="$BOOK" PGO_POS="$PGO_POS" PGO_WORKERS="$PGO_WORKERS" \
+    EXTRACXXFLAGS="${EXTRACXXFLAGS:-}" \
     > "$OUT/build_$v.log" 2>&1 || { echo "[!] build fallita, vedi $OUT/build_$v.log"; tail -20 "$OUT/build_$v.log"; exit 1; }
   BIN="$OUT/triumviratus_linux_${v}${SUFFIX}"
   mv -f triumviratus "$BIN"

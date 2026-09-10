@@ -6,6 +6,8 @@
 #include "search.h"
 #include <thread>
 #include <vector>
+#include <new>
+#include <cstddef>
 #include <atomic>
 #include <mutex>
 
@@ -305,6 +307,19 @@ struct ThreadData {
 
 };
 
+// (ThreadData su pagine grandi: provato e RIMOSSO il 09/09/2026.
+//  sizeof(ThreadData) e' 21,31 MB, quasi tutto tabelle di storia, e Stockfish il
+//  suo Worker lo mette su pagine grandi. Sembrava spiegare i nostri 0,46 mancati
+//  accessi alla TLB dati per nodo contro i loro 0,012.
+//  🔑 Due misure hanno chiuso la questione. Primo: il binario attuale ha GIA' 393
+//  MB su pagine enormi contro i 397 della versione modificata, perche' su questa
+//  macchina le pagine trasparenti sono su "always" e il kernel le assegna gia' al
+//  primo accesso, senza aspettare khugepaged. Secondo, e decisivo: l'intera
+//  ricerca fa circa 138.000 mancati accessi alla TLB, cioe' 0,07 per nodo, che a
+//  ~30 cicli l'uno valgono DUE cicli per nodo su un divario di 958. Il rapporto
+//  38x con Stockfish e' vero e irrilevante: era una percentuale grande di un
+//  numero minuscolo.)
+
 // Global thread management
 extern std::vector<std::thread> search_threads;
 extern std::vector<ThreadData> thread_data;
@@ -428,6 +443,7 @@ extern void set_corr_hist(bool enabled);
 // Multi-table correction history on/off (UCI option "CorrHistMulti") — adds minor
 // (N/B) and major (R/Q) material-keyed correction tables. Default off.
 extern void set_corr_multi(bool enabled);
+extern void set_corr_major(bool enabled);   // CorrHistMajor, vedi threads.cpp
 
 // Continuation correction history on/off (UCI option "CorrHistCont") — corrects the
 // static eval by the learned gap keyed by the last two moves into the node. Default off.

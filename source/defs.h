@@ -7,6 +7,7 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <intrin.h>   // __popcnt64 / _BitScanForward64 per gli helper inline qui sotto
 #endif
 #include <unordered_map>
 #include <vector>
@@ -126,8 +127,28 @@ extern int g_mate_in;            // "go mate N": stop al matto in <= N mosse (0 
 // see.cpp, che toglie `from`/`captured_sq`/`to` — serve pop_bit e questa macro sarebbe
 // SILENZIOSAMENTE SBAGLIATA.
 #define pop_lsb_bb(bitboard) ((bitboard) &= (bitboard) - 1)
-extern int count_bits(U64 bitboard);
-extern int get_ls1b_index(U64 bitboard);
+// 🔴 INLINE, non extern (09/09/2026). Erano funzioni fuori linea in misc.cpp: nel binario
+// PGO+ThinLTO restavano 31 `call get_ls1b_index` e 4 `call count_bits`, e il profilo -pg
+// contava ~120 bit-scan per nodo. Un tzcnt costa 1 ciclo, una chiamata ~10 e spezza le
+// catene di dipendenza nei loop `while (bb)`. Stockfish le ha inline da sempre.
+// Semantica IDENTICA (ls1b di 0 = -1): node-identical per costruzione.
+static inline int count_bits(U64 bitboard) {
+#ifdef _WIN32
+    return (int)__popcnt64(bitboard);
+#else
+    return __builtin_popcountll(bitboard);
+#endif
+}
+static inline int get_ls1b_index(U64 bitboard) {
+    if (!bitboard) return -1;
+#ifdef _WIN32
+    unsigned long index;
+    _BitScanForward64(&index, bitboard);
+    return static_cast<int>(index);
+#else
+    return __builtin_ctzll(bitboard);
+#endif
+}
 
 // Variables for Zobrist hashing
 extern U64 piece_keys[12][64];
@@ -146,5 +167,8 @@ typedef struct {
 
 // Initialization function
 extern void init_bitboards();
+
+
+#include "frozen.h"   // decide TRIUMV_FROZEN (vedi la nota li' dentro)
 
 #endif

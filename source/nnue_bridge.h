@@ -77,6 +77,9 @@ int         nn_eval_const_get(int i);
 int         nn_eval_const_lo(int i);
 int         nn_eval_const_hi(int i);
 int         nn_set_eval_const(const char* name, int value);   // 1 se il nome esiste
+#ifdef TRIUMV_FROZEN
+void        nn_frozen_check(void);   // vedi COSTANTI DELLA MISCELA CONGELATE
+#endif
 int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
 int  nn_last_opt_base(void);    // EvalCacheOptSplit: eval con optimism=0 (pre-rule50, post-scale)
 int  nn_last_opt_coeff(void);   // EvalCacheOptSplit: coefficiente in MILLESIMI dell'optimism

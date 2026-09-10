@@ -23,7 +23,8 @@ param(
   # Serve a ri-verificare una matrice esistente dopo aver toccato i CANARY invece dei
   # sorgenti: sei build PGO sono ore, i due controlli sono secondi.
   [switch]$NoBuild,
-  # Bench atteso della matrice. RIARMATO a 242956 il 09/09/2026, bake del vettore
+  # Bench atteso della matrice: 240503 dal 10/09/2026, bake di ContHistMulti spento
+  # (SPRT [-3,1] H1 su 36.620 partite). Prima 242956 dal 09/09/2026, bake del vettore
   # blend eval (le otto costanti che trasformano le due uscite della rete in un
   # punteggio, tarate su QUESTA rete: +3,75 ± 3,49 LOS 98,3% a 20+0.2 hash 256).
   # Era 252074 dal 12/08 (bake di CapturedMailbox, TTEvalNoDecay, Rule50Formula,
@@ -37,7 +38,7 @@ param(
   # ⚠️ Se cambia il SORGENTE la firma cambia ed e' giusto che il canary si lamenti:
   #    aggiorna QUESTO numero nello stesso commit del bake, non dopo.
   # Vuoto = canary disarmato: resta solo l'invariante "tutte le varianti uguali".
-  [string]$ExpectedBench = "242956",
+  [string]$ExpectedBench = "240503",
   # Cartella di raccolta. Vuoto = _release\Triumviratus_<Version>. Serve per le build
   # datate di prova, che non devono sovrascrivere la release ufficiale.
   [string]$RelDir = "",

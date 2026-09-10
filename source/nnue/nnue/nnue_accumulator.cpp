@@ -597,8 +597,13 @@ void update_accumulator_incremental(Color                     perspective,
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
         prefetch_psq_rows(featureTransformer, psqRemoved, psqAdded);
 #endif
+        { PROF_GUARD(prof_idx_thr);
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrRemoved,
-                                                 thrAdded, pfBase, pfStride);
+                                                 thrAdded, pfBase, pfStride); }
+#ifdef TRIUMV_PROFILE
+        prof_cols_thr_inc += thrRemoved.size() + thrAdded.size();
+        const usize profThrBeforePawn = thrRemoved.size() + thrAdded.size();
+#endif
         // TRANN1: gli indici PawnPair/PassedPawns (folded, gia' offsettati)
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
 // ⛔ TRIUMV_PF_SMALL — MISURATO E RIGETTATO il 06/09/2026 (prima non aveva misura).
@@ -620,8 +625,13 @@ void update_accumulator_incremental(Color                     perspective,
 #ifdef TRIUMV_PF_SMALL
         const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
 #endif
+        { PROF_GUARD(prof_idx_pawn);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
-        PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
+        PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded); }
+#ifdef TRIUMV_PROFILE
+        prof_cols_pawn_inc += thrRemoved.size() + thrAdded.size() - profThrBeforePawn;
+        prof_cols_psq_inc  += psqRemoved.size() + psqAdded.size();
+#endif
 #ifdef TRIUMV_PF_SMALL
         prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
         prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
@@ -668,6 +678,11 @@ void update_accumulator_incremental(Color                     perspective,
     // sono tante": il costo dell'incrementale e' (colonne) x (L1) e nient'altro.
     prof_n_cols += psqAdded.size() + psqRemoved.size() + thrAdded.size() + thrRemoved.size();
     prof_n_upd++;
+    // 🔴 TRIUMV_PROFILE_LIGHT: SOLO contatori e rdtsc. Gli istogrammi per riga (700 KB) e la
+    // matrice di co-occorrenza (134 MB) toccati QUI, dentro l'update, inquinano le cache e
+    // gonfiano i cicli per update: il 09/09 misuravano 3.271 cicli contro i 571 di SF, e
+    // meta' di quel divario era l'instrumentazione stessa. Con la luce si misura il motore.
+#ifndef TRIUMV_PROFILE_LIGHT
     // Istogramma degli accessi per riga di `threatWeights` (threat+PawnPair+Passed
     // folded). E' la tabella candidata alla permutazione per localita'.
     for (int i = 0; i < thrAdded.ssize(); ++i)
@@ -706,6 +721,7 @@ void update_accumulator_incremental(Color                     perspective,
                 if (y < 65535) y++;
             }
     }
+#endif
     if ((unsigned long long) thrAdded.size() > prof_max_inc)
         prof_max_inc = thrAdded.size();
     if ((unsigned long long) thrRemoved.size() > prof_max_inc)
@@ -1240,7 +1256,9 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     PawnRefreshEntry& pe = pawnCache[(unsigned(wpBB ^ bpBB) ^ unsigned((wpBB ^ bpBB) >> 29)
                                       ^ unsigned(orient)) & PawnCacheMask];
-#if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && !defined(USE_AVX512)
+// TRIUMV_PAWN_CACHE_AVX512 (09/09/2026): riapre la cache anche su AVX-512 per rimisurarla su
+// Skylake-SP; il -0,11% che l'ha spenta era su Zen4 (60 posizioni, lettura instabile).
+#if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && (!defined(USE_AVX512) || defined(TRIUMV_PAWN_CACHE_AVX512))
     const bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient);
 #else
     // Misurato 3/08/2026, interleaved, 60 posizioni depth 19, nodi identici:

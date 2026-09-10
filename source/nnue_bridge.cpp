@@ -17,6 +17,8 @@
 // Square conventions: the engine uses a8=0..h1=63 (BBC); SF uses a1=0..h8=63. A
 // per-rank byteswap (vflip) of an engine bitboard yields the SF-layout bitboard.
 
+#include "frozen.h"   // 🔴 DEVE stare qui: senza, il congelamento della
+                      // miscela non si attiva nelle build di spedizione.
 #include "nnue_bridge.h"
 
 #include "profile.h"
@@ -208,6 +210,35 @@ int g_ev_opt_simple = 0;
 int g_ev_mat_base2  = 91000;  // base materiale della forma nuova (SF: 91000)
 int g_ev_opt_const  = 7675;   // coefficiente optimism, ora COSTANTE (SF: 7675)
 
+// ===== COSTANTI DELLA MISCELA CONGELATE (TRIUMV_FROZEN) =================
+// 🔴 Il motivo, misurato il 09/09/2026: nn_scale contiene SETTE divisioni, e con
+// queste dieci lasciate variabili il divisore non e' noto a compilazione, quindi
+// sono divisioni HARDWARE - una anche a 64 bit, `/((long long) g_ev_opt_cplx *
+// g_ev_mat_base * 100)`. Rese costanti diventano moltiplica-e-scala, che il
+// compilatore genera con risultato interi IDENTICO. Il divisore su questa CPU e'
+// misurato a 57 cicli/nodo contro i 36,6 di Stockfish.
+// Il congelamento di threads.cpp non le copriva: vivono in un'altra unita'.
+//
+// ⚠️ NON sono variabili morte: uci_mt le scrive tramite la TABELLA DI PUNTATORI
+// g_eval_consts qui sotto (nn_set_eval_const), ed e' cosi' che il tuo SPSA le ha
+// tarate. Un'analisi che cerca `g_x =` non lo vede: la scrittura e' `*c.var =`.
+// Per questo la tabella resta com'e' - le #define vengono tolte attorno a lei e
+// rimesse subito dopo - e nn_frozen_check() confronta i valori vivi con i
+// letterali a ogni ricerca, dicendolo se qualcuno li cambia.
+#ifdef TRIUMV_FROZEN
+#define g_ev_psqt_w 125
+#define g_ev_pos_w 126
+#define g_ev_cplx_div 19139
+#define g_ev_pawn_mat 551
+#define g_ev_mat_base 84768
+#define g_ev_opt_cplx 461
+#define g_ev_opt_base 6456
+#define g_ev_opt_simple 0
+#define g_ev_mat_base2 91000
+#define g_ev_opt_const 7675
+#endif
+// =======================================================================
+
 static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
     int nnue           = (g_ev_psqt_w * int(psqt) + g_ev_pos_w * int(positional)) / 128;
     int nnueComplexity = std::abs(int(psqt) - int(positional));
@@ -355,6 +386,18 @@ void        nn_set_eval_scale_bucket(int b, int pct) {
 // Sonda EvalBucketOverride: definita in nnue/network.cpp, dove si sceglie il bucket.
 namespace Triumviratus::Eval::NNUE { extern int g_eval_bucket_override; }
 
+#ifdef TRIUMV_FROZEN
+#undef g_ev_psqt_w
+#undef g_ev_pos_w
+#undef g_ev_cplx_div
+#undef g_ev_pawn_mat
+#undef g_ev_mat_base
+#undef g_ev_opt_cplx
+#undef g_ev_opt_base
+#undef g_ev_opt_simple
+#undef g_ev_mat_base2
+#undef g_ev_opt_const
+#endif
 namespace {
 struct EvalConst { const char* name; int* var; int lo; int hi; };
 const EvalConst g_eval_consts[] = {
@@ -378,6 +421,46 @@ const EvalConst g_eval_consts[] = {
     {"EvalOptConst",      &g_ev_opt_const,  1000,  30000},
 };
 }
+#ifdef TRIUMV_FROZEN
+// Confronta i valori VIVI con i letterali compilati. Sta QUI, dentro l'isola in cui
+// le #define sono tolte, perche' e' l'unico punto in cui `&g_ev_psqt_w` e' ancora
+// l'indirizzo di una variabile e non `&125`. Chiamata una volta per ricerca.
+void nn_frozen_check() {
+    struct FzRef { const int* p; int val; const char* name; };
+    static const FzRef fz[] = {
+        {&g_ev_psqt_w, 125, "g_ev_psqt_w"},
+        {&g_ev_pos_w, 126, "g_ev_pos_w"},
+        {&g_ev_cplx_div, 19139, "g_ev_cplx_div"},
+        {&g_ev_pawn_mat, 551, "g_ev_pawn_mat"},
+        {&g_ev_mat_base, 84768, "g_ev_mat_base"},
+        {&g_ev_opt_cplx, 461, "g_ev_opt_cplx"},
+        {&g_ev_opt_base, 6456, "g_ev_opt_base"},
+        {&g_ev_opt_simple, 0, "g_ev_opt_simple"},
+        {&g_ev_mat_base2, 91000, "g_ev_mat_base2"},
+        {&g_ev_opt_const, 7675, "g_ev_opt_const"},
+    };
+    static bool reported[sizeof(fz) / sizeof(fz[0])] = {false};
+    for (std::size_t j = 0; j < sizeof(fz) / sizeof(fz[0]); j++) {
+        if (reported[j] || *fz[j].p == fz[j].val) continue;
+        reported[j] = true;
+        printf("info string ATTENZIONE: %s e' congelato a %d ma e' stato impostato a %d: "
+               "questa build IGNORA il cambiamento\n", fz[j].name, fz[j].val, *fz[j].p);
+        fflush(stdout);
+    }
+}
+#endif
+#ifdef TRIUMV_FROZEN
+#define g_ev_psqt_w 125
+#define g_ev_pos_w 126
+#define g_ev_cplx_div 19139
+#define g_ev_pawn_mat 551
+#define g_ev_mat_base 84768
+#define g_ev_opt_cplx 461
+#define g_ev_opt_base 6456
+#define g_ev_opt_simple 0
+#define g_ev_mat_base2 91000
+#define g_ev_opt_const 7675
+#endif
 int nn_eval_const_count(void) { return int(sizeof(g_eval_consts) / sizeof(g_eval_consts[0])); }
 const char* nn_eval_const_name(int i) { return g_eval_consts[i].name; }
 int nn_eval_const_get(int i)  { return *g_eval_consts[i].var; }

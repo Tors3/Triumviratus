@@ -74,30 +74,5 @@ void communicate() {
     read_input();
 }
 
-// count bits within a bitboard. Build already requires BMI2/POPCNT (USE_PEXT is on),
-// so the hardware instruction is always available -> no Kernighan fallback needed.
-int count_bits(U64 bitboard)
-{
-#ifdef _WIN32
-    return (int)__popcnt64(bitboard);
-#else
-    return __builtin_popcountll(bitboard);
-#endif
-}
+// count_bits / get_ls1b_index: ora `static inline` in defs.h (09/09/2026).
 
-// get least significant 1st bit index
-int get_ls1b_index(U64 bitboard)
-{
-    if (bitboard)
-    {
-#ifdef _WIN32
-        unsigned long index;
-        _BitScanForward64(&index, bitboard);
-        return static_cast<int>(index);
-#else
-        return __builtin_ctzll(bitboard);
-#endif
-    }
-    else
-        return -1;
-}

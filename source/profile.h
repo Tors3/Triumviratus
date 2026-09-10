@@ -6,7 +6,14 @@
 // (eval / movegen / make / tt / score). Default builds (no define) compile every
 // PROF_GUARD to a no-op => zero overhead, byte-identical to the release engine.
 #ifdef TRIUMV_PROFILE
-  #include <intrin.h>
+  // __rdtsc: <intrin.h> e' MSVC; su GCC/clang vive in <x86intrin.h>. Senza questo
+  // ramo `make profile` non compilava su Linux e la scomposizione per fase non era
+  // mai stata misurata sul rig.
+  #ifdef _MSC_VER
+    #include <intrin.h>
+  #else
+    #include <x86intrin.h>
+  #endif
   extern unsigned long long prof_eval, prof_mg, prof_make, prof_tt, prof_score;
   // Scomposizione del forward NNUE (prof_eval). Serve a rispondere a UNA domanda che
   // blocca il lavoro sulla sparsita' di L1: quanto pesa davvero fc_0? L'audit archivio'
@@ -68,6 +75,36 @@
   // struttura di pedoni => sono gli unici cachabili fra refresh consecutivi (che sono
   // scatenati da mosse di RE). Il rapporto pawn/(pawn+threat) e' il tetto del guadagno.
   extern unsigned long long prof_cols_thr, prof_cols_pawn, prof_n_refresh_calls;
+  // Colonne per update INCREMENTALE, per blocco: e' il conto che distingue "liste piu'
+  // lunghe" da "colonne piu' care" nel confronto con Stockfish (09/09/2026).
+  extern unsigned long long prof_cols_psq_inc, prof_cols_thr_inc, prof_cols_pawn_inc;
+  // --- SOTTO-BUCKET DELLA RICERCA (09/09/2026) -------------------------------
+  // Il bucket "altro" valeva 1.297 cicli/nodo su kiwipete, il secondo del motore dopo
+  // l'accumulatore, ed era completamente cieco: eval/movegen/make/tt/score erano gli
+  // unici guard. Stockfish sullo stesso nodo spende 929 cicli in TUTTO cio' che non e'
+  // eval, do_move e movegen. Senza questi contatori non si sa cosa attaccare.
+  //   prof_mp      = MovePicker (mp_init + mp_next: stadi, generazione pigra, selezione)
+  //   prof_hist    = OGNI scrittura in una history (td_update_history, entrambi gli
+  //                  overload): main, capture, continuation, pawn, lowply. Le tabelle
+  //                  sono enormi e sparse (continuation_history da sola e' 590 KB), e
+  //                  fino al 09/09 non erano coperte da nessun guard.
+  //   prof_corr    = correction history: indici, letture, aggiornamenti
+  //   prof_gc      = gives-check / legalita' calcolate FUORI da make (LMP guard, SEE)
+  extern unsigned long long prof_mp, prof_hist, prof_corr, prof_gc;
+  //   prof_thr     = td_compute_threats: le maschere di minaccia per l'ordinamento,
+  //                  ricalcolate ~1,5 volte per nodo scorrendo tutti i pezzi nemici
+  //   prof_see     = SEE (td_see_ge / td_see_at_least), chiamata per mossa nel pruning
+  //   prof_isatk   = td_is_square_attacked (legalita', scacchi, evasioni)
+  //   prof_rep     = rilevamento ripetizioni + cuckoo
+  extern unsigned long long prof_thr, prof_see, prof_isatk, prof_rep;
+  //   prof_idx_thr / prof_idx_pawn = generazione degli INDICI nell'update incrementale,
+  //   separata per blocco. Serve a rispondere a una domanda che il confronto con
+  //   Stockfish apre: loro hanno TRE blocchi (Threats, HalfKA, PP_3Wide), noi QUATTRO
+  //   (+ PassedPawns), e `passers()` ricostruisce l'insieme dei passati PRIMA e DOPO a
+  //   ogni evento-pedone. Se e' caro, e' costo che loro non pagano affatto.
+  extern unsigned long long prof_idx_thr, prof_idx_pawn;
+  extern unsigned long long prof_n_thr_calls, prof_n_see, prof_n_isatk;
+  extern unsigned long long prof_n_mg;   // chiamate a generazione mosse (SF: 0,52/nodo)
   // Cache del refresh dei blocchi pedoni: quante volte la chiave e' gia' in cache.
   // Un tasso basso dice che conviene ingrandirla, uno alto che il tetto e' raggiunto.
   extern unsigned long long prof_pawn_hit, prof_pawn_miss;

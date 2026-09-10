@@ -6,6 +6,9 @@
 
 #include "defs.h"
 #include "uci.h"
+#include <fstream>
+#include <string>
+#include <vector>
 #include "movegen.h"
 #include "search.h"
 #include "tt.h"
@@ -580,6 +583,7 @@ void uci_loop()
             printf("option name QsearchCorr type check default true\n");     // P0.4 corr in qsearch
             printf("option name ImprovingFix type check default true\n");    // P0.6 sentinel improving
             printf("option name CorrHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
+            printf("option name CorrHistMajor type check default true\n");   // termine dei pezzi maggiori dentro CorrHistMulti; SF 19 non ce l'ha
             printf("option name CorrHistCont type check default true\n");    // continuation correction history (SF): corregge la static eval per le ultime 2 mosse nel cammino
             printf("option name CorrContWeight type spin default 85 min 0 max 400\n");  // /100 contributo cont alla somma corr; co-tunabile
             printf("option name CorrNonPawn type check default false\n");     // corrhist non-pedoni PER-LATO (port Pawnocchio/SF, 2026-07-03): chiave = nonpawn-Zobrist di UN colore
@@ -629,7 +633,7 @@ void uci_loop()
             printf("option name MainHistWeight type spin default 93 min 50 max 400\n");    // [4.1 BAKE 122->168]
             printf("option name ContHistWeight type spin default 135 min 50 max 400\n");    // [4.1 BAKE 80->96]
             printf("option name LMPScale type spin default 35 min 30 max 250\n");     // [3.7] scala % soglia LMP
-            printf("option name ContHistMulti type check default true\n");   // BAKED ON: HM +6.2 LOS87.6% @1338
+            printf("option name ContHistMulti type check default false\n");  // BAKED OFF 10/09/2026: SPRT [-3,1] H1 su 36.620 partite
             printf("option name MovePicker type check default true\n");
             printf("option name DiverseSMP type check default true\n");   // BAKED ON (bake-on-trust): wider-only SMP diversity
             printf("option name DiverseSMPAmount type spin default 1 min 0 max 4\n");
@@ -1063,7 +1067,14 @@ void uci_loop()
         // ucinewgame prima di ogni posizione.
         else if (strncmp(input, "bench", 5) == 0)
         {
-            int bdepth = atoi(input + 5);
+            // "bench [depth] [file.epd]": il file sostituisce le 8 posizioni fisse, una
+            // FEN per riga (max 64). Senza file il comando e' IDENTICO a prima: la firma
+            // canary (bench liscio) non cambia. Serve al profilo PER POSIZIONE, perche'
+            // due motori distribuiscono i nodi fra le 8 posizioni in modo diverso e la
+            // media aggregata mescola finali a 2 colonne con mediogiochi a 12.
+            int  bdepth     = 0;
+            char bfile[512] = {0};
+            sscanf(input + 5, "%d %511s", &bdepth, bfile);
             if (bdepth <= 0) bdepth = 13;
             static const char* bench_fens[8] = {
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -1088,10 +1099,29 @@ void uci_loop()
             prof_n_thr_seen = prof_n_thr_dead = 0;
             prof_max_active = prof_max_inc = 0;
             prof_cols_thr = prof_cols_pawn = prof_n_refresh_calls = 0;
+            prof_cols_psq_inc = prof_cols_thr_inc = prof_cols_pawn_inc = 0;
+            prof_mp = prof_hist = prof_corr = prof_gc = prof_n_mg = 0;
+            prof_thr = prof_see = prof_isatk = prof_rep = 0;
+            prof_idx_thr = prof_idx_pawn = 0;
+            prof_n_thr_calls = prof_n_see = prof_n_isatk = 0;
             unsigned long long prof_wall = 0;
 #endif
-            for (int bi = 0; bi < 8; bi++) {
-                parse_fen((char*)bench_fens[bi]);
+            static std::vector<std::string> bench_file_fens;
+            const char* bench_list[64];
+            int         bench_n = 8;
+            for (int bi = 0; bi < 8; bi++) bench_list[bi] = bench_fens[bi];
+            if (bfile[0]) {
+                bench_file_fens.clear();
+                std::ifstream bf(bfile);
+                std::string   line;
+                while (std::getline(bf, line))
+                    if (line.size() > 10 && bench_file_fens.size() < 64) bench_file_fens.push_back(line);
+                bench_n = 0;
+                for (const auto& l : bench_file_fens) bench_list[bench_n++] = l.c_str();
+                if (bench_n == 0) { printf("bench: nessuna FEN in %s\n", bfile); fflush(stdout); continue; }
+            }
+            for (int bi = 0; bi < bench_n; bi++) {
+                parse_fen((char*)bench_list[bi]);
                 clear_hash_table();
                 for (int i = 0; i < num_threads; i++) {
                     memset(thread_data[i].history_moves, 0, sizeof(thread_data[i].history_moves));
@@ -1138,6 +1168,23 @@ void uci_loop()
               unsigned long long acc = prof_eval + prof_mg + prof_make + prof_tt + prof_score;
               printf("--- PROFILE (%% of search wall) ---\n");
               printf("  eval (NNUE fwd) : %5.1f%%\n", 100.0 * (double)prof_eval  / (double)pw);
+              // Sotto-bucket della ricerca: sono DENTRO "other" (i loro guard stanno in
+              // funzioni chiamate fuori dai cinque guard principali), quindi vanno letti
+              // come scomposizione di quel 26-28%, non sommati agli altri.
+              printf("    movepicker    : %5.1f%%   (dentro 'other')\n", 100.0 * (double)prof_mp   / (double)pw);
+              printf("    corr history  : %5.1f%%   (dentro 'other')\n", 100.0 * (double)prof_corr / (double)pw);
+              printf("    cont history  : %5.1f%%   (dentro 'other')\n", 100.0 * (double)prof_hist / (double)pw);
+              printf("    gives-check   : %5.1f%%   (dentro 'other')\n", 100.0 * (double)prof_gc   / (double)pw);
+              printf("    movegen       : %llu chiamate (%.2f/nodo)\n", (unsigned long long)prof_n_mg,
+                     (double)prof_n_mg / (double)(bench_nodes ? bench_nodes : 1));
+              printf("    threat masks  : %5.1f%%   (%.2f/nodo)\n", 100.0 * (double)prof_thr / (double)pw,
+                     (double)prof_n_thr_calls / (double)(bench_nodes ? bench_nodes : 1));
+              printf("    SEE           : %5.1f%%   (%.2f/nodo)\n", 100.0 * (double)prof_see / (double)pw,
+                     (double)prof_n_see / (double)(bench_nodes ? bench_nodes : 1));
+              printf("    is_sq_attacked: %5.1f%%   (%.2f/nodo)\n", 100.0 * (double)prof_isatk / (double)pw,
+                     (double)prof_n_isatk / (double)(bench_nodes ? bench_nodes : 1));
+              printf("  indici update: threat %4.1f%%   pedoni(PawnPair+Passed) %4.1f%%   [SF non ha PassedPawns]\n",
+                     100.0 * (double)prof_idx_thr / (double)pw, 100.0 * (double)prof_idx_pawn / (double)pw);
               printf("  movegen         : %5.1f%%\n", 100.0 * (double)prof_mg    / (double)pw);
               printf("  make+unmake     : %5.1f%%\n", 100.0 * (double)prof_make  / (double)pw);
               printf("  tt probe+store  : %5.1f%%\n", 100.0 * (double)prof_tt    / (double)pw);
@@ -1261,6 +1308,9 @@ void uci_loop()
                   if (prof_n_refresh)
                     printf("  cicli/refresh    : %llu\n", (unsigned long long)(prof_acc_refresh / prof_n_refresh));
                   if (prof_n_upd) {
+                    printf("  colonne/update per blocco (path singolo): psq %.2f  threat %.2f  pedoni %.2f\n",
+                           (double)prof_cols_psq_inc / (double)prof_n_upd, (double)prof_cols_thr_inc / (double)prof_n_upd,
+                           (double)prof_cols_pawn_inc / (double)prof_n_upd);
                     printf("  update effettivi : %llu  (colonne/update: %.1f)\n",
                            (unsigned long long)prof_n_upd, (double)prof_n_cols / (double)prof_n_upd);
                     printf("  costo teorico    : %.0f cicli/update a 1 col = %d int16 = %d vettori AVX512\n",
@@ -1860,6 +1910,11 @@ void uci_loop()
         {
             const char* v = input + 35;
             set_corr_multi(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name CorrHistMajor value ", 35) == 0)
+        {
+            const char* v = input + 35;
+            set_corr_major(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
 
         // "setoption name PawnHistory value <true|false>" (A/B ordering pawn-structure)

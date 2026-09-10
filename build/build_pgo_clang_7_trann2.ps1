@@ -190,6 +190,17 @@ function Build-Variant([string]$tag) {
         # su uno Xeon Gold 6242 = Cascade Lake, che il VNNI ce l'ha: non poteva vederlo.
         if ($baseTag -eq "vnni512" -or $baseTag -eq "avx512icl") {
             $extra += " -DUSE_VNNI /clang:-mavx512vnni"
+        } else {
+            # 🔴 14/08/2026 — IL FIX DEL 10/08 NON BASTAVA, e il canary ISA l'ha visto alla
+            # sua prima esecuzione reale: 102 `vpdpwssd` dentro `avx512`.
+            # Motivo: il .vcxproj ha `-mavx512vnni` CABLATO in AdditionalOptions, e qui
+            # sopra si toglieva solo `-DUSE_VNNI`. Ma quella macro guarda le INTRINSIC
+            # SCRITTE A MANO: non impedisce al compilatore di emettere VNNI per conto suo.
+            # Con l'ISA accesa, l'auto-vettorizzatore riconosce il prodotto scalare int16
+            # di uno strato affine NNUE e ci mette vpdpwssd da solo.
+            # 🔑 REGOLA: una macro `USE_X` governa il TUO codice, `-mno-x` governa quello
+            #    del COMPILATORE. Per escludere un'istruzione da un binario serve la seconda.
+            $extra += " /clang:-mno-avx512vnni"
         }
         if ($baseTag -eq "avx512icl") {
             $extra += " -DUSE_AVX512ICL"

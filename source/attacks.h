@@ -26,6 +26,18 @@ extern U64 knight_attacks[64];
 extern U64 king_attacks[64];
 extern U64 bishop_masks[64];
 extern U64 rook_masks[64];
+// (TABELLE DEGLI ALIANTI IMPACCHETTATE: provato e RIMOSSO il 10/09/2026.
+//  La forma qui sotto usa un passo FISSO per casa, 2,25 MB in tutto, dove
+//  Stockfish impacchetta ogni casa alla sua dimensione esatta e sta in 841 KB.
+//  Compattate davvero: rook_attacks_store era sceso a 800 KB e bishop a 41 KB,
+//  esattamente le loro dimensioni, con firma bench invariata.
+//  RISULTATO: NEUTRO, 5.647,5 +- 11,6 cicli/nodo contro 5.624,0 +- 23,1, e i miss
+//  L2 identici al centesimo (86,92 contro 86,98 per nodo).
+//  🔑 L'errore di ragionamento: la cache tiene solo le linee TOCCATE, e il
+//  riempimento inutilizzato non ne occupava nessuna. L'insieme davvero letto era
+//  gia' della stessa dimensione, quindi non c'era pressione da togliere. In cambio
+//  il vettore di puntatori aggiungeva un caricamento dipendente a ogni interrogazione.
+//  Una tabella grande non costa per quanto e' dichiarata, ma per quanto se ne legge.)
 extern U64 bishop_attacks[64][512];
 extern U64 rook_attacks[64][4096];
 
