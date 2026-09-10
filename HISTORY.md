@@ -1,20 +1,39 @@
 # Triumviratus — release history
 
-Archive of the releases before 5.1 and of the match results that documented them.
-The current releases live in the [`README`](README.md); how each network was trained is in
+Archive of the releases and of the match results that documented them. The current and previous
+release are described in the [`README`](README.md); how each network was trained is in
 [`NETWORKS.md`](NETWORKS.md).
 
 | Release | Network | Headline |
 |---|---|---|
-| **5.1** (current) | `nn-rubicon-alea-v1` | +64.7 Elo over 5.0 (official gate) |
+| **7.0** (current) | `legio-septima` | +21.34 Elo over 6.0 (25+0.25, release binaries) |
+| **6.0** | `nn-rubicon-alea-v3` | +52.98 Elo over 5.1 (40+0.4, SPRT passed) |
+| **5.1** | `nn-rubicon-alea-v1` | +64.7 Elo over 5.0 (official gate) |
 | **5.0** | `nn-rubicon-alea-v1` | first SFNNv13 (threats) net · ≈ +50 Elo over 4.2 |
 | **4.2** | `rubicon-v1` | first network trained by the author |
 
 ---
 
+## Triumviratus 7.0
+
+Released September 2026. A **network project**: **`legio-septima`** is the first network the project
+trains from scratch with base and feature blocks together, instead of grafting a new block onto a
+frozen predecessor, on `TRANN2` — Stockfish's SFNNv16 feature set plus the project's own
+`PassedPawns` block, 86,992 inputs. Alongside it: the evaluation blend constants retuned on this
+network, the correction-history block retuned at the time control the engine is played at,
+node-identical speed work with the tuning parameters compiled as constants in release builds (+5%
+NPS), and the displayed score recalibrated so that +1.00 means a 50% chance of winning. Full log:
+[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.md).
+
+## Triumviratus 6.0
+
+**+52.98 ± 12.25 Elo over 5.1** (40+0.4, 760 games, SPRT `[0,5]` passed). The `TRANN1` network
+architecture, the `nn-rubicon-alea-v3` network trained for it, and TMv2 time management. Full log:
+[`archive/DEVELOPMENT_6.0.md`](archive/DEVELOPMENT_6.0.md).
+
 ## Triumviratus 5.1
 
-Current stable release. Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13,
+Keeps 5.0's own-lineage network **`nn-rubicon-alea-v1`** (SFNNv13,
 threats-trained from scratch). Adds a recalibrated eval scale, two-level TT, hindsight extensions,
 faster SEE/AVX-512 accumulators, and re-tuned time management. Two SPRT-confirmed gains: a
 **second-audit patch** (**+26 Elo**: threat-indexed quiet history, refined TT-cutoff,
@@ -50,6 +69,34 @@ reference Stockfish net, the accepted cost of going own-lineage.
 ---
 
 ## Results
+
+#### 7.0 vs 6.0 — release binaries (2026-09-10)
+
+Release binaries, **AVX2** on both sides, each with its own network, 1 thread, resign/draw
+adjudication on. Book: **UHO 2024** (`UHO_2024_8mvs_+085_+094.epd`).
+
+| Time control | Threads | Hash | Games | Score (7.0) | Elo (7.0) | LOS |
+|---|---|---|---|---|---|---|
+| 25+0.25 | 1 | 256 MB | 3000 | 53.07% | **+21.34 ± 6.66** | 100.00% |
+| 5+0.05 | 1 | 64 MB | 9000 | 53.62% | **+25.18 ± 4.28** | 100.00% |
+
+<sub>Pentanomial (7.0) [0–2]: 25+0.25 [14, 284, 726, 456, 20]; 5+0.05 [97, 857, 1997, 1396, 153],
+two runs of 3000 and 6000 games pooled.</sub>
+
+#### 7.0 vs external engines (2026-09-10)
+
+Release binaries, 1 thread, 128 MB, the same instruction set on both sides (AVX-512 against Hobbes,
+AVX2 against Stormphrax and Cinder), UHO 2024 (`UHO_2024_8mvs_+085_+094.epd`).
+
+| Opponent | Time control | Games | Score (7.0) | Elo (7.0) | LOS |
+|---|---|---|---|---|---|
+| Stormphrax 8.0.0 | 25+0.25 | 1000 | 57.15% | **+50.03 ± 11.93** | 100.00% |
+| Hobbes 3.0 | 25+0.25 | 1000 | 56.75% | **+47.19 ± 12.19** | 100.00% |
+| Hobbes 3.0 | 15+0.15 | 1972 | 57.28% | **+50.93 ± 8.99** | 100.00% |
+| Cinder 0.6.1 | 25+0.25 | 1000 | 48.60% | **−9.73 ± 11.42** | 4.73% |
+
+<sub>One thread and an unbalanced book widen the gaps: on CCRL 40/15 these engines and 6.0 are within
+a few Elo of each other.</sub>
 
 #### 5.1 vs 5.0 — official release gate (2026-07-07)
 
