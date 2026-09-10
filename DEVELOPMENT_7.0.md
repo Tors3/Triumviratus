@@ -24,9 +24,9 @@
 
 ---
 
-> [!IMPORTANT]
-> **6.0 is and remains the official release.** The 7.0 network is finished — stage 2 closed at
-> epoch 799 — but there is no 7.0 release yet. Every figure below carries its error bar.
+> [!NOTE]
+> Every figure below carries its error bar. The whole-engine results come from the release binaries,
+> measured after the release freeze of 10 September 2026; earlier whole-engine runs are not used.
 
 ---
 
@@ -92,42 +92,19 @@ at 20+0.2 with 256 MB** — the effect grows where the engine ships rather than 
 eight, `EvalPsqtW`, was left alone on purpose: with `EvalPosW` it only spans "scale everything", which
 `EvalScale` already covers, so only the ratio was allowed to move.</sub>
 
-**The whole engine, against 6.0.** The shipped 6.0 binary against the current 7.0 build, each loading
-its own network, one thread, UHO_4060_v4, measured at three time controls to see whether the
-advantage survives longer thinking.
+**The whole engine, against 6.0.** The two release binaries against each other — AVX2 PGO on both
+sides, each loading its own network — one thread, UHO 2024 (+0.85/+0.94), 75 games in parallel on
+the 80-thread test machine:
 
-> ⚠️ These three rows **predate stage 3** and are a lower bound on the shipped engine. They will be
-> re-measured against the release build.
-
-| TC | hash | s/side | **depth** | games | Elo |
+| TC | hash | depth 7.0 / 6.0 | games | score | Elo |
 |---|---:|---:|---:|---:|---:|
-| 5+0.05 | 64 MB | 7 | 12.4 | 1,926 | +30.02 ± 8.81 |
-| 25+0.25 | 256 MB | 35 | 17.3 | 3,170 | **+28.34 ± 6.19** |
-| 40+0.4 | 256 MB | 56 | **19.3** | 3,000 | **+33.22 ± 6.14** |
+| 5+0.05 | 64 MB | 11.7 / 11.2 | 9,000 | 53.62% | **+25.18 ± 4.28** |
+| 25+0.25 | 256 MB | 15.7 / 15.0 | 3,000 | 53.07% | **+21.34 ± 6.66** |
 
-LOS is 100% at all three, and **the advantage does not decay with depth**: over seven plies, 12.4 to
-19.3, the figure stays between 28 and 33, with a weighted slope of **+0.42 ± 1.56 Elo per ply**,
-indistinguishable from flat. The depths are measured from the PGNs, not inferred from the time
-control. Hash is 256 MB where it matters, because that is what the rating lists use.
-
-<sub>⚠️ CCRL Blitz runs at roughly 160 s per side, three times beyond the longest point here, so the
-curve still has to be extrapolated — but extrapolating a flat line is a much smaller act of faith
-than extrapolating a falling one.</sub>
-
-The network alone is worth +23.41 and the two stages above add about six more, which lands close to
-the end-to-end figure of +28 to +33. The sum of the *original* stage figures, near +88, did not.
-
-**Against another engine: Obsidian 16.0.** One thread, 128 MB, three conditions:
-
-| date | TC | book | games | draws | Elo |
-|---|---|---|---:|---:|---:|
-| 12 Aug | 20+1 | Pollock | 700 | **90.3%** | +3.00 ± 8.00 |
-| 15 Aug | 8+0.1 | UHO_4060_v4 | 240 | 52.5% | −10.14 ± 22.50 |
-| 15 Aug | 20+0.2 | UHO_4060_v4 | 1,278 | 47.7% | −6.25 ± 10.20 |
-| **combined** | | | **2,218** | | **−1.22 ± 6.06** |
-
-The three are mutually consistent (Cochran's *Q* = 2.61 on 2 degrees of freedom). The combined
-interval is **[−7.28, +4.84]**: 7.0 is *at* Obsidian 16.0's level, not a class below or above it.
+LOS is 100% at both points. The two differ by 3.8 ± 7.9 Elo: over the four plies between them there
+is no significant change with depth. Depths are measured from the PGNs, not inferred from the time
+control. The 5+0.05 row pools two runs of the same binary, 3,000 and 6,000 games (+30.19 ± 7.35 and
++22.67 ± 5.25, compatible); each run draws its openings at random, so the two are independent.
 
 > ⚠️ The current engine signature is **`bench` 240,503**. It moved from 242,956 when continuation
 > history at plies 2 and 4 was switched off: an SPRT over 36,620 games found it worth nothing
