@@ -122,9 +122,10 @@ and costs almost nothing (~3 % throughput), but the block had already converged.
 
 ## `legio-septima` — the Triumviratus 7.0 network
 
-> **Status: training complete, network chosen — no release yet.** Stage 1 (479 epochs) and stage 2
-> (800 epochs) are done; a stage-3 annealing tail was run and closed at zero. The network is the
-> stage-2 final, **epoch 799**. **Triumviratus 6.0 with `rubicon-alea-v3` remains the current release.**
+> **Status: released with Triumviratus 7.0 (10 September 2026)** as `nn-legio-septima.nnue`
+> (92,417,127 bytes, SHA256 `b04e2835f538861bf26b7cc9e27c65911af420974f0ddab818ab0d3adf8e3ecc`).
+> Stage 1 (479 epochs) and stage 2 (800 epochs) are done; a stage-3 annealing tail was run and
+> closed at zero. The shipped network is the stage-2 final, **epoch 799**.
 
 The `rubicon-alea` lineage ends with 6.0. `legio-septima` changes both the architecture and the
 training method — hence a new lineage and a new name.
@@ -233,7 +234,7 @@ than half the corpus had ever been delivered. Neither data nor overfitting was t
 
 ### Where it stands
 
-Stage 1 and stage 2 complete; stage 3 run and closed at zero. The shipped network:
+Stage 1 and stage 2 complete; stage 3 run and closed at zero. The network isolated, before any search change:
 
 > **+23.41 ± 9.22 Elo** vs Triumviratus 6.0 with `rubicon-alea-v3` — 1442 games, 15+0.15, LOS
 > 100 %, nElo +45.65, 1 thread, 64 MB, UHO_4060_v4, both engines PGO + AVX-512, two-sided resign
@@ -280,6 +281,15 @@ data. The +21 Elo between epochs 19 and 39 is significant (z = 2.16).</sub>
 <sub>Earlier stage-1 figures of −64.97 (epoch 54) and −21.95 (epoch 111) are **not** comparable to each
 other: between them fell both 57 epochs of training and the discovery that the 7.0 Windows project was
 not defining `USE_AVX512`, so the earlier build was effectively AVX2 against a PGO opponent.</sub>
+
+The release binaries against each other — 7.0 with `legio-septima` against 6.0 with
+`rubicon-alea-v3`, AVX2 PGO on both sides, 1 thread, UHO 2024 — measure **+25.18 ± 4.28 Elo** at
+5+0.05 (9,000 games) and **+21.34 ± 6.66 Elo** at 25+0.25 (3,000 games); details in
+[`HISTORY.md`](HISTORY.md).
+
+<sub>After release the network is treated as **saturated** for its size: no gain was detectable
+between stage-1 epochs 249 and 416, and the stage-3 tail measured zero, with validation loss never
+above training loss. The next step for the lineage is a wider L1, not more epochs at 1024.</sub>
 
 ---
 
