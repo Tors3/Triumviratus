@@ -40,24 +40,23 @@
 
 | Version | Rating | Rank | Games | List |
 |---|---|---|---:|---|
-| **Triumviratus 6.0 64-bit (4 CPU)** | **3633** ±23 | **10–12** | 343 | 2026-09-04 |
+| **Triumviratus 6.0 64-bit (4 CPU)** | **3632** ±17 | **13–14** | 678 | 2026-09-23 |
 | Triumviratus 5.1 64-bit (1 CPU) | 3605 | — | — | 2026-07-23 |
 | Triumviratus 5.0 64-bit (4 CPU) | 3603 | — | — | 2026-07-16 |
 | Triumviratus 5.0 64-bit (1 CPU) | 3570 | — | — | 2026-07-16 |
 
 <sub>Ranks are tie bands shared by the engines inside the interval: read the rating, not the rank. On
-40/15, 6.0 sits 16 Elo behind the first entry (Stockfish 18, 3649 ±12) on only 343 games, so its
-interval is still wide. The two lists are not comparable with each other. Both tables are 6.0: 7.0
+40/15, 6.0 sits 18 Elo behind the first entry (Stockfish 19 4 CPU, 3650 ±19). The two lists are not comparable with each other. Both tables are 6.0: 7.0
 has not appeared on either list yet.</sub>
 
 ---
 
 ## Triumviratus 7.1 — in development
 
-7.1 is a **speed project**: same network as 7.0, the code around it made faster without changing
-a single node of the search. Measured against Stockfish 19 with the same compiler and the same
-network size, the engine now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer
-branch mispredictions. The individual gains, from paired simultaneous runs on the same CPU core, are
+7.1 **started from speed**: same network as 7.0, and a first round of changes that make the code
+around it faster while leaving the search tree node-for-node identical. Where 7.1 ends up is still
+open. Measured against Stockfish 19 with the same compiler and the same network size, the engine
+now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer branch mispredictions. The individual gains, from paired simultaneous runs on the same CPU core, are
 between +0.8% and +2.5% NPS each. The final comparison with the 7.0 release binary is still to come.
 
 `source/` holds the 7.1 development code; the 7.0 release is the tag `v7.0`. Details, method and
@@ -88,19 +87,39 @@ measurements, speed work and training: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.
 
 #### Against other engines
 
-| Opponent | TC | Games | Elo |
-|---|---|---:|---:|
-| Stormphrax 8.0.0 | 25+0.25 | 1,000 | +50.03 ± 11.93 |
-| Hobbes 3.0 | 25+0.25 | 1,000 | +47.19 ± 12.19 |
-| Hobbes 3.0 | 15+0.15 | 1,972 | +50.93 ± 8.99 |
-| Cinder 0.6.1 | 25+0.25 | 1,000 | −9.73 ± 11.42 |
+| Opponent | Elo (7.0) | Games | TC · threads |
+|---|---:|---:|---|
+| Stormphrax 8.0.0 | +50 ± 12 | 1,000 | 25+0.25 · 1 |
+| Hobbes 3.0 | +51 ± 9 | 1,972 | 15+0.15 · 1 |
+| Caissa 1.26 | +20 | 300 | 1+1 · 4 |
+| Cinder 0.6.1 | −10 ± 11 | 1,000 | 25+0.25 · 1 |
+| Caissa 2.0 | −27 ± 15 | 300 | 1+1 · 4 |
+| Coda 0.9.4 | −38 ± 16 | 300 | 1+1 · 4 |
+| pawnocchio 3.0-dev | −38 ± 15 | 300 | 1+1 · 4 |
+| PlentyChess 8.0.0 | −63 ± 16 | 300 | 1+1 · 4 |
 
-<sub>Release binaries, 1 thread, 128 MB, UHO 2024 (+0.85/+0.94), the same instruction set on both
-sides. One thread and an unbalanced book widen the gaps compared with a rating list: on CCRL 40/15
-these engines and 6.0 are within a few Elo of each other.</sub>
+<sub>1 thread: our runs, release binaries, 128 MB, UHO 2024 (+0.85/+0.94). 4 threads: Maurizio
+Platino, i7-8700, Fritz 18, 1024 MB, ponder on, UHO 2024 (+1.10/+1.29); pawnocchio and PlentyChess
+met a 7.0 build from a month before the release. Games and details: **[`tests/`](tests/)**. Fast
+time controls and unbalanced books widen the gaps compared with a rating list.</sub>
 
-Matches by Maurizio Platino against the newest engines (Caissa 2.0, Coda 0.9.4, PlentyChess 8,
-pawnocchio 3.0; 4 threads, 1+1): **[`tests/`](tests/)**.
+#### Playing style
+
+On Stefan Pohl's **[EAS ratinglist](https://www.sp-cc.de/eas-ratinglist.htm)**, which scores style
+rather than strength (computed from sacrifices, short wins and draws in the 120,000 games of the
+UHO-Top15 list), **Triumviratus 7.0 is the fourth most aggressive of 16 engines**, behind only Torch and
+two Stockfish builds, with the second-highest sacrifice rate after Torch.
+
+| Rank | Engine | EAS-Score | sacs | early sacs | short wins | bad draws |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | Torch 4d | 249,549 | 19.09% | 29.50% | 27.54% | 15.15% |
+| 2 | Stockfish 19 | 247,367 | 16.84% | 32.16% | 26.91% | 12.95% |
+| 3 | Stockfish 260913 | 231,239 | 16.66% | 29.60% | 25.84% | 14.51% |
+| **4** | **Triumviratus 7.0** | **175,162** | **17.63%** | **32.57%** | **16.99%** | **19.75%** |
+| 5 | PlentyChess 8.0.0 | 172,527 | 12.99% | 29.64% | 21.88% | 20.46% |
+
+<sub>Update of 2026-09-24. Further down: Cinder 6.0, Reckless, Obsidian, Caissa 2.0, Alexandria 9.0,
+Stormphrax 8, Integral 8, Quanticade, Coda 0.9.4, Pawnocchio 2.0, Viridithas 20.</sub>
 
 ---
 

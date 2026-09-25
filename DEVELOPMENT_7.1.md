@@ -4,7 +4,7 @@
 
 # Triumviratus 7.1 — development log
 
-**Speed project.** Same network as 7.0 (`legio-septima`) · the code around it made faster
+**Started as a speed project.** Same network as 7.0 (`legio-septima`) · the code around it made faster · where it ends up is still open
 
 **by Francesco Torsello**
 
