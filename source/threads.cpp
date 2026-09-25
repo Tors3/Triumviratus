@@ -1331,6 +1331,40 @@ int g_negext_cut = 3; // NegExtCut (SF=2): -extension on a cutNode (ttMove not
 // vivo. ⚠️ Finche' resta 0, NegExtCut va tenuto FUORI dallo spazio SPSA: tararlo
 // significa misurare rumore, ed e' gia' successo (default 3 = massimo del range).
 int g_negext_order = 0;
+// ExclPruneGate (audit 7.1 P1, 24/09/2026; spin 0..2, default 0 = byte-identico).
+// Dentro la ricerca singolare (excluded_move != 0) si cerca la stessa posizione senza la
+// TT move, a finestra singular_beta-1/singular_beta. Una null move o una static eval che
+// supera quella finestra la chiude subito: la TT move risulta "non singolare" senza che
+// nessuna mossa vera lo abbia provato, e scattano multicut o estensioni negative al posto
+// dell'estensione. Tutti gli 8 motori di riferimento escludono la NMP in quel caso;
+// Stormphrax, Viridithas, Caissa, Integral e Reckless anche RFP/razoring.
+// 1 = niente NMP nella ricerca singolare; 2 = niente anche RFP e razoring.
+int g_excl_prune_gate = 0;
+// FHBlend (audit 7.1 P2, 24/09/2026; check, default false = byte-identico).
+// Su un fail-high non decisivo il valore restituito (e scritto in TT) viene tirato
+// verso beta: best = (best*depth + beta)/(depth+1). SF, PlentyChess, Stormphrax,
+// Viridithas e Caissa lo fanno a fine nodo; da noi esisteva solo su RFP e qsearch
+// (FailHighSmooth). Un fail-high lontano da beta e' spesso gonfiato da potature a
+// valle: un bound TT meno ottimista costa meno re-search ai padri. Il peso di beta cala
+// con la profondita' (piu' ricerca = valore piu' fidato).
+bool g_fh_blend = false;
+// ---- Audit 7.1 gruppo 1, P3..P7 (24/09/2026). Tutti default OFF = byte-identico. ----
+// P3 PrevRefuteMalus (SF update_all_stats "extra penalty for a quiet early move"): quando
+// un nodo fa cutoff e la mossa QUIET del padre era la prima non-TT che il padre ha
+// cercato, quella mossa e' stata confutata subito -> malus alla sua conthist (1 ply).
+// Valore = percentuale di td_stat_bonus(depth); 0 = off. SF usa circa 70%.
+int g_prev_refute_malus = 0;
+// P4 ProbCutAdj (SF): il cutoff ProbCut ritorna pc_score - (probcut_beta - beta) invece
+// del valore gonfiato di +margine (lo store TT resta a pc_score, come SF).
+bool g_probcut_adj = false;
+// P5 RFPNoTTPv (SF, Reckless): niente RFP sui nodi che la TT ricorda come PV.
+bool g_rfp_no_ttpv = false;
+// P6 PruneNPMGate (SF, Plenty): se il lato al tratto ha solo pedoni e re, niente LMP,
+// futility, SEE e history pruning nel ciclo mosse (finali di pedoni: eval inaffidabile).
+bool g_prune_npm_gate = false;
+// P7 FutFailSoft (SF, Reckless): quando la futility quiet pota, il nodo fail-low
+// restituisce almeno il valore di futility invece del best delle sole mosse cercate.
+bool g_fut_fail_soft = false;
 // ⛔ SingularNoPollute — PROVATO E SCARTATO il 12/08/2026, non rifarlo.
 // L'idea: la ricerca singular rientra allo STESSO ply con `excluded_move` impostato, e
 // sul suo beta-cutoff scrive `cutoff_cnt`, killer, counter-move e TUTTE le history —
@@ -2623,6 +2657,34 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "CorrTBGuard")) {
     g_corr_tb_guard = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "PrevRefuteMalus")) {
+    g_prev_refute_malus = value < 0 ? 0 : (value > 200 ? 200 : value);
+    return true;
+  }
+  if (!strcmp(name, "ProbCutAdj")) {
+    g_probcut_adj = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "RFPNoTTPv")) {
+    g_rfp_no_ttpv = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "PruneNPMGate")) {
+    g_prune_npm_gate = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "FutFailSoft")) {
+    g_fut_fail_soft = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "FHBlend")) {
+    g_fh_blend = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "ExclPruneGate")) {
+    g_excl_prune_gate = value < 0 ? 0 : (value > 2 ? 2 : value);
     return true;
   }
   if (!strcmp(name, "NegExtOrder")) {
@@ -4724,6 +4786,20 @@ void copy_board_to_thread(ThreadData &td) {
       pop_bit(bb, sq);
     }
   }
+  // NPS 25/09/2026: chiavi minori/maggiori per la correction history, full init qui
+  // e poi incrementali (td_mm_key_update), come pawn_key e np_key.
+  td.mm_key[0] = td.mm_key[1] = 0;
+  {
+    const int mpcs[8] = {N, B, n, b, R, Q, r, q};
+    for (int j = 0; j < 8; j++) {
+      U64 bb = td.bitboards[mpcs[j]];
+      while (bb) {
+        int sq = get_ls1b_index(bb);
+        td.mm_key[j >= 4] ^= piece_keys[mpcs[j]][sq];
+        pop_bit(bb, sq);
+      }
+    }
+  }
   // P2.2: alla radice non ci sono null nel cammino -> finestra limitata solo
   // da fifty/storia. 1024 = "nessuna null vista".
   td.plies_from_null = 1024;
@@ -5031,6 +5107,40 @@ static inline void td_np_key_update(ThreadData &td, int piece, int source,
   }
 }
 
+// NPS 25/09/2026 — chiavi minori/maggiori INCREMENTALI (XOR self-inverse, stessi tre
+// siti di td_np_key_update). Prima td_corr_index_minor/major riscandivano 8 bitboard
+// fino a quattro volte per nodo (valore, incertezza, aggiornamento): il profilo xperf
+// del 25/09 dava ~370 cicli/nodo al blocco "corr index/value", contro una manciata di
+// letture in SF, che tiene minorPieceKey incrementale in do_move. Stessa chiave per
+// costruzione => nodi identici. (Il 4/08 era stata bocciata una CACHE degli indici per
+// hash_key, che e' un'altra cosa: aggiungeva un confronto e due campi senza togliere la
+// prima scansione di ogni nodo.)
+// Classe di un pezzo: 0 = minore (N/B), 1 = maggiore (R/Q), -1 = pedone o re.
+static constexpr int kMmClass[12] = {-1, 0, 0, 1, 1, -1, -1, 0, 0, 1, 1, -1};
+static inline void td_mm_key_update(ThreadData &td, int piece, int source,
+                                    int target, int promoted,
+                                    int captured_piece, int captured_square,
+                                    int castling) {
+  const int cm = kMmClass[piece];
+  if (cm >= 0)
+    td.mm_key[cm] ^= piece_keys[piece][source] ^ piece_keys[piece][target];
+  if (promoted)
+    td.mm_key[kMmClass[promoted]] ^= piece_keys[promoted][target];
+  if (captured_piece != -1) {
+    const int cc = kMmClass[captured_piece];
+    if (cc >= 0)
+      td.mm_key[cc] ^= piece_keys[captured_piece][captured_square];
+  }
+  if (castling) {
+    switch (target) {
+    case g1: td.mm_key[1] ^= piece_keys[R][h1] ^ piece_keys[R][f1]; break;
+    case c1: td.mm_key[1] ^= piece_keys[R][a1] ^ piece_keys[R][d1]; break;
+    case g8: td.mm_key[1] ^= piece_keys[r][h8] ^ piece_keys[r][f8]; break;
+    case c8: td.mm_key[1] ^= piece_keys[r][a8] ^ piece_keys[r][d8]; break;
+    }
+  }
+}
+
 static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   PROF_GUARD(prof_make);
   undo.old_castle = td.castle;
@@ -5048,6 +5158,29 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   int double_push = get_move_double(move);
   int enpass = get_move_enpassant(move);
   int castling = get_move_castling(move);
+
+#ifndef TRIUMV_NO_EARLY_PF
+  // NPS 25/09/2026 — PREFETCH ANTICIPATO (SF key_after). La chiave del figlio si stima
+  // PRIMA di fare la mossa: pezzo da/a, vittima (dalla mailbox, ancora pre-mossa), lato,
+  // e.p. azzerato. Ignora arrocco, promozione, nuova casa e.p. e diritti d'arrocco: in quei
+  // casi (rari) la stima sbaglia e il prefetch si rifa' in fondo con la chiave vera. Il
+  // profilo del 25/09 dava ~6% del tempo al carico dell'entry TT nel probe del figlio: il
+  // prefetch partiva in fondo alla make e aveva poco anticipo. Nella stessa riga di cache
+  // della eval cache del figlio (tabella da 1 MB per thread) parte il secondo prefetch.
+  // Nodi identici: i prefetch non cambiano nulla di funzionale.
+  U64 pf_key = td.hash_key ^ piece_keys[piece][source] ^ piece_keys[piece][target] ^ side_key;
+  if (capture && !enpass) {
+    const int vic = td.piece_on[target];
+    if (vic >= 0)
+      pf_key ^= piece_keys[vic][target];
+  }
+  if (td.enpassant != no_sq)
+    pf_key ^= enpassant_keys[td.enpassant];
+  if (g_tt_prefetch) {
+    TT_PREFETCH(&hash_table[tt_base_index(pf_key)]);
+    TT_PREFETCH(&td.eval_cache[pf_key & ThreadData::EVAL_CACHE_MASK]);
+  }
+#endif
 
   pop_bit(td.bitboards[piece], source);
   set_bit(td.bitboards[piece], target);
@@ -5155,7 +5288,10 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   if (g_pawn_key_incr)
     td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece,
                        undo.captured_square);
-  td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+  if (g_corr_nonpawn) // np_key serve solo a CorrNonPawn (spenta): niente lavoro a vuoto
+    td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+                     undo.captured_square, castling);
+  td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
 #ifndef TRIUMV_NO_MAILBOX
   td_mailbox_apply(td, piece, source, target, promoted, undo.captured_piece,
@@ -5214,7 +5350,10 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
     if (g_pawn_key_incr)
       td_pawn_key_update(td, piece, source, target, promoted,
                          undo.captured_piece, undo.captured_square);
-    td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+    if (g_corr_nonpawn)
+      td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+                       undo.captured_square, castling);
+    td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                      undo.captured_square, castling);
 #ifndef TRIUMV_NO_MAILBOX
     td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
@@ -5233,8 +5372,33 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   //  byte-identico, Reckless #1085): da giugno e' stato bakato TTTwoLevel
   //  (bucket 2 slot), il pattern di accesso TT e' cambiato -> vale una
   //  ri-misura NPS.)
+#ifndef TRIUMV_NO_CORR_PF
+  // NPS 25/09/2026 — prefetch delle entry di correction history che il figlio legge per
+  // prime (td_corr_value): pawn, minor, major con le chiavi GIA' aggiornate qui sopra, e la
+  // continuation correction indicizzata da (mossa di ingresso al padre, questa mossa).
+  // td.side e' gia' quello del figlio. Stockfish fa lo stesso in do_move. Il 09/09 era
+  // stato giudicato neutro su 14 coppie a tempo; si rimisura con nps_pair.
+  // 1 << 14 = CORR_SIZE (definita piu' sotto).
+  if (g_tt_prefetch) {
+    const int cmask = (1 << 14) - 1;
+    TT_PREFETCH(&td.corr_hist[td.side][td.pawn_key & cmask]);
+    TT_PREFETCH(&td.corr_hist_minor[td.side][td.mm_key[0] & cmask]);
+    TT_PREFETCH(&td.corr_hist_major[td.side][td.mm_key[1] & cmask]);
+    const int m2 = td.move_stack[td.ply - 1];  // td.ply e' gia' il ply del figlio
+    if (m2)
+      TT_PREFETCH(&td.cont_corr_hist[get_move_piece(m2)][get_move_target(m2)][piece][target]);
+  }
+#endif
+
+#ifndef TRIUMV_NO_EARLY_PF
+  if (g_tt_prefetch && td.hash_key != pf_key) { // stima sbagliata (arrocco, promozione, e.p.)
+    TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
+    TT_PREFETCH(&td.eval_cache[td.hash_key & ThreadData::EVAL_CACHE_MASK]);
+  }
+#else
   if (g_tt_prefetch)
     TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
+#endif
 
   // (PREFETCH delle tabelle di correzione, provato e RIMOSSO il 09/09/2026.
   //  Stockfish ne fa sei in do_move: TT, pawn history e quattro entry di
@@ -5249,6 +5413,10 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
 
   // Mirror the (now legal) move on the incremental NNUE position, in
   // Stockfish encoding. The moving piece is dirtyPiece[0] (king-refresh).
+  // (NPS 25/09/2026: provata la SfMove PIGRA, convertita solo nel catch-up. Misurata con i
+  //  contatori hardware: +0,15% di istruzioni/nodo, nessun guadagno. Quasi ogni mossa
+  //  fatta arriva a una valutazione, quindi rimandare la conversione non risparmia nulla.
+  //  Rimossa.)
   {
     SfMove sm;
     sm.movedPiece = nn_piece_code[piece];
@@ -5358,7 +5526,10 @@ static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
   if (g_pawn_key_incr)
     td_pawn_key_update(td, piece, source, target, promoted, undo.captured_piece,
                        undo.captured_square);
-  td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+  if (g_corr_nonpawn) // np_key serve solo a CorrNonPawn (spenta): niente lavoro a vuoto
+    td_np_key_update(td, piece, source, target, promoted, undo.captured_piece,
+                     undo.captured_square, castling);
+  td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
 #ifndef TRIUMV_NO_MAILBOX
   td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
@@ -5418,12 +5589,16 @@ static inline U64 td_attackers_to(ThreadData &td, int sq, int by) {
 // (MPS_GEN_QUIET) le genera gia', e attivarlo anche sullo stage tattico le
 // DUPLICHEREBBE nella main search. Default false = tutti i chiamanti invariati.
 #define MG_ADD(m) (mg_out[mg_cnt++] = (m))
-static void td_generate_moves(ThreadData &td, moves *move_list,
-                              bool captures_only = false,
-                              bool quiets_only   = false,
-                              int  known_in_check = -1,
-                              bool promo_quiet   = false,
-                              bool promo_queen_only = false,
+// NPS 25/09/2026 — generatore TEMPLATE sul colore. Il profilo xperf (campioni su
+// BranchMispredictions) dava a td_generate_moves ~2,3 mispredict/nodo contro ~0,5 del
+// movegen di SF, concentrati sul ciclo dei tipi di pezzo: con il colore a runtime ogni
+// iterazione rifaceva i test `piece == P`, `(td.side == white) ? piece == N : ...`.
+// Con MG_SIDE costante il ciclo si svolge e quei test spariscono. Stesso ordine di
+// generazione => nodi identici. Il wrapper td_generate_moves() sotto conserva la firma.
+template <int MG_SIDE>
+static void td_generate_moves_side(ThreadData &td, moves *move_list, bool captures_only,
+                                   bool quiets_only, int known_in_check, bool promo_quiet,
+                                   bool promo_queen_only,
                               // Modo 7: oltre alla donna genera anche il CAVALLO. Torre e
                               // alfiere restano fuori perche' sono strettamente DOMINATI
                               // dalla donna (fa tutto cio' che fanno loro); l'unica eccezione
@@ -5432,7 +5607,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
                               // donna non attacca, quindi esistono posizioni in cui la
                               // promozione a cavallo con scacco (forchetta re+donna) e'
                               // l'UNICA mossa vincente, e oggi la qsearch non la vede.
-                              bool promo_knight = false) {
+                                   bool promo_knight) {
   PROF_GUARD(prof_mg);
 #ifdef TRIUMV_PROFILE
   prof_n_mg++;   // SF: 0,52 chiamate/nodo, 156 cicli l'una (kiwipete)
@@ -5452,9 +5627,9 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
 
   // --- MAGIA BITWISE: Precalcoliamo le maschere ---
   U64 enemies =
-      (td.side == white) ? td.occupancies[black] : td.occupancies[white];
+      (MG_SIDE == white) ? td.occupancies[black] : td.occupancies[white];
   U64 friends =
-      (td.side == white) ? td.occupancies[white] : td.occupancies[black];
+      (MG_SIDE == white) ? td.occupancies[white] : td.occupancies[black];
   // Se vogliamo solo catture, le uniche case valide sono quelle nemiche.
   // Altrimenti, tutte le case tranne le nostre.
   U64 allowed_squares = captures_only ? enemies
@@ -5474,13 +5649,13 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
   U64 evasion_mask = ~0ULL;
   if (g_evasion_gen) {
     const int ksq =
-        get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+        get_ls1b_index((MG_SIDE == white) ? td.bitboards[K] : td.bitboards[k]);
     // 2C: se il chiamante lo sa gia', non si ri-scandiscono tutti i tipi di attaccante.
     const bool in_chk = (known_in_check >= 0)
                             ? (known_in_check != 0)
-                            : td_is_square_attacked(td, ksq, td.side ^ 1);
+                            : td_is_square_attacked(td, ksq, (MG_SIDE ^ 1));
     if (in_chk) {
-      U64 checkers = td_attackers_to(td, ksq, td.side ^ 1);
+      U64 checkers = td_attackers_to(td, ksq, (MG_SIDE ^ 1));
       if (checkers & (checkers - 1)) {
         evasion_mask = 0ULL; // doppio scacco: solo il re
       } else {
@@ -5497,11 +5672,16 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
   // (ogni ramo interno confronta col codice-pezzo del lato al tratto) ma pagano
   // comunque ~8 confronti a testa. Eredita' della struttura BBC.
   // P..K = 0..5, p..k = 6..11, quindi il blocco del lato e' contiguo.
-  const int mg_first = (td.side == white) ? P : p;
+  constexpr int mg_first = (MG_SIDE == white) ? P : p;
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#elif defined(__GNUC__)
+#pragma GCC unroll 6
+#endif
   for (int piece = mg_first; piece <= mg_first + 5; piece++) {
     bitboard = td.bitboards[piece];
 
-    if (td.side == white) {
+    if (MG_SIDE == white) {
       if (piece == P) {
         while (bitboard) {
           source_square = get_ls1b_index(bitboard);
@@ -5552,7 +5732,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
 
           // Catture dei pedoni
           attacks = quiets_only ? 0ULL   // 2A: le catture di pedone non passano da allowed_squares
-                  : (pawn_attacks[td.side][source_square] & enemies & evasion_mask);
+                  : (pawn_attacks[MG_SIDE][source_square] & enemies & evasion_mask);
           while (attacks) {
             target_square = get_ls1b_index(attacks);
             if (source_square >= a7 && source_square <= h7) {
@@ -5574,7 +5754,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           // En passant (  sempre una cattura, lo generiamo sempre)
           if (!quiets_only && td.enpassant != no_sq) {   // 2A: e.p. atterra su casa VUOTA
             U64 enpassant_attacks =
-                pawn_attacks[td.side][source_square] & (1ULL << td.enpassant);
+                pawn_attacks[MG_SIDE][source_square] & (1ULL << td.enpassant);
             if (enpassant_attacks) {
               int target_enpassant = get_ls1b_index(enpassant_attacks);
               MG_ADD( encode_move(source_square, target_enpassant,
@@ -5647,7 +5827,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           }
 
           attacks = quiets_only ? 0ULL   // 2A: le catture di pedone non passano da allowed_squares
-                  : (pawn_attacks[td.side][source_square] & enemies & evasion_mask);
+                  : (pawn_attacks[MG_SIDE][source_square] & enemies & evasion_mask);
           while (attacks) {
             target_square = get_ls1b_index(attacks);
             if (source_square >= a2 && source_square <= h2) {
@@ -5667,7 +5847,7 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
           }
           if (!quiets_only && td.enpassant != no_sq) {   // 2A: e.p. atterra su casa VUOTA
             U64 enpassant_attacks =
-                pawn_attacks[td.side][source_square] & (1ULL << td.enpassant);
+                pawn_attacks[MG_SIDE][source_square] & (1ULL << td.enpassant);
             if (enpassant_attacks) {
               int target_enpassant = get_ls1b_index(enpassant_attacks);
               MG_ADD( encode_move(source_square, target_enpassant,
@@ -5701,93 +5881,78 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
     }
 
     // --- PEZZI (Qui applichiamo la maschera allowed_squares) ---
-    if ((td.side == white) ? piece == N : piece == n) {
+    if ((MG_SIDE == white) ? piece == N : piece == n) {
       while (bitboard) {
         source_square = get_ls1b_index(bitboard);
         attacks = knight_attacks[source_square] & piece_allowed;
         while (attacks) {
           target_square = get_ls1b_index(attacks);
-          if (!get_bit(enemies, target_square))
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 0, 0, 0, 0));
-          else
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 1, 0, 0, 0));
+          // flag di cattura come bit, senza salto sul dato (stessa mossa)
+          MG_ADD(encode_move(source_square, target_square, piece, 0,
+                             (int)((enemies >> target_square) & 1), 0, 0, 0));
           pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
         pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
-    if ((td.side == white) ? piece == B : piece == b) {
+    if ((MG_SIDE == white) ? piece == B : piece == b) {
       while (bitboard) {
         source_square = get_ls1b_index(bitboard);
         attacks = get_bishop_attacks(source_square, td.occupancies[both]) &
                   piece_allowed;
         while (attacks) {
           target_square = get_ls1b_index(attacks);
-          if (!get_bit(enemies, target_square))
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 0, 0, 0, 0));
-          else
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 1, 0, 0, 0));
+          // flag di cattura come bit, senza salto sul dato (stessa mossa)
+          MG_ADD(encode_move(source_square, target_square, piece, 0,
+                             (int)((enemies >> target_square) & 1), 0, 0, 0));
           pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
         pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
-    if ((td.side == white) ? piece == R : piece == r) {
+    if ((MG_SIDE == white) ? piece == R : piece == r) {
       while (bitboard) {
         source_square = get_ls1b_index(bitboard);
         attacks = get_rook_attacks(source_square, td.occupancies[both]) &
                   piece_allowed;
         while (attacks) {
           target_square = get_ls1b_index(attacks);
-          if (!get_bit(enemies, target_square))
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 0, 0, 0, 0));
-          else
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 1, 0, 0, 0));
+          // flag di cattura come bit, senza salto sul dato (stessa mossa)
+          MG_ADD(encode_move(source_square, target_square, piece, 0,
+                             (int)((enemies >> target_square) & 1), 0, 0, 0));
           pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
         pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
-    if ((td.side == white) ? piece == Q : piece == q) {
+    if ((MG_SIDE == white) ? piece == Q : piece == q) {
       while (bitboard) {
         source_square = get_ls1b_index(bitboard);
         attacks = get_queen_attacks(source_square, td.occupancies[both]) &
                   piece_allowed;
         while (attacks) {
           target_square = get_ls1b_index(attacks);
-          if (!get_bit(enemies, target_square))
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 0, 0, 0, 0));
-          else
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 1, 0, 0, 0));
+          // flag di cattura come bit, senza salto sul dato (stessa mossa)
+          MG_ADD(encode_move(source_square, target_square, piece, 0,
+                             (int)((enemies >> target_square) & 1), 0, 0, 0));
           pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
         pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
       }
     }
 
-    if ((td.side == white) ? piece == K : piece == k) {
+    if ((MG_SIDE == white) ? piece == K : piece == k) {
       while (bitboard) {
         source_square = get_ls1b_index(bitboard);
         attacks = king_attacks[source_square] & allowed_squares;
         while (attacks) {
           target_square = get_ls1b_index(attacks);
-          if (!get_bit(enemies, target_square))
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 0, 0, 0, 0));
-          else
-            MG_ADD( encode_move(source_square, target_square, piece,
-                                            0, 1, 0, 0, 0));
+          // flag di cattura come bit, senza salto sul dato (stessa mossa)
+          MG_ADD(encode_move(source_square, target_square, piece, 0,
+                             (int)((enemies >> target_square) & 1), 0, 0, 0));
           pop_lsb_bb(attacks);   // 2D: target_square E' l'LSB di attacks
         }
         pop_lsb_bb(bitboard);   // 2D: source_square E' l'LSB di bitboard
@@ -5795,6 +5960,21 @@ static void td_generate_moves(ThreadData &td, moves *move_list,
     }
   }
   move_list->count = mg_cnt;
+}
+
+static void td_generate_moves(ThreadData &td, moves *move_list,
+                              bool captures_only = false,
+                              bool quiets_only   = false,
+                              int  known_in_check = -1,
+                              bool promo_quiet   = false,
+                              bool promo_queen_only = false,
+                              bool promo_knight = false) {
+  if (td.side == white)
+    td_generate_moves_side<white>(td, move_list, captures_only, quiets_only, known_in_check,
+                                  promo_quiet, promo_queen_only, promo_knight);
+  else
+    td_generate_moves_side<black>(td, move_list, captures_only, quiets_only, known_in_check,
+                                  promo_quiet, promo_queen_only, promo_knight);
 }
 
 // ============================================================================
@@ -5932,7 +6112,7 @@ static inline int td_evaluate(ThreadData &td) {
       ce.key = td.hash_key;
       ce.eval = tt_eval_undamp(v, td.fifty);
       ce.opt = opt_now;
-      ce.coeff = nn_last_opt_coeff();
+      ce.coeff = g_evalcache_opt_split ? nn_last_opt_coeff(td.nnpos) : 0; // letto solo con OptSplit
       return v;
     }
     const U64 ck = td.hash_key ^ (0x9E3779B97F4A7C15ULL * (U64)(td.fifty + 1));
@@ -5945,7 +6125,7 @@ static inline int td_evaluate(ThreadData &td) {
     ce.key = ck;
     ce.eval = v;
     ce.opt = opt_now;
-    ce.coeff = nn_last_opt_coeff();
+    ce.coeff = g_evalcache_opt_split ? nn_last_opt_coeff(td.nnpos) : 0; // letto solo con OptSplit
     return v;
   }
   // Incremental: the accumulator is updated only for the pieces that changed
@@ -6100,11 +6280,12 @@ static inline void td_compute_threats(ThreadData &td) {
 // pezzi di valore), 2 = solo da rook/queen/king. Usa i tier che gia' calcoliamo
 // (threat_by_minor = pawn+minori, threat_all = tutte).
 static inline int td_sq_tier(ThreadData &td, int sq) {
-  if (get_bit(td.threat_by_minor, sq))
-    return 1;
-  if (get_bit(td.threat_all, sq))
-    return 2;
-  return 0;
+  // NPS 25/09/2026: senza salti. threat_by_minor e' un SOTTOINSIEME di threat_all
+  // (byP ⊆ byM ⊆ byR ⊆ all, vedi td_compute_threats), quindi
+  //   minor -> 1 ; solo all -> 2 ; niente -> 0   ==   2*all - minor.
+  const int m = (int)((td.threat_by_minor >> sq) & 1);
+  const int a = (int)((td.threat_all >> sq) & 1);
+  return 2 * a - m;
 }
 // ThreatHist REPLACE-TIERED: bucket-minaccia di una mossa = from_tier*3 +
 // to_tier (0..8). Ritorna 0 quando ThreatHist e' OFF -> history_moves[0][..] =
@@ -6586,6 +6767,160 @@ static inline int td_score_move(ThreadData &td, int move, int tt_move) {
 //  cache, e non c'era niente da anticipare. I prefetch sono rimasti come puro
 //  costo, 27 istruzioni per nodo.)
 
+// ---- NPS 25/09/2026: scoring delle QUIET in blocco ---------------------------------
+// td_score_move rifaceva per OGNI quiet lavoro che vale per tutto il nodo: le righe di
+// continuation history della mossa precedente (e a 3/6 ply), la riga di pawn history, la
+// low-ply, i test sulle chiavi di minacce/scacchi/offense, la ricerca nella NodeCache.
+// Qui si calcola tutto una volta per nodo (QuietCtx) e per mossa restano le letture.
+// 🔑 PUNTEGGI IDENTICI BIT PER BIT: stesse espressioni intere, nello stesso ordine, di
+// td_score_move (ogni divisione avviene dove avveniva). Nodi identici.
+struct QuietCtx {
+  int tt_move, k0, k1, counter;
+  const int16_t (*c1)[64];   // continuation_history[prev] oppure nullptr
+  const int16_t (*c2)[64];   // cont_hist_2 (solo ContHistMulti)
+  const int16_t (*c4)[64];   // cont_hist_4 (solo ContHistMulti)
+  const int16_t (*c3)[64];   // cont_hist_3 (ContHist36)
+  const int16_t (*c6)[64];   // cont_hist_6 (ContHist36)
+  const int16_t (*ph)[64];   // pawn_history[pk]
+  const int (*lp)[64];       // lowply_history[ply] oppure nullptr
+  int lp_div;
+  ThreadData::NCEntry *nc;   // NodeCache del nodo (gia' filtrata per nodes_sum)
+};
+
+static inline void td_quiet_ctx_init(ThreadData &td, QuietCtx &q, int tt_move) {
+  q.tt_move = tt_move;
+  q.k0 = td.killer_moves[0][td.ply];
+  q.k1 = td.killer_moves[1][td.ply];
+  const int prev = td.move_stack[td.ply];
+  q.counter = (g_countermove && prev)
+                  ? td.counter_moves[get_move_piece(prev)][get_move_target(prev)]
+                  : 0;
+  q.c1 = prev ? td.continuation_history[get_move_piece(prev)][get_move_target(prev)]
+              : nullptr;
+  q.c2 = q.c4 = q.c3 = q.c6 = nullptr;
+  if (g_conthist_multi) {
+    if (td.ply >= 1) {
+      const int p2 = td.move_stack[td.ply - 1];
+      if (p2) q.c2 = td.cont_hist_2[get_move_piece(p2)][get_move_target(p2)];
+    }
+    if (td.ply >= 3) {
+      const int p4 = td.move_stack[td.ply - 3];
+      if (p4) q.c4 = td.cont_hist_4[get_move_piece(p4)][get_move_target(p4)];
+    }
+  }
+  if (g_conthist36) {
+    if (td.ply >= 2) {
+      const int p3 = td.move_stack[td.ply - 2];
+      if (p3) q.c3 = td.cont_hist_3[get_move_piece(p3)][get_move_target(p3)];
+    }
+    if (td.ply >= 5) {
+      const int p6 = td.move_stack[td.ply - 5];
+      if (p6) q.c6 = td.cont_hist_6[get_move_piece(p6)][get_move_target(p6)];
+    }
+  }
+  q.ph = g_pawn_hist ? td.pawn_history[td_corr_index(td) & ThreadData::PAWN_HIST_MASK]
+                     : nullptr;
+  if (g_lowply && td.ply < ThreadData::LOW_PLY_MAX) {
+    q.lp = td.lowply_history[td.ply];
+    q.lp_div = 100 * (1 + 2 * td.ply);
+  } else {
+    q.lp = nullptr;
+    q.lp_div = 1;
+  }
+  if ((g_threat_hist || g_threat_ordering) && td.threat_key != td.hash_key)
+    td_compute_threats(td);
+  if (g_check_ordering && td.check_key != td.hash_key)
+    td_compute_checks(td);
+  if (g_quiet_offense && td.offense_key != td.hash_key)
+    td_compute_offense(td);
+  q.nc = nullptr;
+  if (g_node_cache && td.ply < ThreadData::NC_MAX_PLY) {
+    ThreadData::NCEntry *e = nc_try(td, td.hash_key);
+    if (e && e->nodes_sum > (U64)g_nc_min_sum)
+      q.nc = e;
+  }
+}
+
+static inline int td_score_quiet(ThreadData &td, const QuietCtx &q, int move) {
+  if (move == q.tt_move)
+    return SCORE_TT_MOVE;
+  const int piece = get_move_piece(move);
+  const int target = get_move_target(move);
+  if (get_move_promoted(move))
+    return SCORE_GOOD_CAPTURE + 50000;
+  if (get_move_capture(move))
+    return td_score_move(td, move, q.tt_move); // mai nello stadio quiet: via lunga, identica
+  if (q.k0 == move)
+    return SCORE_KILLER0;
+  if (q.k1 == move)
+    return SCORE_KILLER1;
+  if (q.counter && q.counter == move)
+    return SCORE_COUNTER;
+
+  int h = g_mainhist_weight *
+          td.history_moves[td_hbucket(td, move)][piece][target] / 100;
+  if (g_threat_hist && g_threat_hist_weight != 100)
+    h = h * g_threat_hist_weight / 100;
+  int ch = 0;
+  if (q.c1)
+    ch += q.c1[piece][target];
+  if (q.c2)
+    ch += q.c2[piece][target];
+  if (q.c4)
+    ch += q.c4[piece][target];
+  if (g_conthist36) {
+    int ch36 = 0;
+    if (q.c3)
+      ch36 += q.c3[piece][target];
+    if (q.c6)
+      ch36 += q.c6[piece][target];
+    ch += g_conthist36_weight * ch36 / 100;
+  }
+  h += g_conthist_weight * ch / 100;
+  if (q.ph)
+    h += g_pawn_hist_weight * (int)q.ph[piece][target] / 100;
+  if (g_threat_ordering) {
+    U64 lesser = 0;
+    bool has = true;
+    switch (piece % 6) {
+    case 4: lesser = td.threat_by_rook; break;
+    case 3: lesser = td.threat_by_minor; break;
+    case 1:
+    case 2: lesser = td.threat_by_pawn; break;
+    default: has = false; break;
+    }
+    if (has) {
+      const int from = get_move_source(move);
+      const int term =
+          (get_bit(lesser, from) ? 1 : 0) - (get_bit(lesser, target) ? 1 : 0);
+      if (term)
+        h += g_threat_scale * see_piece_values[piece] * term / 100;
+    }
+  }
+  if (g_check_ordering) {
+    if (get_bit(td.check_sq[piece % 6], target) && td_see_at_least(td, move, -75))
+      h += g_check_bonus;
+  }
+  if (g_quiet_offense) {
+    if (get_bit(td.offense_sq[piece % 6], target))
+      h += g_offense_bonus;
+    if (get_bit(td.wall_pawns, get_move_source(move)))
+      h -= g_wallpawn_penalty;
+  }
+  if (q.lp)
+    h += g_lowply_weight * q.lp[piece][target] / q.lp_div;
+  if (q.nc) {
+    const ThreadData::NCEntry *e = q.nc;
+    for (int i = 0; i < ThreadData::NC_MOVES && e->mv[i]; i++) {
+      if (e->mv[i] == move) {
+        h += (int)((U64)g_nc_bonus * e->mv_nodes[i] / e->nodes_sum);
+        break;
+      }
+    }
+  }
+  return h;
+}
+
 static inline void td_sort_moves(ThreadData &td, moves *move_list,
                                  int tt_move) {
   int scores[256];
@@ -6914,11 +7249,12 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     // captures score ~-700k and are deferred to MPS_BAD_TACTICAL.
     for (;;) {
       int best = -1, bs = 0;
-      for (int i = 0; i < mp.cap_n; i++)
-        if (mp.cap_scores[i] > bs) {
-          bs = mp.cap_scores[i];
-          best = i;
-        }
+      for (int i = 0; i < mp.cap_n; i++) { // senza salti, come lo stadio quiet
+        const int v = mp.cap_scores[i];
+        const bool b = v > bs;
+        bs = b ? v : bs;
+        best = b ? i : best;
+      }
       if (best < 0)
         break;
       int m = mp.caps->moves[best];
@@ -6987,6 +7323,8 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     td_generate_moves(td, mp.quiets, /*captures_only=*/false, /*quiets_only=*/true,
                       mp.in_check);   // 2C
     mp.q_n = mp.quiets->count;
+    QuietCtx qctx;                               // NPS 25/09/2026: contesto una volta per nodo
+    td_quiet_ctx_init(td, qctx, mp.tt_move);
     for (int i = 0; i < mp.q_n; i++) {
       int m = mp.quiets->moves[i];
       // Le catture le rendono gli stage tattici; TT/killer/counter sono gia' state rese ->
@@ -6998,7 +7336,11 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
           (mp.skip_quiets && !get_move_promoted(m)))
         mp.q_scores[i] = MP_CONSUMED;
       else
-        mp.q_scores[i] = td_score_move(td, m, mp.tt_move);
+#ifndef TRIUMV_NO_QUIET_BATCH
+        mp.q_scores[i] = td_score_quiet(td, qctx, m);
+#else
+        mp.q_scores[i] = td_score_move(td, m, mp.tt_move); // baseline per l'A/B
+#endif
     }
     mp.stage = MPS_QUIET;
     [[fallthrough]];
@@ -7011,15 +7353,28 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
       mp.stage = MPS_BAD_TACTICAL;
       goto bad_tactical;
     }
-    int best = -1, bs = MP_CONSUMED;
-    for (int i = 0; i < mp.q_n; i++)
-      if (mp.q_scores[i] != MP_CONSUMED && mp.q_scores[i] > bs) {
-        bs = mp.q_scores[i];
-        best = i;
+    // NPS 25/09/2026 — selezione del massimo SENZA SALTI. Il profilo xperf campionato su
+    // BranchMispredictions dava a questo stadio ~11% di tutti i mispredict del motore
+    // (~3,7 per nodo): il confronto `score > best` salta in modo imprevedibile a ogni
+    // nuovo massimo. Provata anche la via "ordina una volta" (insertion sort stabile
+    // dopo 3 selezioni): meno istruzioni ma PIU' mispredict (l'uscita dal ciclo interno
+    // e' casuale). La scelta con cmov non ha salti sul dato e costa ~2 istruzioni per
+    // elemento. Le mosse gia' rese valgono MP_CONSUMED, che non supera mai bs iniziale
+    // (confronto stretto): il test `!= MP_CONSUMED` era ridondante.
+    // 🔑 NODI IDENTICI: stessa regola di prima, "il primo massimo per indice".
+    {
+      int best = -1, bs = MP_CONSUMED;
+      const int *sc = mp.q_scores;
+      for (int i = 0; i < mp.q_n; i++) {
+        const int v = sc[i];
+        const bool b = v > bs;
+        bs = b ? v : bs;
+        best = b ? i : best;
       }
-    if (best >= 0) {
-      mp.q_scores[best] = MP_CONSUMED;
-      return mp.quiets->moves[best];
+      if (best >= 0) {
+        mp.q_scores[best] = MP_CONSUMED;
+        return mp.quiets->moves[best];
+      }
     }
     mp.stage = MPS_BAD_TACTICAL;
     // fallthrough into bad-tactical
@@ -7033,11 +7388,12 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
     }
     for (;;) {
       int best = -1, bs = MP_CONSUMED;
-      for (int i = 0; i < mp.cap_n; i++)
-        if (mp.cap_scores[i] != MP_CONSUMED && mp.cap_scores[i] > bs) {
-          bs = mp.cap_scores[i];
-          best = i;
-        }
+      for (int i = 0; i < mp.cap_n; i++) { // senza salti; CONSUMED non supera mai bs
+        const int v = mp.cap_scores[i];
+        const bool b = v > bs;
+        bs = b ? v : bs;
+        best = b ? i : best;
+      }
       if (best < 0)
         break;
       int m = mp.caps->moves[best];
@@ -7229,13 +7585,28 @@ static bool td_has_any_legal_move(ThreadData &td) {
 // qs_depth: 0 alla prima ply di qsearch (chiamate dal negamax), decresce nelle
 // ricorsioni. Serve solo a P1.3 QSChecks (quiet check tenuti SOLO a qs_depth
 // 0).
+// NPS 25/09/2026 — risultato GREZZO di un probe TT gia' fatto sulla stessa posizione.
+// td_negamax a depth <= 0 interrogava la TT (per le sue regole di cutoff) e poi passava
+// alla qsearch, che la interrogava di nuovo sulla stessa chiave senza che nel frattempo
+// fosse stato scritto nulla. Ora il primo probe viene passato. Nodi identici: stesso
+// risultato, e il refresh d'eta' del primo probe e' gia' avvenuto (il secondo non
+// scriveva piu' niente).
+struct TtProbeData {
+  bool hit;
+  int move, score, depth, flag, eval;
+  bool pv;
+};
+
 static int td_quiescence(ThreadData &td, int alpha, int beta,
-                         int qs_depth = 0) {
+                         int qs_depth = 0, const TtProbeData *pre = nullptr) {
   // Illegal-position / king-capture guard (see td_negamax for the full
   // rationale): never search a position where the side not to move is in check,
   // because making the king capture desyncs the NNUE accumulator and crashes.
   // (Rimozione provata 2026-06-06: node-identica ma NPS ~0 -> tenuta per
-  // safety.)
+  // safety.) NPS 25/09/2026: gate ply==0, stesso ragionamento di td_negamax.
+#ifndef TRIUMV_FULL_KING_GUARD
+  if (td.ply == 0)
+#endif
   {
     int opp_king_sq =
         get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);
@@ -7280,8 +7651,18 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   int tt_move = 0, tt_score = 0, tt_depth = 0, tt_flag = hash_flag_alpha;
   int tt_eval = tt_eval_none; // P1.1
   bool tt_pv_q = false;
-  bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag,
-                         tt_eval, tt_pv_q);
+  bool tt_hit;
+  if (pre) {
+    tt_hit = pre->hit;
+    tt_move = pre->move;
+    tt_score = pre->score;
+    tt_depth = pre->depth;
+    tt_flag = pre->flag;
+    tt_eval = pre->eval;
+    tt_pv_q = pre->pv;
+  } else
+    tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag,
+                      tt_eval, tt_pv_q);
   if (tt_hit && !pv_node) {
     if (tt_score < -mate_score)
       tt_score += td.ply;
@@ -7298,9 +7679,18 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   }
 
   // Sotto scacco: niente stand-pat, si cercano TUTTE le evasioni.
-  int king_sq =
-      get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
-  bool in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
+  // NPS 25/09/2026: se il padre ha appena calcolato gives_check per questa mossa, lo
+  // scacco al nodo e' gia' noto (vedi chk_hint in threads.h). Stesso valore, un test
+  // di attacco in meno per nodo.
+  const int chk_hint = td.chk_hint[td.ply];
+  bool in_check;
+  if (chk_hint >= 0)
+    in_check = chk_hint != 0;
+  else {
+    int king_sq =
+        get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+    in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
+  }
 
   int best_score;
   int q_raw_eval =
@@ -7452,9 +7842,13 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
 
     // --- INIZIO PICK-NEXT: Cerca la mossa migliore tra quelle rimaste ---
     int best_idx = count;
-    for (int i = count + 1; i < move_list->count; i++) {
-      if (move_scores[i] > move_scores[best_idx]) {
-        best_idx = i;
+    {
+      int bsc = move_scores[count]; // NPS 25/09/2026: senza salti (stessa scelta)
+      for (int i = count + 1; i < move_list->count; i++) {
+        const int v = move_scores[i];
+        const bool b = v > bsc;
+        bsc = b ? v : bsc;
+        best_idx = b ? i : best_idx;
       }
     }
 
@@ -7722,13 +8116,23 @@ static inline int td_corr_index(ThreadData &td) {
   return td_corr_index_pieces(td, pcs, 2);
 }
 // Minor-piece (N/B) and major-piece (R/Q) keyed indices (CorrHistMulti only).
+// NPS 25/09/2026: chiavi incrementali (td_mm_key_update). -DTRIUMV_NO_MM_KEY_INCR torna
+// alla scansione, come oracolo: deve dare lo stesso bench.
 static inline int td_corr_index_minor(ThreadData &td) {
+#ifndef TRIUMV_NO_MM_KEY_INCR
+  return (int)(td.mm_key[0] & CORR_MASK);
+#else
   const int pcs[4] = {N, B, n, b};
   return td_corr_index_pieces(td, pcs, 4);
+#endif
 }
 static inline int td_corr_index_major(ThreadData &td) {
+#ifndef TRIUMV_NO_MM_KEY_INCR
+  return (int)(td.mm_key[1] & CORR_MASK);
+#else
   const int pcs[4] = {R, Q, r, q};
   return td_corr_index_pieces(td, pcs, 4);
+#endif
 }
 // Material-key index (SF #5556): rolling hash dei 12 popcount = firma del
 // MATERIALE (conteggi), indipendente dalle posizioni. Mascherato come le altre
@@ -8158,6 +8562,17 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // side not to move is never in check, so this costs one attack probe and
   // never fires. (Gate ply==0 provato 2026-06-06: node-identico ma NPS ~0 ->
   // non vale; tenuto pieno. La probe e' troppo cheap per spostare gli NPS.)
+  // NPS 25/09/2026: RIMESSO il gate ply==0. Quella misura era a tempo, su un laptop,
+  // quando il motore faceva ~7.000 istruzioni/nodo in piu' di oggi; ora si conta con i
+  // contatori hardware e ogni test di attacco (5 lookup + branch) e' una frazione
+  // visibile. Perche' e' sicuro: ogni nodo con ply > 0 nasce da td_make_move, che
+  // RIFIUTA le mosse che lasciano il proprio re attaccato, o da una null move, che si
+  // fa solo fuori scacco. In entrambi i casi il lato che NON muove non e' mai sotto
+  // scacco. L'unico ingresso non garantito e' la posizione di radice (FEN esterna).
+  // -DTRIUMV_FULL_KING_GUARD riporta il controllo a ogni nodo.
+#ifndef TRIUMV_FULL_KING_GUARD
+  if (td.ply == 0)
+#endif
   {
     int opp_king_sq =
         get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);
@@ -8236,6 +8651,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // TT probe
   bool tt_hit = probe_tt(td.hash_key, tt_move, tt_score, tt_depth, tt_flag,
                          tt_eval, tt_pv);
+  const int tt_score_raw = tt_score; // il blocco di cutoff sotto modifica tt_score sul posto
 
   // ttPv (SF): un nodo è "PV-ish" se è un vero PV node o se la TT lo ricorda
   // ex-PV. store_pv viene scritto negli store TT (propaga il flag); il segnale
@@ -8361,8 +8777,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     }
   }
 
-  if (depth <= 0)
-    return td_quiescence(td, alpha, beta);
+  if (depth <= 0) {
+    const TtProbeData ttp{tt_hit, tt_move, tt_score_raw, tt_depth, tt_flag, tt_eval, tt_pv};
+    return td_quiescence(td, alpha, beta, 0, &ttp);
+  }
 
   // Ply ceiling. Set pv_length here so the parent's PV-copy loop reads a sane
   // (terminating) bound from pv_length[ply+1] instead of OOB garbage.
@@ -8412,9 +8830,18 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     }
   }
 
-  int king_sq =
-      get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
-  bool in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
+  // NPS 25/09/2026: se il padre ha appena calcolato gives_check per questa mossa, lo
+  // scacco al nodo e' gia' noto (vedi chk_hint in threads.h). Stesso valore, un test
+  // di attacco in meno per nodo.
+  const int chk_hint = td.chk_hint[td.ply];
+  bool in_check;
+  if (chk_hint >= 0)
+    in_check = chk_hint != 0;
+  else {
+    int king_sq =
+        get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
+    in_check = td_is_square_attacked(td, king_sq, td.side ^ 1);
+  }
 
   // P1.9: gate co-tunabile sulla check-extension (default 128 = sempre =
   // comportamento storico; il co-tune puo' abbassarlo, 0 = mai).
@@ -8524,7 +8951,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     // pollution) cosi' i nodi potati non ricalcolano la forward alla rivisita.
     // tt_eval==none qui => td_evaluate() appena chiamato.
     if (g_eval_tt_write && tt_eval == tt_eval_none)
-      tt_cache_eval(td.hash_key, nn_last_unadjusted());
+      tt_cache_eval(td.hash_key, nn_last_unadjusted(td.nnpos));
   }
 
   // P1.1 (2026-06-09): "improved eval" stile SF — se la TT ha uno score il cui
@@ -8630,7 +9057,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // shave one ply off the margin (easier cutoff): a rising eval is more likely
   // to hold above beta.
   int rfp_cap = g_rfp_depth_cap > 0 ? g_rfp_depth_cap : (g_rfp_depth8 ? 8 : 6);
-  if (!pv_node && !in_check && depth <= rfp_cap && beta < mate_score) {
+  if (!pv_node && !in_check && depth <= rfp_cap && beta < mate_score &&
+      !(g_rfp_no_ttpv && tt_hit && tt_pv) && // RFPNoTTPv (P5)
+      !(g_excl_prune_gate >= 2 && excluded_move)) {
     // F-018.12 RFPHistThresh (0=off): se la hash move e' una quiet con history
     // scarsa, il fail-high statico non e' affidabile -> non tagliare (Berserk).
     bool rfp_ok = true;
@@ -8673,6 +9102,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // null.
   if (!pv_node && !in_check && td.ply && depth >= 3 && beta < mate_score &&
       eval >= beta && (!g_nmp_cutnode_only || is_cut_node) &&
+      !(g_excl_prune_gate >= 1 && excluded_move) && // ExclPruneGate (P1)
       // F-018.8a NMPStaticMargin (default OFF): la STATIC eval (non quella
       // TT-improved) deve superare beta di un margine depth-dipendente (SF:
       // 21*depth - 421).
@@ -8780,7 +9210,8 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
                (get_move_capture(tt_move) || get_move_promoted(tt_move));
   if (g_razor_ttlower && tt_hit && tt_flag == hash_flag_beta)
     razor_ok = false; // bound LOWER = ha gia' fallito alto
-  if (!pv_node && !in_check && razor_ok && depth <= razor_cap) {
+  if (!pv_node && !in_check && razor_ok && depth <= razor_cap &&
+      !(g_excl_prune_gate >= 2 && excluded_move)) {
     int razor_margin =
         g_razor_base + g_razor_mult * depth +
         g_razor_quad_coef * depth * depth; // coef 0 = legacy linear
@@ -8898,6 +9329,9 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             store_tt(td.hash_key, move, pc_score, pc_depth + 1, hash_flag_beta,
                      td.ply, store_pv,
                      tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
+          // ProbCutAdj (P4): valore riportato verso beta del margine usato.
+          if (g_probcut_adj && pc_score < mate_score - 2 * max_ply)
+            return pc_score - (probcut_beta - beta);
           return pc_score; // fail-soft prune
         }
       }
@@ -8950,6 +9384,13 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
 
   int moves_searched = 0;
   int quiets_searched = 0;
+  // PruneNPMGate (P6): true = le potature del ciclo mosse sono ammesse.
+  const bool mp_prune_ok =
+      !g_prune_npm_gate ||
+      ((td.side == white) ? (td.bitboards[N] | td.bitboards[B] | td.bitboards[R] |
+                             td.bitboards[Q])
+                          : (td.bitboards[n] | td.bitboards[b] | td.bitboards[r] |
+                             td.bitboards[q])) != 0;
   int bad_caps_pruned = 0; // BadCapSkipAfter: bad capture SEE-potate a questo nodo
   LmpChkCtx
       lmp_chk; // LMPCheckGuard: check-squares del nodo, riempite alla prima LMP
@@ -9038,7 +9479,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
 
     // LMP  (Q-15: mai sui nodi che seguono la PV — l'ordinamento li' e' gia'
     // fidato)
-    if (!pv_node && !in_check && is_quiet && best_score > -mate_score &&
+    if (mp_prune_ok && !pv_node && !in_check && is_quiet && best_score > -mate_score &&
         !follow_pv) {
       int lmp_threshold = -1; // -1 = nessun move-count pruning a questo nodo
       if (g_lmp_improving) {
@@ -9077,7 +9518,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     // Futility pruning. When improving, widen the margin so we prune fewer
     // quiets (a rising eval deserves the benefit of the doubt); when not
     // improving, the base margin prunes more.
-    if (!pv_node && !in_check && prune_depth <= g_fut_depth && is_quiet &&
+    if (mp_prune_ok && !pv_node && !in_check && prune_depth <= g_fut_depth && is_quiet &&
         best_score > -mate_score && !follow_pv &&
         (!g_fut_spare_quiet ||
          quiets_searched >= 1)) { // Q-15 + Q-20c (risparmia la prima quiet)
@@ -9091,6 +9532,13 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             corr_uncert * g_cu_fut / 64; // P1a: disaccordo corr -> pota meno
 
       if (eval + futility_margin <= alpha) {
+        // FutFailSoft (P7): il fail-low restituisce almeno il valore di futility.
+        if (g_fut_fail_soft) {
+          const int fv = eval + futility_margin;
+          if (fv > best_score && best_score < mate_score - 2 * max_ply &&
+              fv < mate_score - 2 * max_ply)
+            best_score = fv;
+        }
         // Phase-2: once futility fires, ALL remaining quiets at this node
         // fail the same static-eval test -> skip the entire stage.
         // ...tranne quando c'e' un pedone in zona promozione: li' lo stage va
@@ -9115,7 +9563,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     // g_capfut_vic_scale). Fino al 2026-07-16 entrava a 1x: sotto-pesato ~2.4x
     // -> si potavano proprio le catture buone che le due righe qui sopra
     // dichiarano intoccabili.
-    if (g_cap_futility && !pv_node && !in_check && is_capture &&
+    if (mp_prune_ok && g_cap_futility && !pv_node && !in_check && is_capture &&
         !is_promotion && best_score > -mate_score) {
       int d_idx = depth < 64 ? depth : 63;
       int m_idx = moves_searched < 64 ? moves_searched : 63;
@@ -9157,7 +9605,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     int see_gate_depth = see_lmr_path ? prune_depth : depth;
     bool see_gate_ok = see_lmr_path ? (see_gate_depth <= g_see_lmr_prune_cap)
                                     : (see_gate_depth <= g_see_depth);
-    if (!pv_node && !in_check && !is_promotion && see_gate_ok &&
+    if (mp_prune_ok && !pv_node && !in_check && !is_promotion && see_gate_ok &&
         best_score > -mate_score) {
       int quiet_margin_coef =
           see_lmr_path ? g_see_lmr_quiet_margin : g_see_quiet_margin;
@@ -9214,7 +9662,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     // context -> skip it at low depth. Threshold scales with depth so we prune
     // more aggressively the shallower we are. NB: td.ply not yet incremented
     // here, so the previous move is td.move_stack[td.ply].
-    if (g_cont_hist_prune && !pv_node && !in_check && is_quiet &&
+    if (mp_prune_ok && g_cont_hist_prune && !pv_node && !in_check && is_quiet &&
         prune_depth <= g_conthist_prune_depth && moves_searched > 0 &&
         best_score > -mate_score) {
       int prev = td.move_stack[td.ply];
@@ -9515,6 +9963,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
     int stm_king_sq =
         get_ls1b_index((td.side == white) ? td.bitboards[K] : td.bitboards[k]);
     bool gives_check = td_is_square_attacked(td, stm_king_sq, td.side ^ 1);
+    td.chk_hint[td.ply] = gives_check ? 1 : 0; // letto dal figlio (e dalla sua qsearch)
 
     // Record the move that leads to the child node (for counter-move).
     td.move_stack[td.ply] = move;
@@ -9930,6 +10379,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
       }
     }
 
+    td.chk_hint[td.ply] = -1; // fine della vita del figlio: il suggerimento non vale piu'
     td_unmake_move(td, move, undo);
     td.ply--;
     td.repetition_index--;
@@ -10008,9 +10458,31 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
             if (tt_hit)
               td.fh_probe++; // entry TT presente (anche senza mossa)
           }
+          // FHBlend (P2): prima dello store TT e dell'update di correzione, come SF.
+          // Soglia "decisivo" = banda TB inclusa (mate_score - 2*max_ply, cfr. CorrTBGuard).
+          if (g_fh_blend && best_score < mate_score - 2 * max_ply &&
+              beta < mate_score - 2 * max_ply && beta > -(mate_score - 2 * max_ply))
+            best_score = (best_score * depth + beta) / (depth + 1);
+          // PrevRefuteMalus (P3): la quiet del padre, prima mossa non-TT cercata dal
+          // padre, e' stata confutata subito -> malus alla sua conthist (1 ply).
+          // seen_stack[ply-1] = mosse gia' cercate dal padre prima di questa.
+          if (g_prev_refute_malus && td.ply >= 2) {
+            const int pm = td.move_stack[td.ply];
+            const int ptt = td.ttmove_stack[td.ply - 1];
+            if (pm && pm != ptt && td.captured_stack[td.ply] == -1 &&
+                !get_move_promoted(pm) &&
+                td.seen_stack[td.ply - 1] == (ptt ? 1 : 0)) {
+              const int pm2 = td.move_stack[td.ply - 1];
+              if (pm2)
+                td_update_history(
+                    td.continuation_history[get_move_piece(pm2)][get_move_target(pm2)]
+                                           [get_move_piece(pm)][get_move_target(pm)],
+                    -td_stat_bonus(depth) * g_prev_refute_malus / 100);
+            }
+          }
           td.cutoff_cnt[td.ply] +=
               tt_move ? 1 : 2; // SF cutoffCnt: += 1 + !ttMove
-          if (!excluded_move)
+          if (!excluded_move && !(is_root_node && td.root_only_move))
             store_tt(td.hash_key, move, best_score, depth, hash_flag_beta,
                      td.ply, store_pv,
                      tt_store_eval(node_raw_eval, tt_eval, tt_flag, td.fifty));
@@ -10218,7 +10690,11 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   if (g_ttpv_inherit && hash_flag == hash_flag_alpha && td.ply >= 1 &&
       td.ttpv_stack[td.ply - 1])
     store_pv = true;
-  if (!excluded_move)
+  // root_only_move (TroubleMaking): la verifica di UNA mossa non deve
+  // lasciare alla root un'entry con quella mossa come best (flag alpha, depth
+  // ridotta): l'iterazione successiva la ordinerebbe per prima e la cercherebbe
+  // a finestra piena al posto della best vera.
+  if (!excluded_move && !(is_root_node && td.root_only_move))
     store_tt(td.hash_key,
              (hash_flag == hash_flag_alpha && !g_tt_faillow_move) ? 0 : best_move,
              best_score, depth, hash_flag, td.ply, store_pv,
@@ -10360,6 +10836,7 @@ static void thread_search(int thread_id, int max_depth) {
   ThreadData &td = thread_data[thread_id];
 
   copy_board_to_thread(td);
+  memset(td.chk_hint, -1, sizeof(td.chk_hint)); // NPS 25/09: nessun suggerimento valido
 
   memset(td.killer_moves, 0, sizeof(td.killer_moves));
   // RIMUOVE L'AMNESIA: la history persiste tra le mosse della partita, cosi'

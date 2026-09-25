@@ -42,6 +42,7 @@ struct ThreadData {
     int castle;
     U64 hash_key;
     U64 pawn_key;        // P2.1: Zobrist solo-pedoni, mantenuta incrementale in make/unmake
+    U64 mm_key[2];       // NPS 25/09/2026: Zobrist [0]=minori (N,B,n,b) [1]=maggiori (R,Q,r,q), incrementale in make/unmake
     U64 np_key[2];       // CorrNonPawn: Zobrist NON-pedoni per colore [white,black] (re incluso), incrementale in make/unmake
     int fifty;
     int plies_from_null; // P2.2: mosse reali dall'ultima null nel cammino corrente
@@ -155,6 +156,10 @@ struct ThreadData {
     // move loop. Serve al figlio per sapere se la mossa che l'ha generato era la TT-move
     // del padre — uno dei quattro segnali con cui Reckless scala il prior bonus.
     int ttmove_stack[max_ply + 8] = {0};
+    // NPS 25/09/2026: scacco al nodo figlio gia' calcolato dal padre (gives_check dopo
+    // la make). -1 = sconosciuto. Valido SOLO fra make e unmake del ciclo mosse di
+    // td_negamax, che lo scrive e lo riazzera; ogni altro ingresso lo trova a -1.
+    signed char chk_hint[max_ply + 8];
     // TTPvInherit (2026-09-07): store_pv del nodo a ogni ply, letto dal figlio
     // fail-low per ereditare il flag (SF: ss->ttPv |= (ss-1)->ttPv).
     bool ttpv_stack[max_ply + 8] = {false};

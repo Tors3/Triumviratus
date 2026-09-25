@@ -71,7 +71,8 @@ class FullThreats {
     // TRANN1: la lista ospita anche gli indici PawnPair e PassedPawns folded
     // (refresh: fino a 128 threat + 120 coppie + 16 passati = 264;
     // incrementale: ~96 + ~46 + pochi passati) -> 288.
-    static constexpr IndexType MaxActiveDimensions = 288;
+    // 8.0: + fino a 32 righe Mobility nel refresh (folded, stesse liste) -> 320.
+    static constexpr IndexType MaxActiveDimensions = 320;
     using IndexList                                = ValueList<IndexType, MaxActiveDimensions>;
     using DiffType                                 = DirtyThreats;
 

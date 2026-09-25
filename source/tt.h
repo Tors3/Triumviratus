@@ -38,6 +38,9 @@
  * - key: 8 bytes (position hash XOR data for lockless)
  * - data: 8 bytes packed (move, score, depth, flag, busy)
  */
+#define tt_eval_none 32001   // (ripetuto piu' sotto con lo stesso testo: serve gia' qui a TT16)
+
+#ifdef TRIUMV_TT_LEGACY
 // 4.0: entry da 24 byte. key/data restano lockless (XOR-verification); `ext`
 // porta la STATIC EVAL a 16 BIT PIENI (4.0-base: niente quantizzazione ±508/4cp
 // della v1 a 8 bit, che flippava RFP/futility ai margini). ext e' protetta da un
@@ -50,6 +53,42 @@ struct alignas(8) tt_entry {
     U64 data;          // move (24) | score (16) | depth (8) | flag (2) | spare (8) | age (5) | pv (1)
     U64 ext;           // eval16+32768 [0..15] (0 = assente) | keyfrag16 [16..31] | spare 32
 };
+#else
+// ===== TT16 (NPS 25/09/2026) ==================================================
+// Entry da 16 byte, bucket da 4 entry = 64 byte = UNA linea di cache.
+// Prima (TRIUMV_TT_LEGACY): entry da 24 byte in bucket da 2, cioe' 48 byte, e con
+// l'indice a modulo META' dei bucket attraversava due linee: due miss per probe. Il
+// profilo xperf del 25/09 (campioni su LLCMisses) dava alla TT ~4,6% dei miss del
+// motore contro ~1,2% di SF, che usa cluster da 32 byte allineati.
+//   kw   = ((chiave & 0xFFFFFFFFFFFF) << 16 | eval16) XOR data
+//   data = mossa | score | depth | flag | age | pv   (layout invariato, pack_tt_data)
+// Lo XOR lega le due parole come prima (lockless): una scrittura concorrente spezzata
+// fa fallire la verifica della chiave, e l'eval ci sta DENTRO, quindi e' protetta
+// dallo stesso controllo (prima aveva un suo frammento di chiave a 16 bit).
+// La verifica usa i 48 bit BASSI della chiave; l'indice (tt_base_index, mulhi) usa
+// quelli ALTI: le due cose restano quasi indipendenti.
+struct alignas(16) tt_entry {
+    U64 kw;
+    U64 data;
+};
+constexpr int TT_WAYS = 4;
+struct alignas(64) tt_bucket {
+    tt_entry e[TT_WAYS];
+};
+static_assert(sizeof(tt_bucket) == 64, "TT16: il bucket deve essere una linea di cache");
+constexpr U64 TT_TAG_MASK = 0xFFFFFFFFFFFFULL;
+inline U64 tt_tag(U64 key) { return key & TT_TAG_MASK; }
+inline int tt_eval16(int eval) {
+    if (eval == tt_eval_none || eval > 30000 || eval < -30000) return 0;
+    return (eval + 32768) & 0xFFFF;
+}
+inline int tt_unpack_eval16(U64 w) {
+    const int e = (int)(w & 0xFFFF);
+    if (e == 0) return tt_eval_none;
+    const int v = e - 32768;
+    return (v > 30000 || v < -30000) ? tt_eval_none : v;
+}
+#endif
 
 // Data packing/unpacking.
 // Bit layout of `data` (64 bit): move[0..23] score[24..39] depth[40..47]
@@ -76,6 +115,7 @@ inline int unpack_flag(U64 data) { return (data >> 48) & 0x3; }
 inline int unpack_age(U64 data) { return (data >> 58) & 0x1F; }
 inline int unpack_pv(U64 data) { return (data >> 63) & 0x1; }
 
+#ifdef TRIUMV_TT_LEGACY
 // ext: eval16 (offset +32768, 0 = assente) + frammento di chiave a 16 bit.
 inline U64 pack_ext(int eval, U64 hash_key) {
     if (eval == tt_eval_none || eval > 30000 || eval < -30000) return 0;
@@ -87,6 +127,7 @@ inline int unpack_ext_eval(U64 ext, U64 hash_key) {
     int v = (int)(ext & 0xFFFF) - 32768;
     return (v > 30000 || v < -30000) ? tt_eval_none : v;
 }
+#endif
 // 5.1 EvalTTWrite (SF-style): l'entry eval-only memorizza l'UNADJUSTED (pre-rule50/scale,
 // fifty-independent) via pack_ext normale; in lettura nn_finalize() lo ri-finalizza col fifty
 // corrente -> esatto su QUALSIASI trasposizione (niente vincolo same-fifty = max cache-hit).
@@ -160,6 +201,7 @@ void  aligned_large_pages_free(void* mem);
 bool  has_large_pages();
 }
 
+#ifdef TRIUMV_TT_LEGACY
 // Initialize hash table
 inline void init_hash_table(int mb) {
     // Come e' stata allocata la tabella CORRENTE (per liberarla con l'allocatore
@@ -252,6 +294,70 @@ inline int hashfull() {
         if (hash_table[i].data != 0) used++;
     return (int)((U64)used * 1000 / n);
 }
+#else
+// TT16: la tabella e' un array di tt_bucket (alignas(64)): l'operatore new allineato del
+// C++17 garantisce l'allineamento anche sul ripiego heap. hash_table resta un tt_entry*.
+inline void init_hash_table(int mb) {
+    static bool tt_on_large_pages = false;
+
+    U64 size    = (U64)mb * 1024 * 1024;
+    U64 buckets = size / sizeof(tt_bucket);
+    if (buckets == 0) buckets = 1;
+
+    if (hash_table) {
+        if (tt_on_large_pages) Triumviratus::aligned_large_pages_free(hash_table);
+        else                   delete[] reinterpret_cast<tt_bucket*>(hash_table);
+        hash_table = nullptr;
+    }
+
+    const U64 bytes = buckets * sizeof(tt_bucket);
+    tt_bucket* tab = nullptr;
+    if (g_large_pages) {
+        tab = static_cast<tt_bucket*>(Triumviratus::aligned_large_pages_alloc(bytes));
+        if (!tab) {
+            printf("info string Hash: %d MB su large pages non allocabili, ripiego su heap\n", mb);
+            tab = new (std::nothrow) tt_bucket[buckets]();
+            tt_on_large_pages = false;
+        } else {
+            std::memset(tab, 0, bytes);
+            tt_on_large_pages = true;
+        }
+    } else {
+        tab = new (std::nothrow) tt_bucket[buckets]();
+        tt_on_large_pages = false;
+    }
+    if (!tab) {
+        printf("info string Hash: %d MB NON allocabili, ripiego su 64 MB\n", mb);
+        fflush(stdout);
+        buckets = ((U64)64 * 1024 * 1024) / sizeof(tt_bucket);
+        tab = new tt_bucket[buckets]();
+        tt_on_large_pages = false;
+    }
+    hash_table   = reinterpret_cast<tt_entry*>(tab);
+    hash_entries = buckets * TT_WAYS;
+    g_tt_pow2    = false;   // non usato da TT16 (indice via mulhi)
+
+    const int actual_mb = (int)(buckets * sizeof(tt_bucket) / (1024 * 1024));
+    const char* lp = !g_large_pages          ? "off (disabled)"
+                   : tt_on_large_pages       ? "ON"
+                                             : "off (unavailable)";
+    printf("info string Hash: %d MB, large pages %s\n", actual_mb, lp);
+}
+
+inline void clear_hash_table() {
+    std::memset(hash_table, 0, hash_entries * sizeof(tt_entry));
+    current_age = 0;
+}
+
+inline int hashfull() {
+    U64 n = hash_entries < 1000 ? hash_entries : 1000;
+    if (n == 0) return 0;
+    int used = 0;
+    for (U64 i = 0; i < n; i++)
+        if (hash_table[i].data != 0) used++;
+    return (int)((U64)used * 1000 / n);
+}
+#endif
 
 // Increment age (call at start of each search)
 inline void new_search() {
@@ -276,6 +382,7 @@ inline void new_search() {
     #define TT_PREFETCH(addr) __builtin_prefetch(addr)
 #endif
 
+#ifdef TRIUMV_TT_LEGACY
 // ---- Bucket addressing (1-way vs 4-way) ------------------------------------
 // Number of slots per bucket.
 inline int tt_ways() { return g_tt_twolevel ? 2 : (g_tt_4way ? 4 : 1); }
@@ -533,6 +640,144 @@ inline int get_tt_move(U64 hash_key) {
     if (entry) return unpack_move(entry->data);
     return 0;
 }
+#else
+// ===== TT16: indirizzamento, probe, store =========================================
+// Indice del bucket con la moltiplicazione alta (come SF): niente divisione a 64 bit.
+// Con la entry da 24 byte il modulo era inevitabile; qui il numero di bucket e' libero
+// e mulhi(key, buckets) e' uniforme su [0, buckets).
+inline U64 tt_mulhi64(U64 a, U64 b) {
+#if defined(__SIZEOF_INT128__)
+    return (U64)(((unsigned __int128)a * (unsigned __int128)b) >> 64);
+#elif defined(_MSC_VER)
+    return __umulh(a, b);
+#else
+    const U64 aL = (uint32_t)a, aH = a >> 32, bL = (uint32_t)b, bH = b >> 32;
+    const U64 c1 = (aL * bL) >> 32, c2 = aH * bL + c1, c3 = aL * bH + (uint32_t)c2;
+    return aH * bH + (c2 >> 32) + (c3 >> 32);
+#endif
+}
+inline U64 tt_base_index(U64 key) { return tt_mulhi64(key, hash_entries / TT_WAYS) * TT_WAYS; }
+inline int tt_ways() { return TT_WAYS; }
+
+// Slot del bucket che contiene questa posizione, o nullptr.
+inline tt_entry* tt_find(U64 key) {
+    tt_entry* b = &hash_table[tt_base_index(key)];
+    const U64 tag = tt_tag(key);
+    for (int i = 0; i < TT_WAYS; i++)
+        if (((b[i].kw ^ b[i].data) >> 16) == tag && (b[i].kw | b[i].data)) return &b[i];
+    return nullptr;
+}
+
+// Vittima: slot vuoto, altrimenti il valore piu' basso di depth - 2*distanza d'eta'
+// (stessa regola della vecchia tt_victim, ora su 4 vie dentro una sola linea).
+inline tt_entry* tt_victim(U64 key) {
+    tt_entry* b = &hash_table[tt_base_index(key)];
+    tt_entry* best = &b[0];
+    int best_val = 1 << 30;
+    for (int i = 0; i < TT_WAYS; i++) {
+        tt_entry* e = &b[i];
+        if (e->kw == 0 && e->data == 0) return e;
+        int rel_age = (current_age - unpack_age(e->data)) & 0x1F;
+        int depth = unpack_depth(e->data);
+        if (g_tt_secondary_age && depth >= 5 && unpack_flag(e->data) != hash_flag_exact) {
+            int sc = unpack_score(e->data);
+            if (sc > 30000 || sc < -30000) depth -= 8;
+        }
+        int val = depth - 2 * rel_age;
+        if (val < best_val) { best_val = val; best = e; }
+    }
+    return best;
+}
+
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag, int& tt_eval, bool& is_pv) {
+    PROF_GUARD(prof_tt);
+    tt_entry* b = &hash_table[tt_base_index(hash_key)];
+    const U64 tag = tt_tag(hash_key);
+    for (int i = 0; i < TT_WAYS; i++) {
+        tt_entry* entry = &b[i];
+        // Un solo snapshot delle due parole: la verifica e l'unpack leggono gli STESSI
+        // valori (niente torn read fra verifica e uso, cfr. BUG FIX 2026-07-16).
+        const U64 data = entry->data;
+        const U64 w    = entry->kw ^ data;
+        if ((w >> 16) != tag || (entry->kw | data) == 0) continue;
+        tt_move  = unpack_move(data);
+        tt_score = unpack_score(data);
+        tt_depth = unpack_depth(data);
+        tt_flag  = unpack_flag(data);
+        tt_eval  = tt_unpack_eval16(w);
+        is_pv    = (unpack_pv(data) != 0);
+        if (g_tt_age_refresh && unpack_age(data) != current_age) {
+            U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
+            entry->data = new_data;
+            entry->kw   = w ^ new_data;
+        }
+        if (tt_flag == hash_flag_none) return false;   // entry eval-only (EvalTTWrite)
+        return true;
+    }
+    tt_move = 0; tt_score = 0; tt_depth = 0;
+    tt_flag = hash_flag_alpha; tt_eval = tt_eval_none; is_pv = false;
+    return false;
+}
+
+inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag) {
+    int eval_dummy; bool pv_dummy;
+    return probe_tt(hash_key, tt_move, tt_score, tt_depth, tt_flag, eval_dummy, pv_dummy);
+}
+
+inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int ply = 0, bool pv = false, int eval = tt_eval_none) {
+    PROF_GUARD(prof_tt);
+    if (!g_ttmove24) move &= 0x1FFFFF;
+    if (score > mate_score) score += ply;
+    else if (score < -mate_score) score -= ply;
+
+    int ev16 = tt_eval16(eval);
+    tt_entry* entry = tt_find(hash_key);
+    if (entry) {
+        const U64 old_data = entry->data;
+        const U64 old_w    = entry->kw ^ old_data;
+        if (g_tt_move_keep && move == 0) move = unpack_move(old_data);
+        if (ev16 == 0) ev16 = (int)(old_w & 0xFFFF);   // conserva l'eval se lo store non ne porta
+        if (unpack_age(old_data) == current_age && unpack_depth(old_data) > depth && flag != hash_flag_exact) {
+            // Conserva l'entry piu' profonda; aggiorna solo l'eval se mancava.
+            const U64 w = (old_w & ~0xFFFFULL) | (U64)ev16;
+            if (w != old_w) entry->kw = w ^ old_data;
+            return;
+        }
+    } else {
+        entry = tt_victim(hash_key);
+    }
+    const U64 new_data = pack_tt_data(move, score, depth, flag, current_age, pv ? 1 : 0);
+    const U64 w = (tt_tag(hash_key) << 16) | (U64)ev16;
+    entry->data = new_data;
+    entry->kw   = w ^ new_data;
+}
+
+extern bool g_eval_tt_write;   // 5.1: cache static eval su MISS (SF search.cpp:830) -> NPS
+
+// Cache-only dello static eval su un MISS (EvalTTWrite, default OFF): entry flag_none
+// nello slot vittima naturale, cosi' lo store reale la ritrova e la aggiorna in place.
+inline void tt_cache_eval(U64 hash_key, int unadjusted) {
+    const int ev16 = tt_eval16(unadjusted);
+    if (ev16 == 0) return;
+    tt_entry* entry = tt_find(hash_key);
+    if (entry) {
+        const U64 d = entry->data;
+        if (unpack_flag(d) == hash_flag_none)
+            entry->kw = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ d;
+        return;
+    }
+    entry = tt_victim(hash_key);
+    const U64 d = pack_tt_data(0, 0, 0, hash_flag_none, current_age, 0);
+    entry->data = d;
+    entry->kw   = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ d;
+}
+
+inline int get_tt_move(U64 hash_key) {
+    tt_entry* entry = tt_find(hash_key);
+    if (entry) return unpack_move(entry->data);
+    return 0;
+}
+#endif
 
 // ============================================================================
 // COMPATIBILITY LAYER - Old API functions

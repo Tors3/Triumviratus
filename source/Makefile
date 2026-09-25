@@ -38,7 +38,8 @@ CPP_SRCS := $(filter-out nnt.cpp,$(wildcard *.cpp)) \
             $(V13)/nnue/network.cpp $(V13)/nnue/nnue_accumulator.cpp \
             $(V13)/nnue/features/feat_perm.cpp \
             $(V13)/nnue/features/full_threats.cpp $(V13)/nnue/features/half_ka_v2_hm.cpp \
-            $(V13)/nnue/features/pawn_pair.cpp $(V13)/nnue/features/passed_pawns.cpp
+            $(V13)/nnue/features/pawn_pair.cpp $(V13)/nnue/features/passed_pawns.cpp \
+            $(V13)/nnue/features/mobility.cpp
 C_SRCS   := fathom/tbprobe.c
 
 OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
@@ -124,9 +125,12 @@ endif
 # ⚠️ A compile-time e non con dispatch cpuid: sotto PGO il ramo non preso durante il
 # training resta freddo, quindi un dispatch a runtime svantaggerebbe per costruzione uno
 # dei due percorsi.
+# ✅ 25/09/2026 — decisione dell'utente: persp ACCESA anche qui, per universalita'. Il -1,2%
+# su Rocket Lake era una misura a tempo che non abbiamo piu' motivo di considerare
+# affidabile (su Skylake-SP, a coppie simultanee, persp vale +0,80%). Il target `intel`
+# resta come nome, ma oggi produce lo stesso codice del target senza `intel`.
 ifneq (,$(filter intel,$(MAKECMDGOALS))$(INTEL))
-  DEFS += -DTRIUMV_NO_PERSP_BOTH
-  $(info [i] build Intel: persp (append_changed_indices_both) SPENTA)
+  $(info [i] build Intel: persp ACCESA (dal 25/09/2026 come su tutti i target))
 endif
 
 # 🔴 6/08/2026 — `persp` si spegne anche per ISA, non solo per vendor. Misurato su Zen4
@@ -142,12 +146,12 @@ endif
 # usciva con persp ACCESA nonostante la misura dica il contrario per entrambi i vendor.
 # Lo script Windows usa `-match '^avx512'` e le prendeva tutte: e' la stessa deriva
 # Windows/Linux gia' vista sopra. Ora il filtro elenca tutti e tre i target AVX-512.
-ifneq (,$(filter avx512 vnni512 avx512icl,$(MAKECMDGOALS)))
-  ifeq (,$(findstring TRIUMV_NO_PERSP_BOTH,$(DEFS)))
-    DEFS += -DTRIUMV_NO_PERSP_BOTH
-    $(info [i] build AVX-512: persp SPENTA per ISA (misura 6/08/2026))
-  endif
-endif
+# ✅ 25/09/2026 — persp, ibrido e pawn cache ACCESI su TUTTI i target AVX-512 (decisione
+# dell'utente: le misure Intel valgono per tutti i target). Misura a coppie simultanee su
+# Xeon Gold 6138 (tools/nps_pair.py, test nullo -0,03%): persp +0,80% IC95 [+0,50, +1,10].
+# Le misure a tempo di agosto su Zen4 che li avevano spenti non avevano la risoluzione
+# necessaria. Per spegnerli: -DTRIUMV_NO_PERSP_BOTH, -DTRIUMV_NO_HYBRID_AVX512,
+# -DTRIUMV_NO_PAWN_CACHE_AVX512.
 
 # `make profile` abilita i cycle-counter per-fase (eval/movegen/make/tt/score) nel
 # bench (vedi profile.h). Default = no-op, byte-identico.

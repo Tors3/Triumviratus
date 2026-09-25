@@ -524,6 +524,7 @@ void uci_loop()
             // una check nuova qui non si accenderebbe mai (stessa ragione di IID).
             printf("option name TMPredBestThread type spin default 0 min 0 max 1\n"); // predizione TM dal thread VINCITORE (a 1 thread: identico)
             // Toggle da CO-TUNE (default OFF = byte-identico; si accendono nel mega-SPSA 4.0)
+            printf("option name MobilityBlock type check default false\n");     // 8.0 studio: blocco Mobility a pesi ZERO (eval identica): on/off misura il costo dell'inferenza
             printf("option name QSChecks type check default false\n");         // P1.3 scacchi quieti alla prima ply di qsearch. BAKED OFF 2026-07-25: spegnerli vale +9.71 +/- 5.99 Elo, LOS 99.93%, LLR 2.96 @3294g 20+0.2 (SF li ha rimossi, PR #5498)
             printf("option name QSTTQuiets type spin default 0 min 0 max 2\n"); // condizione TT di Stormphrax (search.cpp:1557: !PvNode && ttMove && flag!=UpperBound && ttMove quieta). 0=off (byte-identico) · 1=porta fedele, TUTTE le quiete (bench 371449, +80.7%: troppo caro) · 2=solo quiete che danno SCACCO, cioe' QSChecks TT-gated = la forma stretta che recupera le sequenze forzate senza ricomprare l'albero
             printf("option name NMPVerif type check default true\n");          // P1.6 NMP verification + no doppia null
@@ -779,6 +780,14 @@ void uci_loop()
             printf("option name SingularTripleMargin type spin default 319 min 0 max 400\n");
             printf("option name NegExtTT type spin default 2 min 0 max 4\n");     // -ext on ttMove>=beta (0=off,1=legacy,3=SF)
             printf("option name NegExtCut type spin default 3 min 0 max 3\n");    // -ext on cutNode (0=off/legacy,2=SF). ⚠️ IRRAGGIUNGIBILE con NegExtOrder=0: i due rami sopra partizionano lo spazio (finestra nulla). Bench identico a 0..4. Fuori dallo spazio SPSA finche' NegExtOrder resta 0
+            // audit 7.1 gruppo 1 (P3..P7), tutti spenti = byte-identico
+            printf("option name PrevRefuteMalus type spin default 0 min 0 max 200\n"); // P3: % di stat_bonus; SF ~70
+            printf("option name ProbCutAdj type check default false\n");               // P4
+            printf("option name RFPNoTTPv type check default false\n");                // P5
+            printf("option name PruneNPMGate type check default false\n");             // P6
+            printf("option name FutFailSoft type check default false\n");              // P7
+            printf("option name FHBlend type check default false\n"); // audit 7.1 P2: fail-high blending (best*d+beta)/(d+1) al cutoff. false = byte-identico
+            printf("option name ExclPruneGate type spin default 0 min 0 max 2\n"); // audit 7.1 P1: 1 = niente NMP nella ricerca singolare, 2 = anche RFP/razoring. 0 = byte-identico
             printf("option name NegExtOrder type spin default 0 min 0 max 1\n");  // FIX 7/08/2026: 1 = ordine SF (cut node PRIMA del test su alpha) -> rende vivo NegExtCut. 0 = ordine storico, byte-identico
             printf("option name CapturedMailbox type spin default 1 min 0 max 1\n"); // P2/B3: td_captured_piece via mailbox piece_on[64] invece della scansione di 6 bitboard. NODE-IDENTICAL: il bench NON deve cambiare. BAKED a 1 il 9/08/2026 su misura NPS +0,73..+1,01% (160 pos UHO, un solo binario, due setoption). 0 = percorso storico
             printf("option name CutNodeProp type spin default 0 min 0 max 1\n");  // propaga !cutNode al primo figlio non-PV (SF Step 18); 0=legacy
@@ -1677,6 +1686,11 @@ void uci_loop()
         {
             const char* v = input + 34;
             set_thread_voting(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
+        }
+        else if (strncmp(input, "setoption name MobilityBlock value ", 35) == 0)
+        {
+            const char* v = input + 35;
+            nn_set_mobility(strncmp(v, "true", 4) == 0 || strncmp(v, "on", 2) == 0 || v[0] == '1');
         }
         else if (strncmp(input, "setoption name QSChecks value ", 30) == 0)
         {

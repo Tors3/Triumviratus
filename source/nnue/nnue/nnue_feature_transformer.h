@@ -97,6 +97,14 @@ class FeatureTransformer {
     // e i passati sono semplicemente "threat" extra.
     static constexpr IndexType ThreatPlusPawnDimensions =
       ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions;
+    // 8.0 studio Mobility: righe in coda DOPO i tre blocchi permutati. Restano fuori
+    // da FeatPerm (permute_rows gira solo su ThreatPlusPawnDimensions) e dal file
+    // .nnue v3 (zero-fill in read_parameters). Contano solo per la DIMENSIONE degli
+    // array: le tabelle threat/psqt hanno ThreatRowsTotal righe.
+    static constexpr IndexType MobilityInputDimensions = MobilityFeatureSet::Dimensions;
+    static constexpr IndexType ThreatRowsTotal = ThreatPlusPawnDimensions + MobilityInputDimensions;
+    static_assert(MobilityFeatureSet::FoldOffset == ThreatPlusPawnDimensions,
+                  "Mobility deve stare esattamente in coda ai tre blocchi folded");
     static constexpr IndexType InputDimensions =
       PSQFeatureSet::Dimensions + ThreatPlusPawnDimensions;
     static constexpr IndexType OutputDimensions = HalfDimensions;
@@ -290,6 +298,14 @@ class FeatureTransformer {
                           + usize(ThreatInputDimensions + PawnInputDimensions) * PSQTBuckets,
                         0, PassedInputDimensions * PSQTBuckets * sizeof(PSQTWeightType));
         }
+
+        // 8.0 studio Mobility: nessun formato di rete lo contiene ancora -> ZERO. Con
+        // pesi zero l'eval e' byte-identica con MobilityBlock on/off e la differenza di
+        // NPS e' il costo puro dell'inferenza del blocco.
+        std::memset(threatWeights.data() + usize(ThreatPlusPawnDimensions) * HalfDimensions, 0,
+                    MobilityInputDimensions * HalfDimensions * sizeof(ThreatWeightType));
+        std::memset(threatPsqtWeights.data() + usize(ThreatPlusPawnDimensions) * PSQTBuckets, 0,
+                    MobilityInputDimensions * PSQTBuckets * sizeof(PSQTWeightType));
 
         permute_weights();
 
@@ -548,11 +564,11 @@ class FeatureTransformer {
       CacheLineSize) std::array<WeightType, HalfDimensions * PSQFeatureSet::Dimensions> weights;
     // TRANN1 folded: [0, ThreatDims) = threats, [ThreatDims, ThreatDims+PawnDims) = pawn-pair
     alignas(CacheLineSize)
-      std::array<ThreatWeightType, HalfDimensions * ThreatPlusPawnDimensions> threatWeights;
+      std::array<ThreatWeightType, HalfDimensions * ThreatRowsTotal> threatWeights;
     alignas(CacheLineSize)
       std::array<PSQTWeightType, PSQFeatureSet::Dimensions * PSQTBuckets> psqtWeights;
     alignas(CacheLineSize)
-      std::array<PSQTWeightType, ThreatPlusPawnDimensions * PSQTBuckets> threatPsqtWeights;
+      std::array<PSQTWeightType, ThreatRowsTotal * PSQTBuckets> threatPsqtWeights;
 };
 
 }  // namespace Triumviratus::Eval::NNUE

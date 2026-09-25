@@ -31,6 +31,7 @@
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
 #include "features/passed_pawns.h"
+#include "features/mobility.h"
 #include "features/pawn_pair.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
@@ -56,9 +57,19 @@ using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 using PawnFeatureSet   = Features::PawnPair;
 using PassedFeatureSet = Features::PassedPawns;  // v3 graft: 96 feature passed-pawn, folded dopo PawnPair
+// 8.0 studio: mobilita' bucketizzata ("threat su case vuote"), folded dopo PassedPawns,
+// pesi ZERO finche' una rete non li allena, attivo solo con UCI MobilityBlock=true.
+using MobilityFeatureSet = Features::Mobility;
 
 // Number of input feature dimensions after conversion
-constexpr IndexType L1 = 1024;
+// 8.0 studio: L1 sovrascrivibile dalla build (make EXTRACXXFLAGS=-DTRIUMV_L1=2048) per
+// misurare il costo in NPS di una rete piu' larga con una rete random di quella forma.
+// L'hash del transformer include OutputDimensions*2, quindi un binario carica SOLO reti
+// del suo L1: con 2048 la rete embedded (1024) viene rifiutata, serve EvalFile esplicito.
+#ifndef TRIUMV_L1
+    #define TRIUMV_L1 1024
+#endif
+constexpr IndexType L1 = TRIUMV_L1;
 // L2 = 32 (era 31 in TRANN1/v13): SFNNv15 non ha piu' il neurone forwarded in uno slot extra, quindi
 // L2 e' un multiplo di 32 pulito e il concat e' allineato senza rimappe. Il conto dei parametri della
 // testa cambia ⇒ i net v13 NON sono caricabili (l'hash li rifiuta: e' voluto).

@@ -356,6 +356,21 @@ struct DirtyPawns {
     bool     any;  // false = the move touched no pawn -> zero work downstream
 };
 
+// 8.0 studio Mobility: i bitboard che bastano a ricalcolare il blocco di
+// mobilita' (occupazione per colore, pedoni e i quattro tipi mobili). La
+// mobilita' cambia con QUALUNQUE mossa, quindi non c'e' un delta per eventi:
+// il bridge salva lo snapshot PRIMA e DOPO apply_move e il blocco emette la
+// differenza fra i due (features/mobility.cpp).
+struct MobSnapshot {
+    Bitboard color[COLOR_NB];
+    Bitboard type[QUEEN + 1];  // indicizzato per PieceType, [0] inutilizzato
+};
+
+struct DirtyMobility {
+    MobSnapshot before;
+    MobSnapshot after;
+};
+
     #define ENABLE_INCR_OPERATORS_ON(T) \
         constexpr T& operator++(T& d) { return d = T(int(d) + 1); } \
         constexpr T& operator--(T& d) { return d = T(int(d) - 1); }

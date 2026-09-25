@@ -33,6 +33,8 @@ int nn_reload_big(const char* net_path);
 // M2 full-refresh path (the master always uses the cache to accelerate refresh;
 // the eval value is identical regardless). Kept for API stability.
 void nn_set_finny(int on);
+// 8.0 studio: blocco Mobility ("threat su case vuote") con pesi zero, UCI MobilityBlock.
+void nn_set_mobility(int on);
 
 // DIAGNOSTIC ("accstats" UCI command). No-op stub in M2 (the v13 incremental
 // refresh counters arrive with M3).
@@ -81,9 +83,9 @@ int         nn_set_eval_const(const char* name, int value);   // 1 se il nome es
 void        nn_frozen_check(void);   // vedi COSTANTI DELLA MISCELA CONGELATE
 #endif
 int  nn_get_eval_scale(void);   // current EvalScale %% (per normalizzare 'score cp' in stampa)
-int  nn_last_opt_base(void);    // EvalCacheOptSplit: eval con optimism=0 (pre-rule50, post-scale)
-int  nn_last_opt_coeff(void);   // EvalCacheOptSplit: coefficiente in MILLESIMI dell'optimism
-int  nn_last_unadjusted(void);  // unadjusted (pre-rule50/scale) dell'ultima nn_scale (thread-local)
+int  nn_last_opt_base(void* handle);    // EvalCacheOptSplit: eval con optimism=0 (pre-rule50, post-scale)
+int  nn_last_opt_coeff(void* handle);   // EvalCacheOptSplit: coefficiente in MILLESIMI dell'optimism
+int  nn_last_unadjusted(void* handle);  // unadjusted (pre-rule50/scale) dell'ultima nn_scale (thread-local)
 // Ricostruisce l'eval finale dall'unadjusted. `bucket` = (pezzi - 1) / 4 della posizione
 // CORRENTE: serve a scegliere la scala per bucket, e qui non c'e' la Position.
 int  nn_finalize(int unadjusted, int rule50, int bucket);

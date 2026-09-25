@@ -44,6 +44,13 @@ void update_accumulator_incremental(Color                     perspective,
                                     AccumulatorState&         target_state,
                                     const AccumulatorState&   computed);
 
+// NPS 25/09/2026 — macro di RIAPERTURA per rimisurare su Intel (Skylake-SP, AVX-512 nativo a
+// 512 bit) le tre vie spente su AVX-512 dopo le misure a tempo di agosto su Zen4 (AVX-512 a
+// 256 bit). Tutte a nodi identici. Default: nessuna definita = comportamento di sempre.
+#if defined(TRIUMV_PERSP_BOTH_AVX512) && defined(TRIUMV_NO_PERSP_BOTH)
+    #undef TRIUMV_NO_PERSP_BOTH
+#endif
+
 #ifndef TRIUMV_NO_PERSP_BOTH
 template<bool Forward>
 void update_accumulator_incremental_both(const FeatureTransformer& featureTransformer,
@@ -78,14 +85,15 @@ void AccumulatorStack::reset() noexcept {
     size = 1;
 }
 
-std::tuple<DirtyPiece&, DirtyThreats&, DirtyPawns&> AccumulatorStack::push() noexcept {
+std::tuple<DirtyPiece&, DirtyThreats&, DirtyPawns&, DirtyMobility&>
+AccumulatorStack::push() noexcept {
     assert(size < MaxSize);
     auto& st = accumulators[size];
     st.computed.fill(false);
     new (&st.dirtyThreats) DirtyThreats;
     st.dirtyPawns.any = false;  // TRANN1: apply_move la riempie se la mossa tocca pedoni
     size++;
-    return {st.dirtyPiece, st.dirtyThreats, st.dirtyPawns};
+    return {st.dirtyPiece, st.dirtyThreats, st.dirtyPawns, st.dirtyMobility};
 }
 
 void AccumulatorStack::pop() noexcept {
@@ -225,7 +233,12 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
 // ⚠️ Una prima lettura dava -8,34%, poi una seconda +1,3% e poi 0,00%: quest'ultima era
 //    presa con una compilazione PGO in corso sulla stessa macchina. Il numero buono e' il
 //    -1,8% a macchina scarica. Le misure NPS su laptop non valgono niente sotto carico.
-#if !defined(TRIUMV_NO_HYBRID_ACC) && !defined(USE_AVX512)
+// ✅ 25/09/2026 — RIACCESO anche su AVX-512. Il -1,8% del 6/08 era una misura a tempo su
+// Zen4, che esegue l'AVX-512 a 256 bit. Rimisurato su Xeon Gold 6138 (Skylake-SP, AVX-512
+// nativo) con i contatori hardware, nodi identici (bench 240500), 2 giri alternati da 12M
+// nodi: -1,58% istruzioni/nodo, -1,8% branch miss, miss L3/nodo invariati (20,9).
+// -DTRIUMV_NO_HYBRID_AVX512 riporta lo spegnimento su AVX-512 (es. per una build AMD).
+#if !defined(TRIUMV_NO_HYBRID_ACC) && (!defined(USE_AVX512) || !defined(TRIUMV_NO_HYBRID_AVX512))
         // Percorso HYBRID (SF db98633b): una mossa di re che NON attraversa la
         // colonna d/e lascia validi tutti gli indici di threat/PawnPair/PassedPawns,
         // perche' quelli dipendono da OrientTBL[ksq] che ha due soli valori. In quel
@@ -567,6 +580,22 @@ inline void prefetch_thr_rows(const FeatureTransformer&          featureTransfor
 }
 #endif
 
+// NPS 25/09/2026 — prefetch delle righe PSQT delle feature threat/pedoni (32 byte = una
+// linea per riga). threatPsqtWeights e' ~2,1 MB e non sta in L2: il campionamento su
+// LLCMisses del 25/09 gli dava ~1,7% dei miss del motore. apply_combined consuma le righe
+// PSQT per ULTIME, dopo le 1024 colonne: emesse qui c'e' tutto l'accumulatore a coprire la
+// latenza. (Il -1,04% del 3/08 era una misura a tempo su un laptop.)
+#ifndef TRIUMV_NO_THR_PSQT_PF
+inline void prefetch_thr_psqt(const FeatureTransformer&          ft,
+                              const ThreatFeatureSet::IndexList& a,
+                              const ThreatFeatureSet::IndexList& b) {
+    for (int i = 0; i < a.ssize(); ++i)
+        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(&ft.threatPsqtWeights[a[i] * PSQTBuckets]);
+    for (int i = 0; i < b.ssize(); ++i)
+        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(&ft.threatPsqtWeights[b[i] * PSQTBuckets]);
+}
+#endif
+
 template<bool Forward>
 void update_accumulator_incremental(Color                     perspective,
                                     const FeatureTransformer& featureTransformer,
@@ -587,6 +616,7 @@ void update_accumulator_incremental(Color                     perspective,
     const auto& dirtyPiece   = Forward ? target_state.dirtyPiece : computed.dirtyPiece;
     const auto& dirtyThreats = Forward ? target_state.dirtyThreats : computed.dirtyThreats;
     const auto& dirtyPawns   = Forward ? target_state.dirtyPawns : computed.dirtyPawns;
+    const auto& dirtyMobility = Forward ? target_state.dirtyMobility : computed.dirtyMobility;
 
     const auto* pfBase   = &featureTransformer.threatWeights[0];
     IndexType   pfStride = FeatureTransformer::OutputDimensions;
@@ -628,6 +658,9 @@ void update_accumulator_incremental(Color                     perspective,
         { PROF_GUARD(prof_idx_pawn);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded); }
+        if (Features::g_mobility_on)  // 8.0 studio: folded, stesse liste
+            MobilityFeatureSet::append_changed_indices(perspective, ksq, dirtyMobility, thrRemoved,
+                                                       thrAdded);
 #ifdef TRIUMV_PROFILE
         prof_cols_pawn_inc += thrRemoved.size() + thrAdded.size() - profThrBeforePawn;
         prof_cols_psq_inc  += psqRemoved.size() + psqAdded.size();
@@ -653,6 +686,9 @@ void update_accumulator_incremental(Color                     perspective,
 #endif
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
+        if (Features::g_mobility_on)
+            MobilityFeatureSet::append_changed_indices(perspective, ksq, dirtyMobility, thrAdded,
+                                                       thrRemoved);
 #ifdef TRIUMV_PF_SMALL
         prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
         prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
@@ -728,6 +764,9 @@ void update_accumulator_incremental(Color                     perspective,
         prof_max_inc = thrRemoved.size();
 #endif
 
+#ifndef TRIUMV_NO_THR_PSQT_PF
+    prefetch_thr_psqt(featureTransformer, thrAdded, thrRemoved);
+#endif
     apply_combined(perspective, featureTransformer, computed, target_state, psqAdded, psqRemoved,
                    thrAdded, thrRemoved);
 
@@ -796,6 +835,12 @@ void update_accumulator_incremental_both(const FeatureTransformer& featureTransf
     PawnFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPawns, remB, addB);
     PassedFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPawns, remW, addW);
     PassedFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPawns, remB, addB);
+    if (Features::g_mobility_on)  // 8.0 studio: folded, stesse liste
+    {
+        const auto& dirtyMobility = Forward ? target_state.dirtyMobility : computed.dirtyMobility;
+        MobilityFeatureSet::append_changed_indices(WHITE, ksqW, dirtyMobility, remW, addW);
+        MobilityFeatureSet::append_changed_indices(BLACK, ksqB, dirtyMobility, remB, addB);
+    }
 
 #ifdef TRIUMV_PROFILE
     prof_n_cols += psqAddW.size() + psqRemW.size() + thrAddW.size() + thrRemW.size()
@@ -803,6 +848,10 @@ void update_accumulator_incremental_both(const FeatureTransformer& featureTransf
     prof_n_upd += 2;
 #endif
 
+#ifndef TRIUMV_NO_THR_PSQT_PF
+    prefetch_thr_psqt(featureTransformer, thrAddW, thrRemW);
+    prefetch_thr_psqt(featureTransformer, thrAddB, thrRemB);
+#endif
     // Applicazioni SEQUENZIALI: e' la differenza voluta da Stockfish.
     apply_combined(WHITE, featureTransformer, computed, target_state, psqAddW, psqRemW, thrAddW,
                    thrRemW);
@@ -1004,6 +1053,11 @@ void update_accumulator_hybrid(Color                     perspective,
                                            thrAdded);
     PassedFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
                                              thrAdded);
+    // 8.0 studio Mobility: il gate garantisce stessa orientation fra oldKsq e newKsq,
+    // quindi il delta dallo snapshot prima/dopo vale come per gli altri blocchi folded.
+    if (Features::g_mobility_on)
+        MobilityFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyMobility,
+                                                   thrRemoved, thrAdded);
 #ifdef TRIUMV_PF_SMALL
     prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
     prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
@@ -1258,7 +1312,9 @@ void update_accumulator_refresh_cache(Color                     perspective,
                                       ^ unsigned(orient)) & PawnCacheMask];
 // TRIUMV_PAWN_CACHE_AVX512 (09/09/2026): riapre la cache anche su AVX-512 per rimisurarla su
 // Skylake-SP; il -0,11% che l'ha spenta era su Zen4 (60 posizioni, lettura instabile).
-#if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && (!defined(USE_AVX512) || defined(TRIUMV_PAWN_CACHE_AVX512))
+// ✅ 25/09/2026 — RIACCESA anche su AVX-512 (stessa misura dell'ibrido, sopra): -1,41%
+// istruzioni/nodo, branch miss e miss L3 invariati. -DTRIUMV_NO_PAWN_CACHE_AVX512 la rispegne.
+#if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && (!defined(USE_AVX512) || !defined(TRIUMV_NO_PAWN_CACHE_AVX512))
     const bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient);
 #else
     // Misurato 3/08/2026, interleaved, 60 posizioni depth 19, nodi identici:
@@ -1274,6 +1330,10 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
+    // 8.0 studio Mobility: PRIMA dei blocchi pedoni e DENTRO nThreat, cosi' viene sommato
+    // sempre (dipende dalla posizione intera, non puo' stare nella cache dei pedoni).
+    if (Features::g_mobility_on)
+        MobilityFeatureSet::append_active_indices(perspective, pos, active);
     const int nThreat = active.ssize();
     if (!pawnHit)
     {

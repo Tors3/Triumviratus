@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [7.0 (current release)](#triumviratus-70--current-release) · [6.0 (previous release)](#triumviratus-60--previous-release) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [7.1 (in development)](#triumviratus-71--in-development) · [7.0 (current release)](#triumviratus-70--current-release) · [6.0 (previous release)](#triumviratus-60--previous-release) · [Dev log 7.1](DEVELOPMENT_7.1.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -49,6 +49,19 @@
 40/15, 6.0 sits 16 Elo behind the first entry (Stockfish 18, 3649 ±12) on only 343 games, so its
 interval is still wide. The two lists are not comparable with each other. Both tables are 6.0: 7.0
 has not appeared on either list yet.</sub>
+
+---
+
+## Triumviratus 7.1 — in development
+
+7.1 is a **speed project**: same network as 7.0, the code around it made faster without changing
+a single node of the search. Measured against Stockfish 19 with the same compiler and the same
+network size, the engine now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer
+branch mispredictions. The individual gains, from paired simultaneous runs on the same CPU core, are
+between +0.8% and +2.5% NPS each. The final comparison with the 7.0 release binary is still to come.
+
+`source/` holds the 7.1 development code; the 7.0 release is the tag `v7.0`. Details, method and
+numbers: **[`DEVELOPMENT_7.1.md`](DEVELOPMENT_7.1.md)**.
 
 ---
 

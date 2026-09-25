@@ -20,6 +20,7 @@
 #include "frozen.h"   // 🔴 DEVE stare qui: senza, il congelamento della
                       // miscela non si attiva nelle build di spedizione.
 #include "nnue_bridge.h"
+#include "nnue/nnue/features/mobility.h"   // 8.0 studio: snapshot + g_mobility_on
 
 #include "profile.h"
 
@@ -142,11 +143,18 @@ static int g_eval_scale_b[8] = {60, 60, 60, 60, 60, 60, 60, 60};
 // 5.1 EvalTTWrite: ultimo valore UNADJUSTED (pre-rule50, pre-EvalScale) calcolato da nn_scale
 // su QUESTO thread = lo "unadjustedStaticEval" di SF, fifty-independent -> si cacha questo e si
 // ri-finalizza col fifty corrente (hit su TUTTE le trasposizioni, sempre esatto).
-static thread_local int g_last_unadjusted = 0;
-// EvalCacheOptSplit: i due termini invarianti della decomposizione lineare
-// v = base + optimism*coeff/1000 (coeff in millesimi). Vedi nn_scale.
-static thread_local int g_last_opt_base = 0;
-static thread_local int g_last_opt_coeff = 0;
+// NPS 25/09/2026: non piu' thread_local. Con MinGW il TLS passa da emutls
+// (pthread_getspecific + once + spinlock): il profilo xperf del 25/09 dava ~2,4% del
+// tempo del motore g++ a quelle funzioni, per tre scritture per eval che servono solo a
+// due opzioni spente (EvalTTWrite, EvalCacheOptSplit). I tre valori vivono ora nella
+// struttura per thread del bridge (SfPos) e si leggono passando l'handle.
+struct NnLast {
+    int unadjusted = 0;
+    // EvalCacheOptSplit: i due termini invarianti della decomposizione lineare
+    // v = base + optimism*coeff/1000 (coeff in millesimi). Vedi nn_scale.
+    int opt_base  = 0;
+    int opt_coeff = 0;
+};
 
 // Stockfish's eval cp scaling (evaluate.cpp), inlined here with optimism=0 (the
 // engine's static eval is unbiased; optimism is a search-only blend in SF). psqt
@@ -239,7 +247,8 @@ int g_ev_opt_const  = 7675;   // coefficiente optimism, ora COSTANTE (SF: 7675)
 #endif
 // =======================================================================
 
-static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50) {
+static inline int nn_scale(const Position& pos, Value psqt, Value positional, int rule50,
+                           NnLast* last = nullptr) {
     int nnue           = (g_ev_psqt_w * int(psqt) + g_ev_pos_w * int(positional)) / 128;
     int nnueComplexity = std::abs(int(psqt) - int(positional));
     nnue -= nnue * nnueComplexity / g_ev_cplx_div;
@@ -274,10 +283,12 @@ static inline int nn_scale(const Position& pos, Value psqt, Value positional, in
     // Stesso bucket che network.cpp:170 usa per scegliere lo stack di output.
     const int scale_pct = g_eval_scale_b[(pos.count<ALL_PIECES>() - 1) / 4];
 
-    g_last_opt_base  = int(std::int64_t(nnue) * (g_ev_mat_base + material) / g_ev_mat_base);
-    g_last_opt_coeff = int(std::int64_t(g_ev_opt_cplx + nnueComplexity) * (g_ev_opt_base + material) * 1000
-                           * scale_pct / ((long long)g_ev_opt_cplx * g_ev_mat_base * 100LL));
-    g_last_unadjusted = v;   // PRE rule50/EvalScale: SF unadjustedStaticEval (fifty-independent)
+    if (last) {
+        last->opt_base  = int(std::int64_t(nnue) * (g_ev_mat_base + material) / g_ev_mat_base);
+        last->opt_coeff = int(std::int64_t(g_ev_opt_cplx + nnueComplexity) * (g_ev_opt_base + material) * 1000
+                              * scale_pct / ((long long)g_ev_opt_cplx * g_ev_mat_base * 100LL));
+        last->unadjusted = v;   // PRE rule50/EvalScale: SF unadjustedStaticEval (fifty-independent)
+    }
     v -= v * rule50 / 199;
     if (scale_pct != 100)
         v = int(std::int64_t(v) * scale_pct / 100);  // re-calibrate to the search margins
@@ -348,6 +359,10 @@ void nn_init_tables(void) {
 
 // No-ops kept for API stability (both paths always use the refresh cache).
 void nn_set_finny(int) {}
+
+// 8.0 studio Mobility (UCI MobilityBlock). Pesi zero => eval identica, cambia solo il
+// costo. Da impostare prima di `ucinewgame`: gli accumulatori gia' calcolati restano.
+void nn_set_mobility(int on) { Eval::NNUE::Features::g_mobility_on = on != 0; }
 void nn_acc_stats(void) {}
 
 // M3 toggles. Incremental is now the DEFAULT: validated bit-exact vs full-refresh
@@ -476,9 +491,6 @@ int nn_set_eval_const(const char* name, int value) {
 }
 int         nn_get_eval_scale(void) { return g_eval_scale_pct; }   // per normalizzare 'score cp' in stampa (undo EvalScale, SF-style)
 // 5.1 EvalTTWrite (SF-style): l'unadjusted dell'ultima nn_scale su questo thread (fifty-indep).
-int         nn_last_unadjusted(void) { return g_last_unadjusted; }
-int         nn_last_opt_base(void)  { return g_last_opt_base; }
-int         nn_last_opt_coeff(void) { return g_last_opt_coeff; }
 // Ri-finalizza l'unadjusted col rule50 corrente: IDENTICO a un td_evaluate fresco (stesse op di
 // nn_scale 111-114) per QUALSIASI fifty -> la cache eval e' esatta su ogni trasposizione.
 // ⚠️ `bucket` va passato dal chiamante: qui non c'e' la Position. E' il bucket della
@@ -516,12 +528,15 @@ struct SfPos {
     // — the board is unchanged, so the accumulator chain stays at the same depth).
     SfMove mvStack[SF_STACK];
     bool   pushedAcc[SF_STACK];
+
     // N-1 lazy mirror apply: plies [0, appliedPly) have actually been replayed onto
     // pos/accStack; plies [appliedPly, ply) are pending (recorded but not yet
     // mirrored). nn_catch_up() advances appliedPly on demand, right before an eval.
     int    appliedPly = 0;
 
     int netGen;   // generation of g_net the caches were built from
+
+    NnLast last;  // termini dell'ultima nn_scale di QUESTO thread (ex thread_local)
 
     SfPos() : stm(WHITE), rule50(0), ply(0) {
         accStack = std::make_unique<AccumulatorStack>();
@@ -611,7 +626,7 @@ inline void fill_dirty_pawns(const Position& pos, const SfMove* m, DirtyPawns& d
 // DirtyPiece construction, driven by the already-decomposed SfMove (engine
 // king-destination castling encoding).
 inline void
-apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts, DirtyPawns& dpw) {
+apply_move_impl(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts, DirtyPawns& dpw) {
     const Piece  pc   = Piece(m->movedPiece);
     const Square from = Square(m->from);
     const Square to   = Square(m->to);
@@ -664,6 +679,18 @@ apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts, Di
     }
 }
 
+// 8.0 studio Mobility: il blocco non ha un delta per eventi (la mobilita' cambia con
+// qualunque mossa), quindi si salva lo snapshot dei bitboard PRIMA e DOPO la mutazione
+// e features/mobility.cpp emette la differenza. Con MobilityBlock off costa zero.
+inline void apply_move(Position& pos, const SfMove* m, DirtyPiece& dp, DirtyThreats& dts,
+                       DirtyPawns& dpw, DirtyMobility& dmo) {
+    if (Eval::NNUE::Features::g_mobility_on)
+        Eval::NNUE::Features::Mobility::snapshot(pos, dmo.before);
+    apply_move_impl(pos, m, dp, dts, dpw);
+    if (Eval::NNUE::Features::g_mobility_on)
+        Eval::NNUE::Features::Mobility::snapshot(pos, dmo.after);
+}
+
 // Reverse apply_move on pos (no dts — undo just pops the accumulator). Mirrors the
 // NET BOARD effect of Position::undo_move.
 inline void unapply_move(Position& pos, const SfMove* m) {
@@ -699,9 +726,10 @@ inline void nn_catch_up(SfPos* p) {
     while (p->appliedPly < p->ply && p->appliedPly < SF_STACK) {
         int i = p->appliedPly;
         if (p->pushedAcc[i]) {
+
             auto dirties = p->accStack->push();
             apply_move(p->pos, &p->mvStack[i], std::get<0>(dirties), std::get<1>(dirties),
-                       std::get<2>(dirties));
+                       std::get<2>(dirties), std::get<3>(dirties));
         }
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
         ++p->appliedPly;
@@ -711,6 +739,10 @@ inline void nn_catch_up(SfPos* p) {
 }  // namespace
 
 void* nn_pos_create(void) { return new SfPos(); }
+
+int nn_last_unadjusted(void* handle) { return static_cast<SfPos*>(handle)->last.unadjusted; }
+int nn_last_opt_base(void* handle)   { return static_cast<SfPos*>(handle)->last.opt_base; }
+int nn_last_opt_coeff(void* handle)  { return static_cast<SfPos*>(handle)->last.opt_coeff; }
 void  nn_pos_destroy(void* handle) { delete static_cast<SfPos*>(handle); }
 
 void nn_pos_set(void* handle, int side_white, const int* pieces,
@@ -745,8 +777,9 @@ void nn_pos_do(void* handle, const struct SfMove* m) {
     // it later, only if an eval is actually reached). Eager fallback (g_lazy_mirror
     // off) applies immediately, same as pre-N1, keeping appliedPly in lockstep.
     if (g_incremental && !g_lazy_mirror) {
-        auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&, DirtyPawns&}
-        apply_move(p->pos, m, std::get<0>(dirties), std::get<1>(dirties), std::get<2>(dirties));
+        auto dirties = p->accStack->push();  // {DirtyPiece&, DirtyThreats&, DirtyPawns&, DirtyMobility&}
+        apply_move(p->pos, m, std::get<0>(dirties), std::get<1>(dirties), std::get<2>(dirties),
+                   std::get<3>(dirties));
         p->pos.set_side_to_move(flip(p->pos.side_to_move()));
         p->appliedPly = p->ply + 1;
     }
@@ -805,7 +838,7 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
     }
     // Incremental: the maintained pos + accumulator chain are walked by Network::evaluate.
     auto [psqt, positional] = g_net->evaluate(p->pos, *p->accStack, *p->caches);
-    int  inc                = nn_scale(p->pos, psqt, positional, p->rule50);
+    int  inc                = nn_scale(p->pos, psqt, positional, p->rule50, &p->last);
 
     if (g_verify) {
         // Compare against a full refresh built from the engine bitboards, on a separate
