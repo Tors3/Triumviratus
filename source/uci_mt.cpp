@@ -591,6 +591,7 @@ void uci_loop()
             printf("option name CorrNonPawnWeight type spin default 100 min 0 max 400\n");  // /100 contributo delle 2 tabelle non-pawn; co-tunabile
             printf("option name CorrMaterial type check default false\n");    // SBAKATA il 6/08/2026: il gate da 30.530g @30+0.3 (+2,65 +/- 2,14) muoveva TRE cose insieme (material off->on, cont 100->85, cap 50->48), quindi non misurava questa leva. Isolata: -18,49 +/- 11,43, LOS 0,07%, 1298g @20+0.2. Costa +11,5% di albero senza prova positiva. Dettaglio in threads.cpp.
             printf("option name CorrMaterialWeight type spin default 67 min 0 max 400\n");  // /100 contributo della tabella material; co-tunabile
+            printf("option name TransCorr type spin default 0 min 0 max 400\n");  // audit 7.1 F2: corr keyed by hash(padre)^hash(nodo), /100; 0 = spenta
             printf("option name PawnHistory type check default true\n");    // ordering quiet per struttura pedonale (SF-style, peso 2x)
             printf("option name PawnHistoryWeight type spin default 187 min 0 max 800\n");  // [4.1 BAKE 126->139]
             printf("option name ThreatOrdering type check default true\n");  // ordering quiet per minacce (SF #2): salva pezzo minacciato da inferiore
@@ -1148,6 +1149,7 @@ void uci_loop()
                     memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                     memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
                     memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
+                    memset(thread_data[i].corr_hist_trans, 0, sizeof(thread_data[i].corr_hist_trans));
                     memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));   // A6 FIX 2026-07-25: mancava (unico azzeramento in init_threads, threads.cpp:3140) -> era l'unica corr-table a sopravvivere fra le 8 posizioni del bench
                     apply_history_priors(thread_data[i]);   // Q-26: il bench azzera a mano -> riapplica il prior
                 }
@@ -1340,7 +1342,7 @@ void uci_loop()
                   if (prof_n_eval) {
                       // 🔴 prof_n_inc conta UNA VOLTA PER PROSPETTIVA: evaluate() chiama
                       // evaluate_side(WHITE) e evaluate_side(BLACK), ognuna incrementa di 1
-                      // (e il ramo TRIUMV_PERSP_TOGETHER fa +=2 in un colpo solo). Quindi il
+                      // (il ramo TRIUMV_PERSP_TOGETHER, tolto il 25/09, faceva +=2). Quindi il
                       // massimo SANO e' 2,00 per eval = uno per prospettiva, non 1,00.
                       // La soglia di allarme era a 1,2 e si accendeva su qualunque motore
                       // sano: il 4/08/2026 stampava "update SPRECATI" con 1,83, che invece
@@ -1418,6 +1420,7 @@ void uci_loop()
                 memset(thread_data[i].corr_hist_minor, 0, sizeof(thread_data[i].corr_hist_minor));
                 memset(thread_data[i].corr_hist_major, 0, sizeof(thread_data[i].corr_hist_major));
                 memset(thread_data[i].corr_hist_material, 0, sizeof(thread_data[i].corr_hist_material));
+                memset(thread_data[i].corr_hist_trans, 0, sizeof(thread_data[i].corr_hist_trans));
                 memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));   // A6 FIX 2026-07-25: mancava -> era l'unica corr-table a trascinarsi fra PARTITE (stessa classe di contaminazione del FIX P0.5)
                 // Q-11 NodeCache: le entry sopravvivono cross-MOVE (voluto) ma non
                 // cross-PARTITA. La chiave piena renderebbe innocuo un residuo, ma i

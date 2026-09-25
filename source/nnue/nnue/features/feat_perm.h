@@ -45,15 +45,10 @@ inline constexpr IndexType FeatRows = 64464;
 inline constexpr IndexType FeatDeadBase = FeatRows;
 inline constexpr IndexType FeatPermSize = 66560;
 
-#ifndef TRIUMV_NO_FEAT_PERM
 extern const unsigned short FeatPerm[FeatPermSize];
 
 // Una lettura, nessun branch. La tabella e' 130 KB e sta in L2.
 inline IndexType feat_row(IndexType raw) { return FeatPerm[raw]; }
-#else
-// Baseline dell'A/B: identita', con le feature morte che collassano sul sentinella.
-inline IndexType feat_row(IndexType raw) { return raw < FeatRows ? raw : FeatRows; }
-#endif
 
 // ---------------------------------------------------------------------------
 // ⛔ STESSA IDEA SU HalfKA: PROVATA E RIGETTATA il 3/08/2026. **-1,15% NPS**,
@@ -79,20 +74,15 @@ inline IndexType feat_row(IndexType raw) { return raw < FeatRows ? raw : FeatRow
 // *com'e' gia' disposto*. Se gli indici caldi sono gia' contigui per costruzione,
 // una permutazione per frequenza puo' solo peggiorare.
 //
-// Il codice resta, dietro opt-in esplicito, come baseline documentata.
+// Il codice (TRIUMV_PSQ_PERM) e' stato tolto nella pulizia del 25/09/2026: copia in
+// _backup/Triumviratus_7.1_src_2026-09-25_pre_cleanup.
 inline constexpr IndexType PsqRows = 22528;
 
-// ⚠️ Se un giorno si riattiva: NON e' compatibile con il target ICL. Li' gli indici
+// ⚠️ Se un giorno si riprova: NON e' compatibile con il target ICL. Li' gli indici
 // HalfKA li produce `write_indices` in forma vettoriale, che non passa da
 // make_index — permutare i pesi senza permutare QUEGLI indici darebbe valutazioni
 // sbagliate in silenzio, senza crash e senza bench diverso in modo affidabile.
-#if defined(TRIUMV_PSQ_PERM) && !defined(USE_AVX512ICL)
-    #define TRIUMV_PSQ_PERM_ON 1
-extern const unsigned short PsqPerm[PsqRows];
-inline IndexType psq_row(IndexType raw) { return PsqPerm[raw]; }
-#else
 inline IndexType psq_row(IndexType raw) { return raw; }
-#endif
 
 }  // namespace Triumviratus::Eval::NNUE::Features
 

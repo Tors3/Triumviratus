@@ -160,6 +160,12 @@ larger share of the search; the gain is expected to shrink as the time control g
 - Every change in section 4 is in `source/` and enabled on all targets (AVX2, AVX-512, VNNI, ICL,
   `-intel`).
 - **Done:** TT16 adopted (+6.3 ± 5.1); 7.1 against 7.0 at 12+0.12: +14.7 ± 5.4, SPRT passed.
+- **Tried:** a correction history keyed by the last move in context (hash of parent XOR hash of
+  node, as in Coda and Cinder): −7.6 ± 7.8 on 2,069 games at 20+0.2. Left in the code, switched off.
+- **Cleanup:** 14 finished compile-time switches removed (the old table, the speed-work oracles,
+  prefetch and permutation experiments that were measured and rejected): about 2,000 lines fewer.
+  Same tree, checked: bench 240500 and identical node counts on the 50 test positions. Search
+  options that are switched off stay in the code.
 - **Next:** a correction history keyed by the last move in context (as in Coda and Cinder), then a
   series of **ablation tests**: switching off, one at a time, search features that were accepted on
   weak evidence or validated with older networks, to find the ones that no longer pay. After that,

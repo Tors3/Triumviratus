@@ -588,6 +588,16 @@ int g_corr_np_weight = 100; // /100 sul contributo delle due tabelle non-pawn
 static bool g_corr_material = false;
 int g_corr_material_weight = 67; // /100 sul contributo della tabella material
 
+// TransCorr (audit 7.1, piano F §2, 25/09/2026; idea di Cinder, in Coda 0.9.4 con peso 108/194
+// rispetto alla continuation, _reference/Coda/src/search.rs:409). Tavola corr indicizzata da
+// hash(padre) ^ hash(nodo): la mossa di ingresso NEL SUO CONTESTO (pezzo, case, catturato,
+// diritti, e.p.), piu' ricca della cont_corr che vede solo [pezzo][casa]. Impara "questo
+// cambiamento strutturale tende a essere valutato male". Il valore e' il peso /100 del
+// contributo; 0 = spenta, tavola mai letta ne' scritta = byte-identico (bench 240500).
+// ⚠️ Stessa famiglia di CorrMaterial: a TC corto le patch di correzione si gonfiano (vedi
+// sopra, +10 @10+0.1 -> -7 @20+0.2). Va misurata a 20+0.2 o piu'.
+int g_corr_trans_weight = 0;
+
 // PawnHistory (UCI "PawnHistory", default OFF = byte-identico). Termine di
 // ordering per i quiet, pesato 2x come in SF, keyed sulla struttura pedonale.
 // Tabella per-thread in ThreadData (SMP-safe). Indice ricalcolato in
@@ -1393,8 +1403,8 @@ bool g_fut_fail_soft = false;
 // Il fallback conta: la versione storica ritorna `P` quando sulla casa non c'e' un
 // pezzo AVVERSARIO (casa vuota -> mailbox -1, oppure pezzo amico -> fuori banda).
 // La condizione `pc >= start && pc <= end` al sito d'uso riproduce quel caso.
-// ⚠️ Sotto TRIUMV_NO_MAILBOX la mailbox non e' mantenuta: li' il percorso veloce
-// non esiste e si torna al loop, altrimenti si leggerebbe un array stantio.
+// (Pulizia 25/09/2026: tolta l'opzione di compilazione TRIUMV_NO_MAILBOX, la mailbox e'
+// sempre mantenuta. Il vecchio percorso a loop e' in _backup/Triumviratus_7.1_src_2026-09-25_pre_cleanup.)
 // MISURA (9/08/2026, laptop Zen4, un solo binario Trium_p2_avx2, 160 posizioni UHO
 // interlacciate a depth 20): mediana B/A da +1,01% a +0,73%, mai sotto lo zero in
 // nessun blocco da 10. L'audit ne stimava +0,2-0,7% per il LOTTO P2 intero: qui
@@ -2755,6 +2765,10 @@ bool set_search_param(const char *name, int value) {
     g_corr_material_weight = value < 0 ? 0 : value;
     return true;
   }
+  if (!strcmp(name, "TransCorr")) {
+    g_corr_trans_weight = value < 0 ? 0 : value;
+    return true;
+  }
   if (!strcmp(name, "ContHistDiv")) {
     g_conthist_red_div = value;
     return true;
@@ -3898,6 +3912,7 @@ static const TriumvFrozenRef g_frozen_refs[] = {
     {"g_corr_lr_div", (const void*)&g_corr_lr_div, 0, 303},
     {"g_corr_material", (const void*)&g_corr_material, 1, 0},
     {"g_corr_material_weight", (const void*)&g_corr_material_weight, 0, 67},
+    {"g_corr_trans_weight", (const void*)&g_corr_trans_weight, 0, 0},
     {"g_corr_multi", (const void*)&g_corr_multi, 1, 1},
     {"g_corr_nonpawn", (const void*)&g_corr_nonpawn, 1, 0},
     {"g_corr_np_weight", (const void*)&g_corr_np_weight, 0, 100},
@@ -4204,6 +4219,7 @@ void triumv_frozen_check();
 #define g_corr_lr_div 303
 #define g_corr_material false
 #define g_corr_material_weight 67
+#define g_corr_trans_weight 0
 #define g_corr_multi true
 #define g_corr_nonpawn false
 #define g_corr_np_weight 100
@@ -4721,6 +4737,8 @@ void init_threads(int thread_count) {
            sizeof(thread_data[i].corr_hist_major));
     memset(thread_data[i].corr_hist_material, 0,
            sizeof(thread_data[i].corr_hist_material));
+    memset(thread_data[i].corr_hist_trans, 0,
+           sizeof(thread_data[i].corr_hist_trans));
     memset(thread_data[i].corr_hist_np, 0, sizeof(thread_data[i].corr_hist_np));
     memset(thread_data[i].cont_corr_hist, 0,
            sizeof(thread_data[i].cont_corr_hist));
@@ -4737,7 +4755,6 @@ void init_threads(int thread_count) {
 void copy_board_to_thread(ThreadData &td) {
   memcpy(td.bitboards, bitboards, sizeof(bitboards));
   memcpy(td.occupancies, occupancies, sizeof(occupancies));
-#ifndef TRIUMV_NO_MAILBOX
   // Mailbox: full init dalla root, poi mantenuta in make/unmake — stesso schema di
   // pawn_key e np_key qui sotto. Unico punto di inizializzazione della board di thread.
   for (int sq = 0; sq < 64; sq++)
@@ -4750,7 +4767,6 @@ void copy_board_to_thread(ThreadData &td) {
       pop_bit(bb, sq);
     }
   }
-#endif
   td.side = side;
   td.enpassant = enpassant;
   td.castle = castle;
@@ -4968,7 +4984,6 @@ static inline void td_occ_update(ThreadData &td, int us, int source, int target,
   td.occupancies[both] = td.occupancies[white] | td.occupancies[black];
 }
 
-#ifndef TRIUMV_NO_MAILBOX
 // Casa di partenza/arrivo della TORRE nell'arrocco, dedotte dalla casa d'arrivo del
 // re. Stessa tabella implicita gia' usata da td_occ_update e dai due rollback.
 static inline void td_castle_rook(int target, int &rook_pc, int &rf, int &rt) {
@@ -5042,7 +5057,6 @@ static inline void td_mailbox_revert(ThreadData &td, int piece, int source, int 
     td.piece_on[rf] = rook_pc;
   }
 }
-#endif
 
 // ============================================================================
 // MAKE MOVE (returns 1 if legal)
@@ -5159,7 +5173,6 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   int enpass = get_move_enpassant(move);
   int castling = get_move_castling(move);
 
-#ifndef TRIUMV_NO_EARLY_PF
   // NPS 25/09/2026 — PREFETCH ANTICIPATO (SF key_after). La chiave del figlio si stima
   // PRIMA di fare la mossa: pezzo da/a, vittima (dalla mailbox, ancora pre-mossa), lato,
   // e.p. azzerato. Ignora arrocco, promozione, nuova casa e.p. e diritti d'arrocco: in quei
@@ -5180,7 +5193,6 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
     TT_PREFETCH(&hash_table[tt_base_index(pf_key)]);
     TT_PREFETCH(&td.eval_cache[pf_key & ThreadData::EVAL_CACHE_MASK]);
   }
-#endif
 
   pop_bit(td.bitboards[piece], source);
   set_bit(td.bitboards[piece], target);
@@ -5201,21 +5213,12 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
       undo.captured_square = target;
       int start = (td.side == white) ? p : P;
       int end = (td.side == white) ? k : K;
-#ifndef TRIUMV_NO_MAILBOX
       // La mailbox e' ancora quella PRE-mossa qui: si aggiorna piu' sotto, insieme
       // a td_occ_update. Il test di range replica esattamente il ciclo sostituito,
       // che cercava solo fra i pezzi AVVERSARI e lasciava -1 se non trovava nulla.
       const int mb_pc = td.piece_on[target];
       if (mb_pc >= start && mb_pc <= end)
         undo.captured_piece = mb_pc;
-#else
-      for (int pc = start; pc <= end; pc++) {
-        if (get_bit(td.bitboards[pc], target)) {
-          undo.captured_piece = pc;
-          break;
-        }
-      }
-#endif
     }
 
     if (undo.captured_piece != -1) {
@@ -5293,11 +5296,9 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
                      undo.captured_square, castling);
   td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
-#ifndef TRIUMV_NO_MAILBOX
   td_mailbox_apply(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);  // sito 1/3: make-forward
   MB_VERIFY(td, "make-forward");
-#endif
 
   td.side ^= 1;
   td.hash_key ^= side_key;
@@ -5355,11 +5356,9 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
                        undo.captured_square, castling);
     td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                      undo.captured_square, castling);
-#ifndef TRIUMV_NO_MAILBOX
     td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
                       undo.captured_square, castling);  // sito 2/3: mossa illegale
     MB_VERIFY(td, "rollback-illegale");
-#endif
 
     return 0;
   }
@@ -5372,7 +5371,6 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
   //  byte-identico, Reckless #1085): da giugno e' stato bakato TTTwoLevel
   //  (bucket 2 slot), il pattern di accesso TT e' cambiato -> vale una
   //  ri-misura NPS.)
-#ifndef TRIUMV_NO_CORR_PF
   // NPS 25/09/2026 — prefetch delle entry di correction history che il figlio legge per
   // prime (td_corr_value): pawn, minor, major con le chiavi GIA' aggiornate qui sopra, e la
   // continuation correction indicizzata da (mossa di ingresso al padre, questa mossa).
@@ -5387,18 +5385,15 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo) {
     const int m2 = td.move_stack[td.ply - 1];  // td.ply e' gia' il ply del figlio
     if (m2)
       TT_PREFETCH(&td.cont_corr_hist[get_move_piece(m2)][get_move_target(m2)][piece][target]);
+    // TransCorr: in cima alla repetition_table c'e' la chiave del padre (spinta prima di make)
+    if (g_corr_trans_weight)
+      TT_PREFETCH(&td.corr_hist_trans[td.side][(td.hash_key ^ td.repetition_table[td.repetition_index]) & cmask]);
   }
-#endif
 
-#ifndef TRIUMV_NO_EARLY_PF
   if (g_tt_prefetch && td.hash_key != pf_key) { // stima sbagliata (arrocco, promozione, e.p.)
     TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
     TT_PREFETCH(&td.eval_cache[td.hash_key & ThreadData::EVAL_CACHE_MASK]);
   }
-#else
-  if (g_tt_prefetch)
-    TT_PREFETCH(&hash_table[tt_base_index(td.hash_key)]);
-#endif
 
   // (PREFETCH delle tabelle di correzione, provato e RIMOSSO il 09/09/2026.
   //  Stockfish ne fa sei in do_move: TT, pawn history e quattro entry di
@@ -5531,11 +5526,9 @@ static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
                      undo.captured_square, castling);
   td_mm_key_update(td, piece, source, target, promoted, undo.captured_piece,
                    undo.captured_square, castling);
-#ifndef TRIUMV_NO_MAILBOX
   td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
                     undo.captured_square, castling);  // sito 3/3: unmake
   MB_VERIFY(td, "unmake");
-#endif
 }
 
 // ============================================================================
@@ -6202,12 +6195,10 @@ static inline int td_stat_bonus(int depth) {
 static inline int td_captured_piece(ThreadData &td, int target) {
   int start = (td.side == white) ? p : P;
   int end = (td.side == white) ? k : K;
-#ifndef TRIUMV_NO_MAILBOX
   if (g_captured_mailbox) {
     int pc = td.piece_on[target];
     return (pc >= start && pc <= end) ? pc : P;
   }
-#endif
   for (int pc = start; pc <= end; pc++)
     if (get_bit(td.bitboards[pc], target))
       return pc;
@@ -6545,21 +6536,12 @@ static inline int td_score_move(ThreadData &td, int move, int tt_move) {
     int victim = P;
     int start = (td.side == white) ? p : P;
     int end = (td.side == white) ? k : K;
-#ifndef TRIUMV_NO_MAILBOX
     // Il test di range replica il ciclo sostituito: cercava solo fra i pezzi
     // AVVERSARI, e se non trovava nulla lasciava il default P. Succede all'e.p.,
     // dove la casa d'arrivo e' VUOTA e la vittima sta altrove.
     const int mb_pc = td.piece_on[target];
     if (mb_pc >= start && mb_pc <= end)
       victim = mb_pc;
-#else
-    for (int pc = start; pc <= end; pc++) {
-      if (get_bit(td.bitboards[pc], target)) {
-        victim = pc;
-        break;
-      }
-    }
-#endif
 
     int caphist = g_capture_hist
                       ? td.capture_history[piece][target][victim]
@@ -7336,11 +7318,7 @@ static int mp_next(ThreadData &td, MovePicker &mp) {
           (mp.skip_quiets && !get_move_promoted(m)))
         mp.q_scores[i] = MP_CONSUMED;
       else
-#ifndef TRIUMV_NO_QUIET_BATCH
         mp.q_scores[i] = td_score_quiet(td, qctx, m);
-#else
-        mp.q_scores[i] = td_score_move(td, m, mp.tt_move); // baseline per l'A/B
-#endif
     }
     mp.stage = MPS_QUIET;
     [[fallthrough]];
@@ -7604,9 +7582,7 @@ static int td_quiescence(ThreadData &td, int alpha, int beta,
   // because making the king capture desyncs the NNUE accumulator and crashes.
   // (Rimozione provata 2026-06-06: node-identica ma NPS ~0 -> tenuta per
   // safety.) NPS 25/09/2026: gate ply==0, stesso ragionamento di td_negamax.
-#ifndef TRIUMV_FULL_KING_GUARD
   if (td.ply == 0)
-#endif
   {
     int opp_king_sq =
         get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);
@@ -8116,23 +8092,13 @@ static inline int td_corr_index(ThreadData &td) {
   return td_corr_index_pieces(td, pcs, 2);
 }
 // Minor-piece (N/B) and major-piece (R/Q) keyed indices (CorrHistMulti only).
-// NPS 25/09/2026: chiavi incrementali (td_mm_key_update). -DTRIUMV_NO_MM_KEY_INCR torna
-// alla scansione, come oracolo: deve dare lo stesso bench.
+// NPS 25/09/2026: chiavi incrementali (td_mm_key_update). La scansione (td_corr_index_pieces)
+// resta come riferimento; l'oracolo di compilazione e' stato tolto nella pulizia del 25/09.
 static inline int td_corr_index_minor(ThreadData &td) {
-#ifndef TRIUMV_NO_MM_KEY_INCR
   return (int)(td.mm_key[0] & CORR_MASK);
-#else
-  const int pcs[4] = {N, B, n, b};
-  return td_corr_index_pieces(td, pcs, 4);
-#endif
 }
 static inline int td_corr_index_major(ThreadData &td) {
-#ifndef TRIUMV_NO_MM_KEY_INCR
   return (int)(td.mm_key[1] & CORR_MASK);
-#else
-  const int pcs[4] = {R, Q, r, q};
-  return td_corr_index_pieces(td, pcs, 4);
-#endif
 }
 // Material-key index (SF #5556): rolling hash dei 12 popcount = firma del
 // MATERIALE (conteggi), indipendente dalle posizioni. Mascherato come le altre
@@ -8176,6 +8142,15 @@ static inline int16_t *td_cont_corr_bucket(ThreadData &td) {
                            [get_move_piece(m1)][get_move_target(m1)];
 }
 
+// TransCorr: indice della transizione padre -> nodo. La chiave del padre e' in cima alla
+// repetition_table (ogni sito spinge hash_key PRIMA di make, anche la null move). -1 alla
+// radice e dopo una null move (move_stack = 0), come la cont_corr: nessuna mossa da correggere.
+static inline int td_corr_index_trans(ThreadData &td) {
+  if (td.ply < 1 || !td.move_stack[td.ply])
+    return -1;
+  return (int)((td.hash_key ^ td.repetition_table[td.repetition_index]) & CORR_MASK);
+}
+
 // Correction (cp) to add to the raw static eval for this position. Sums the
 // pawn table with the minor/major material tables when CorrHistMulti is on,
 // then clamps the TOTAL correction to g_corr_cap.
@@ -8192,20 +8167,10 @@ static inline int16_t *td_cont_corr_bucket(ThreadData &td) {
 // hash_key cambia sempre, quindi la prima chiamata di ogni nodo e' comunque un miss.
 // Stessa lezione del prefetch PSQT: dove il dato e' gia' vicino, aggiungere un
 // meccanismo per raggiungerlo piu' in fretta toglie invece di dare.
-// Tenuta dietro opt-in come baseline documentata.
+// Tolta nella pulizia del 25/09/2026: da quel giorno le chiavi minor/major sono incrementali.
 static inline void td_corr_mm(ThreadData &td, int &mi, int &ma) {
-#ifdef TRIUMV_CORR_CACHE
-  if (td.corr_mm_key != td.hash_key) {
-    td.corr_mm_key   = td.hash_key;
-    td.corr_mm_minor = td_corr_index_minor(td);
-    td.corr_mm_major = g_corr_major ? td_corr_index_major(td) : 0;
-  }
-  mi = td.corr_mm_minor;
-  ma = td.corr_mm_major;
-#else
   mi = td_corr_index_minor(td);
   ma = g_corr_major ? td_corr_index_major(td) : 0;
-#endif
 }
 
 static inline int td_corr_value(ThreadData &td, int idx) {
@@ -8231,6 +8196,11 @@ static inline int td_corr_value(ThreadData &td, int idx) {
   if (g_corr_material) {
     sum += g_corr_material_weight *
            td.corr_hist_material[td.side][td_corr_index_material(td)] / 100;
+  }
+  if (g_corr_trans_weight) {
+    const int ti = td_corr_index_trans(td);
+    if (ti >= 0)
+      sum += g_corr_trans_weight * td.corr_hist_trans[td.side][ti] / 100;
   }
   int corr = sum / CORR_GRAIN;
   if (corr > g_corr_cap)
@@ -8402,6 +8372,11 @@ static inline void td_corr_update(ThreadData &td, int idx, int static_eval,
         td.corr_hist_material[td.side][td_corr_index_material(td)], target, w,
         lim);
   }
+  if (g_corr_trans_weight) {
+    const int ti = td_corr_index_trans(td);
+    if (ti >= 0)
+      td_corr_bucket_update(td.corr_hist_trans[td.side][ti], target, w, lim);
+  }
 }
 
 // MulticutCorr: applica un bonus ESPLICITO alle stesse tavole che td_corr_update
@@ -8445,6 +8420,11 @@ static inline void td_corr_bonus(ThreadData &td, int idx, int target, int w) {
     td_corr_bucket_update(
         td.corr_hist_material[td.side][td_corr_index_material(td)], target, w,
         lim);
+  }
+  if (g_corr_trans_weight) {
+    const int ti = td_corr_index_trans(td);
+    if (ti >= 0)
+      td_corr_bucket_update(td.corr_hist_trans[td.side][ti], target, w, lim);
   }
 }
 
@@ -8569,10 +8549,7 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
   // RIFIUTA le mosse che lasciano il proprio re attaccato, o da una null move, che si
   // fa solo fuori scacco. In entrambi i casi il lato che NON muove non e' mai sotto
   // scacco. L'unico ingresso non garantito e' la posizione di radice (FEN esterna).
-  // -DTRIUMV_FULL_KING_GUARD riporta il controllo a ogni nodo.
-#ifndef TRIUMV_FULL_KING_GUARD
   if (td.ply == 0)
-#endif
   {
     int opp_king_sq =
         get_ls1b_index((td.side == white) ? td.bitboards[k] : td.bitboards[K]);

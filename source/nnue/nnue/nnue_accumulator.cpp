@@ -105,57 +105,6 @@ void AccumulatorStack::evaluate(const Position&           pos,
                                 const FeatureTransformer& featureTransformer,
                                 // Silence spurious warning on GCC 10
                                 [[maybe_unused]] AccumulatorCaches& cache) noexcept {
-#ifdef TRIUMV_PERSP_TOGETHER
-    // ⛔ MISURATO −0,70% IL 3/08/2026 — default OFF, tenuto solo come punto di
-    // partenza per il porting COMPLETO. Questa e' meta' del commit di Stockfish:
-    // riordina le prospettive ma NON condivide la decodifica delle tuple, che e'
-    // da dove viene il loro guadagno. Cosi' si prende solo il lato negativo —
-    // alternando le prospettive a ogni transizione il working set attivo passa da
-    // un accumulatore (2 KB + colonne) a due, e su un percorso memory-bound la
-    // localita' della struttura GRANDE conta piu' di quella della dirty list.
-    // Per farlo rendere serve riscrivere `append_changed_indices` in modo che
-    // decodifichi i bitfield una volta sola producendo le liste di ENTRAMBE le
-    // prospettive (indici e push restano separati: l'orientamento e' diverso).
-    //
-    // Porting di Stockfish 7b550409 "Update NNUE perspectives together".
-    // Quando ENTRAMBE le prospettive sono aggiornabili in modo incrementale, si
-    // percorre il suffisso comune una volta sola, facendo per ogni transizione
-    // prima una prospettiva e poi l'altra. Prima si completava tutta la catena
-    // per il BIANCO e poi tutta per il NERO: la stessa `dirtyThreats` di ogni
-    // stato veniva letta due volte a distanza di un intero aggiornamento di
-    // accumulatore (~1024 int16 per prospettiva), quindi fuori dalla cache.
-    // Ora le due letture sono adiacenti. Nessun cambio funzionale: indici,
-    // ordine delle liste e aritmetica restano per prospettiva.
-    {
-        const auto lastW = find_last_usable_accumulator(WHITE);
-        const auto lastB = find_last_usable_accumulator(BLACK);
-
-        if (accumulators[lastW].computed[WHITE] && accumulators[lastB].computed[BLACK])
-        {
-#ifdef TRIUMV_PROFILE
-            prof_n_inc += 2;
-#endif
-            PROF_GUARD(prof_acc_inc);
-            const Square ksqW  = pos.square<KING>(WHITE);
-            const Square ksqB  = pos.square<KING>(BLACK);
-            const usize  start = lastW < lastB ? lastW : lastB;
-
-            for (usize next = start + 1; next < size; next++)
-            {
-                // `next > lastX` garantisce che accumulators[next-1] sia gia'
-                // calcolato per quella prospettiva: o e' l'ancora lastX, o e'
-                // stato prodotto al giro precedente di questo stesso ciclo.
-                if (next > lastW)
-                    update_accumulator_incremental<true>(WHITE, featureTransformer, ksqW,
-                                                         accumulators[next], accumulators[next - 1]);
-                if (next > lastB)
-                    update_accumulator_incremental<true>(BLACK, featureTransformer, ksqB,
-                                                         accumulators[next], accumulators[next - 1]);
-            }
-            return;
-        }
-    }
-#endif
 
 #ifndef TRIUMV_NO_PERSP_BOTH
     // Porting COMPLETO di SF 7b550409 (vedi update_accumulator_incremental_both).
@@ -519,7 +468,6 @@ void apply_combined(Color                              perspective,
 #endif
 }
 
-#ifndef TRIUMV_NO_PF_PSQ
 // ✅ BAKATO 3/08/2026: **+1,3% NPS** — 194/300 posizioni vinte su due campioni
 // indipendenti (89/150 seed 42 con mediana +0,59%, 105/150 seed 7 con +1,98%),
 // z = 5,02, p ~ 5e-7, nodi identici in entrambi (121.575.142 / 122.855.971),
@@ -556,36 +504,13 @@ inline void prefetch_psq_rows(const FeatureTransformer&       featureTransformer
     for (int i = 0; i < b.ssize(); ++i)
         prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(b[i]) * RowBytes);
 }
-#endif
 
-#ifdef TRIUMV_PF_SMALL
-// ---------------------------------------------------------------------------
-//  PF_SMALL (opt-in, DA CONFERMARE) — tre siti di prefetch oggi scoperti:
-//   * righe HalfKA nel percorso HYBRID (tabella 46 MB, nessun prefetch)
-//   * righe PawnPair/PassedPawns nell'incrementale: entrano nelle liste threat
-//     DOPO la passata di ThreatFeatureSet, che e' l'unica che prefetcha
-//   * niente prefetch per le tuple MORTE (l'indice sentinella punta una riga
-//     oltre la tabella viva: un fill buffer sprecato per ogni tupla esclusa)
-//  Misurato su VM EPYC 7K62 (Zen2), 300 pos, due build PGO, nulli passati:
-//  +0,49%, 202/300, z=6,36, divergenza d'ordine 0,25%.  UNA linea per riga.
-// ---------------------------------------------------------------------------
-inline void prefetch_thr_rows(const FeatureTransformer&          featureTransformer,
-                              const ThreatFeatureSet::IndexList& a,
-                              int                                from = 0) {
-    const char* base = reinterpret_cast<const char*>(&featureTransformer.threatWeights[0]);
-    const usize RowBytes =
-      usize(FeatureTransformer::OutputDimensions) * sizeof(featureTransformer.threatWeights[0]);
-    for (int i = from; i < a.ssize(); ++i)
-        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(a[i]) * RowBytes);
-}
-#endif
 
 // NPS 25/09/2026 — prefetch delle righe PSQT delle feature threat/pedoni (32 byte = una
 // linea per riga). threatPsqtWeights e' ~2,1 MB e non sta in L2: il campionamento su
 // LLCMisses del 25/09 gli dava ~1,7% dei miss del motore. apply_combined consuma le righe
 // PSQT per ULTIME, dopo le 1024 colonne: emesse qui c'e' tutto l'accumulatore a coprire la
 // latenza. (Il -1,04% del 3/08 era una misura a tempo su un laptop.)
-#ifndef TRIUMV_NO_THR_PSQT_PF
 inline void prefetch_thr_psqt(const FeatureTransformer&          ft,
                               const ThreatFeatureSet::IndexList& a,
                               const ThreatFeatureSet::IndexList& b) {
@@ -594,7 +519,6 @@ inline void prefetch_thr_psqt(const FeatureTransformer&          ft,
     for (int i = 0; i < b.ssize(); ++i)
         prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(&ft.threatPsqtWeights[b[i] * PSQTBuckets]);
 }
-#endif
 
 template<bool Forward>
 void update_accumulator_incremental(Color                     perspective,
@@ -623,10 +547,8 @@ void update_accumulator_incremental(Color                     perspective,
 
     if constexpr (Forward)
     {
-#ifndef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
         prefetch_psq_rows(featureTransformer, psqRemoved, psqAdded);
-#endif
         { PROF_GUARD(prof_idx_thr);
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrRemoved,
                                                  thrAdded, pfBase, pfStride); }
@@ -636,7 +558,8 @@ void update_accumulator_incremental(Color                     perspective,
 #endif
         // TRANN1: gli indici PawnPair/PassedPawns (folded, gia' offsettati)
         // entrano nelle STESSE liste threat -> nessun pass SIMD aggiuntivo a valle.
-// ⛔ TRIUMV_PF_SMALL — MISURATO E RIGETTATO il 06/09/2026 (prima non aveva misura).
+// ⛔ TRIUMV_PF_SMALL — MISURATO E RIGETTATO il 06/09/2026 (prima non aveva misura). Il codice
+// e' stato tolto nella pulizia del 25/09/2026 (copia in _backup/Triumviratus_7.1_src_2026-09-25_pre_cleanup).
 // Prefetch delle righe PawnPair+PassedPawns, cioe' l'equivalente dei parametri
 // prefetchBase/prefetchStride che SF passa a PP_3Wide::append_changed_indices.
 //   Xeon Gold 6138 (Skylake-SP), build PGO clang node-identical (bench 252074 su
@@ -652,9 +575,6 @@ void update_accumulator_incremental(Color                     perspective,
 //    per processo scende a ~2,75 MB, le righe NON ci stanno piu' e il segno potrebbe
 //    invertirsi. nps_ab_interleaved non puo' misurarlo (vuole la macchina scarica).
 //    Stessa forma della lezione TTTwoLevel: +4,55 a hash 64, zero a hash 256.
-#ifdef TRIUMV_PF_SMALL
-        const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
-#endif
         { PROF_GUARD(prof_idx_pawn);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded); }
@@ -665,37 +585,18 @@ void update_accumulator_incremental(Color                     perspective,
         prof_cols_pawn_inc += thrRemoved.size() + thrAdded.size() - profThrBeforePawn;
         prof_cols_psq_inc  += psqRemoved.size() + psqAdded.size();
 #endif
-#ifdef TRIUMV_PF_SMALL
-        prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
-        prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
-#endif
-#ifdef TRIUMV_NO_PF_PSQ
-        PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqRemoved, psqAdded);
-#endif
     }
     else
     {
-#ifndef TRIUMV_NO_PF_PSQ
         PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
         prefetch_psq_rows(featureTransformer, psqRemoved, psqAdded);
-#endif
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrAdded,
                                                  thrRemoved, pfBase, pfStride);
-#ifdef TRIUMV_PF_SMALL
-        const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
-#endif
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         PassedFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
         if (Features::g_mobility_on)
             MobilityFeatureSet::append_changed_indices(perspective, ksq, dirtyMobility, thrAdded,
                                                        thrRemoved);
-#ifdef TRIUMV_PF_SMALL
-        prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
-        prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
-#endif
-#ifdef TRIUMV_NO_PF_PSQ
-        PSQFeatureSet::append_changed_indices(perspective, ksq, dirtyPiece, psqAdded, psqRemoved);
-#endif
     }
     // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh aveva
     // MISURATO -12.9% NPS su Zen4, e per due settimane quel numero ha tenuto
@@ -764,9 +665,7 @@ void update_accumulator_incremental(Color                     perspective,
         prof_max_inc = thrRemoved.size();
 #endif
 
-#ifndef TRIUMV_NO_THR_PSQT_PF
     prefetch_thr_psqt(featureTransformer, thrAdded, thrRemoved);
-#endif
     apply_combined(perspective, featureTransformer, computed, target_state, psqAdded, psqRemoved,
                    thrAdded, thrRemoved);
 
@@ -821,10 +720,8 @@ void update_accumulator_incremental_both(const FeatureTransformer& featureTransf
         PSQFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPiece, psqAddW, psqRemW);
         PSQFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPiece, psqAddB, psqRemB);
     }
-#ifndef TRIUMV_NO_PF_PSQ
     prefetch_psq_rows(featureTransformer, psqRemW, psqAddW);
     prefetch_psq_rows(featureTransformer, psqRemB, psqAddB);
-#endif
 
     // LA PASSATA CONDIVISA: un giro solo su diff.list per tutte e quattro le liste.
     ThreatFeatureSet::append_changed_indices_both(ksqW, ksqB, dirtyThreats, remW, addW, remB, addB,
@@ -848,10 +745,8 @@ void update_accumulator_incremental_both(const FeatureTransformer& featureTransf
     prof_n_upd += 2;
 #endif
 
-#ifndef TRIUMV_NO_THR_PSQT_PF
     prefetch_thr_psqt(featureTransformer, thrAddW, thrRemW);
     prefetch_thr_psqt(featureTransformer, thrAddB, thrRemB);
-#endif
     // Applicazioni SEQUENZIALI: e' la differenza voluta da Stockfish.
     apply_combined(WHITE, featureTransformer, computed, target_state, psqAddW, psqRemW, thrAddW,
                    thrRemW);
@@ -1032,13 +927,6 @@ void update_accumulator_hybrid(Color                     perspective,
         newAdd.push_back(PSQFeatureSet::make_index(perspective, sq, currentPieces[sq], newKsq));
     }
 
-#if defined(TRIUMV_PF_SMALL) && !defined(TRIUMV_NO_PF_PSQ)
-    // C2: le quattro liste HalfKA sono complete; la costruzione delle liste threat
-    // qui sotto copre la latenza (stessa forma che nell'incrementale).
-    prefetch_psq_rows(featureTransformer, oldRemove, oldAdd);
-    prefetch_psq_rows(featureTransformer, newRemove, newAdd);
-#endif
-
     // Delta dei tre blocchi non-HalfKA. Gli indici di PawnPair/PassedPawns sono
     // "folded" nelle stesse liste (gia' offsettati), come nel percorso incrementale.
     ThreatFeatureSet::IndexList thrRemoved, thrAdded;
@@ -1046,9 +934,6 @@ void update_accumulator_hybrid(Color                     perspective,
     IndexType                   pfStride = Dimensions;
     ThreatFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyThreats, thrRemoved,
                                              thrAdded, pfBase, pfStride);
-#ifdef TRIUMV_PF_SMALL
-    const int pfRemFrom = thrRemoved.ssize(), pfAddFrom = thrAdded.ssize();
-#endif
     PawnFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
                                            thrAdded);
     PassedFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyPawns, thrRemoved,
@@ -1058,10 +943,6 @@ void update_accumulator_hybrid(Color                     perspective,
     if (Features::g_mobility_on)
         MobilityFeatureSet::append_changed_indices(perspective, newKsq, target.dirtyMobility,
                                                    thrRemoved, thrAdded);
-#ifdef TRIUMV_PF_SMALL
-    prefetch_thr_rows(featureTransformer, thrRemoved, pfRemFrom);
-    prefetch_thr_rows(featureTransformer, thrAdded, pfAddFrom);
-#endif
 
     const auto& fromAcc     = computed.accumulation[perspective];
     auto&       toAcc       = target.accumulation[perspective];
