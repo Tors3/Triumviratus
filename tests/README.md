@@ -2,7 +2,7 @@
 
 Summaries of match results from outside the project's own SPRT pipeline. The complete game
 records (PGN) and the GUI crosstables are in
-**[Tors3/Triumvirauts-Testing](https://github.com/Tors3/Triumvirauts-Testing)**.
+**[Tors3/Triumviratus-Testing](https://github.com/Tors3/Triumviratus-Testing)**.
 
 ## Maurizio Platino — 7.0 against recent engines
 
