@@ -19,7 +19,7 @@
 [Why speed](#1-why-speed) · [How it is measured](#2-how-it-is-measured) ·
 [Where we started](#3-where-we-started) · [What changed](#4-what-changed-identical-tree) ·
 [Tried and dropped](#5-tried-and-dropped) · [TT16](#6-tt16-the-one-change-that-alters-the-tree) ·
-[Status](#7-status) · [7.0 log](DEVELOPMENT_7.0.md)
+[Result](#7-result-against-70) · [Status](#8-status) · [7.0 log](DEVELOPMENT_7.0.md)
 
 </div>
 
@@ -28,9 +28,9 @@
 > [!NOTE]
 > **Work in progress.** `source/` now holds the 7.1 development code; the 7.0 release is the tag
 > `v7.0`. Every change in section 4 leaves the search tree **bit-for-bit identical** (same `bench`,
-> same node counts on 50 positions at depth 15), so it can only change speed, never play. The final
-> speed comparison against the official 7.0 binary, and the game test of TT16 (section 6), are still
-> to come.
+> same node counts on 50 positions at depth 15), so it can only change speed, never play. Against the
+> official 7.0 binary, the same tree now runs **+8.7% faster**, and **+11.5%** with the new
+> transposition table (section 6), whose game test is under way.
 
 ---
 
@@ -126,12 +126,32 @@ word protected by the same XOR as before. Because capacity and placement change,
 **240500** (240503 with the old table, still available with `-DTRIUMV_TT_LEGACY`), and TT16 will be
 decided by an SPRT against the old table, both as PGO release builds.
 
-## 7. Status
+## 7. Result against 7.0
+
+PGO release builds (clang, AVX-512) of the current source against the **official 7.0 binary**
+(checksum verified), with the paired tool: 30 positions × 300,000 nodes, 20 physical cores in
+parallel.
+
+| comparison | NPS | 95% interval | faster in |
+|---|---:|---|---:|
+| **7.0 → 7.1, old table** (identical tree, bench 240503) | **+8.70%** | [+8.63%, +8.78%] | 2,400 / 2,400 |
+| 7.1 old table → 7.1 TT16 | +2.60% | [+2.42%, +2.77%] | 1,743 / 2,400 |
+| **7.0 → 7.1 TT16** | **+11.54%** | [+11.40%, +11.68%] | 5,690 / 5,760 |
+
+The two steps multiply to the direct figure (1.087 × 1.026 = 1.115). Null tests (the same binary
+against itself) gave +0.05% under load and −0.10% on an idle machine, so the tool resolves about
+0.1%. The +8.7% is speed and nothing else: same moves, same nodes, same tree as 7.0.
+
+## 8. Status
 
 - Every change in section 4 is in `source/` and enabled on all targets (AVX2, AVX-512, VNNI, ICL,
   `-intel`).
-- **Next:** the final speed comparison of the 7.1 PGO release build against the official 7.0 binary
-  with the paired tool, then the TT16 SPRT. After that, the next network (larger L1).
+- **Running:** the TT16 SPRT (TT16 against the old table, both PGO release, 10+0.1, Hash 16).
+- **Next:** a correction history keyed by the last move in context (as in Coda and Cinder), then a
+  series of **ablation tests**: switching off, one at a time, search features that were accepted on
+  weak evidence or validated with older networks, to find the ones that no longer pay. After that,
+  the next network (larger L1), with an L1 penalty on the feature-transformer activations in the
+  recipe (one of the recipe changes behind Coda 0.9.4's gain).
 - Found on the way: the engine does not support Chess960 FENs (it accepts the castling rights and then
   generates castling moves from the wrong squares). To be rejected at parse time.
 

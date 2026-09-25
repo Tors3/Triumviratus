@@ -56,8 +56,10 @@ has not appeared on either list yet.</sub>
 7.1 **started from speed**: same network as 7.0, and a first round of changes that make the code
 around it faster while leaving the search tree node-for-node identical. Where 7.1 ends up is still
 open. Measured against Stockfish 19 with the same compiler and the same network size, the engine
-now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer branch mispredictions. The individual gains, from paired simultaneous runs on the same CPU core, are
-between +0.8% and +2.5% NPS each. The final comparison with the 7.0 release binary is still to come.
+now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer branch mispredictions.
+Against the **official 7.0 binary**, measured with paired simultaneous runs on the same CPU cores:
+**+8.7% NPS with an identical search tree**, and **+11.5%** with the new transposition table,
+which is now being tested in games.
 
 `source/` holds the 7.1 development code; the 7.0 release is the tag `v7.0`. Details, method and
 numbers: **[`DEVELOPMENT_7.1.md`](DEVELOPMENT_7.1.md)**.
