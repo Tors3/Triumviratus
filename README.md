@@ -21,7 +21,7 @@
 
 <div align="center">
 
-[Rating](#rating) · [7.1 (in development)](#triumviratus-71--in-development) · [7.0 (current release)](#triumviratus-70--current-release) · [6.0 (previous release)](#triumviratus-60--previous-release) · [Dev log 7.1](DEVELOPMENT_7.1.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
+[Rating](#rating) · [7.1 (in development)](#triumviratus-71--in-development) · [7.0 (current release)](#triumviratus-70--current-release) · [6.0 (previous release)](#triumviratus-60--previous-release) · [Dev log 7.1](DEVELOPMENT_7.1.md) · [Dev log 7.0](DEVELOPMENT_7.0.md) · [Dev log 6.0](archive/DEVELOPMENT_6.0.md) · [Networks](NETWORKS.md) · [Tests](tests/) · [History](HISTORY.md) · [License](#license) · [Credits](#credits)
 
 </div>
 
@@ -98,6 +98,9 @@ measurements, speed work and training: **[`DEVELOPMENT_7.0.md`](DEVELOPMENT_7.0.
 <sub>Release binaries, 1 thread, 128 MB, UHO 2024 (+0.85/+0.94), the same instruction set on both
 sides. One thread and an unbalanced book widen the gaps compared with a rating list: on CCRL 40/15
 these engines and 6.0 are within a few Elo of each other.</sub>
+
+Matches by Maurizio Platino against the newest engines (Caissa 2.0, Coda 0.9.4, PlentyChess 8,
+pawnocchio 3.0; 4 threads, 1+1): **[`tests/`](tests/)**.
 
 ---
 
