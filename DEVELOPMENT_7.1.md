@@ -30,7 +30,8 @@
 > `v7.0`. Every change in section 4 leaves the search tree **bit-for-bit identical** (same `bench`,
 > same node counts on 50 positions at depth 15), so it can only change speed, never play. Against the
 > official 7.0 binary, the same tree now runs **+8.7% faster**, and **+11.5%** with the new
-> transposition table (section 6), whose game test is under way.
+> transposition table (section 6). In games, 7.1 beats the 7.0 release by **+14.7 ± 5.4 Elo** at
+> 12+0.12 (section 7).
 
 ---
 
@@ -123,8 +124,11 @@ cache lines, so a probe could cost two misses — to **16-byte entries, four per
 cache line per probe, about 50% more entries per MB, and the bucket index computed with a high
 multiply instead of a 64-bit division. The key check (48 bits) and the stored static eval share one
 word protected by the same XOR as before. Because capacity and placement change, `bench` becomes
-**240500** (240503 with the old table, still available with `-DTRIUMV_TT_LEGACY`), and TT16 will be
-decided by an SPRT against the old table, both as PGO release builds.
+**240500** (240503 with the old table, still available with `-DTRIUMV_TT_LEGACY`).
+
+**Game test**, TT16 against the old table, both PGO release builds, 10+0.1, Hash 16 (small on
+purpose, where capacity matters): **+6.30 ± 5.06 Elo** on 5,365 games, LOS 99.3%, pentanomial
+[42, 573, 1354, 662, 46]. Stopped with zero excluded. TT16 is the 7.1 table.
 
 ## 7. Result against 7.0
 
@@ -142,11 +146,20 @@ The two steps multiply to the direct figure (1.087 × 1.026 = 1.115). Null tests
 against itself) gave +0.05% under load and −0.10% on an idle machine, so the tool resolves about
 0.1%. The +8.7% is speed and nothing else: same moves, same nodes, same tree as 7.0.
 
+**In games**, 7.1 (TT16) against the official 7.0 binary, both PGO release AVX-512, 1 thread:
+
+| TC | hash | games | W / D / L | pentanomial | Elo | SPRT |
+|---|---:|---:|---|---|---:|---|
+| 12+0.12 | 128 MB | 4,664 | 1,135 / 2,595 / 934 | [26, 478, 1131, 659, 34] | **+14.71 ± 5.41** | `[0, 3]` H1 accepted |
+
+UHO 2024 (+0.85/+0.94). Speed is worth most at short time controls, where every extra node is a
+larger share of the search; the gain is expected to shrink as the time control grows.
+
 ## 8. Status
 
 - Every change in section 4 is in `source/` and enabled on all targets (AVX2, AVX-512, VNNI, ICL,
   `-intel`).
-- **Running:** the TT16 SPRT (TT16 against the old table, both PGO release, 10+0.1, Hash 16).
+- **Done:** TT16 adopted (+6.3 ± 5.1); 7.1 against 7.0 at 12+0.12: +14.7 ± 5.4, SPRT passed.
 - **Next:** a correction history keyed by the last move in context (as in Coda and Cinder), then a
   series of **ablation tests**: switching off, one at a time, search features that were accepted on
   weak evidence or validated with older networks, to find the ones that no longer pay. After that,
