@@ -33,7 +33,8 @@
 
 | Version | Rating | Rank | List |
 |---|---|---|---|
-| **Triumviratus 6.0 64-bit (1 CPU)** | **3749** ±13 | **12–14** | 2026-08-16 |
+| **Triumviratus 7.0 64-bit (1 CPU)** | **3757** ±19 | **8** | 2026-09-26 |
+| Triumviratus 6.0 64-bit (1 CPU) | 3749 ±13 | 12–14 | 2026-08-16 |
 | Triumviratus 4.2 64-bit (1 CPU) | 3670 ±13 | 51–52 | 2026-08-08 |
 
 **CCRL 40/15** (40 moves in 15 minutes + increment):
@@ -46,8 +47,10 @@
 | Triumviratus 5.0 64-bit (1 CPU) | 3570 | — | — | 2026-07-16 |
 
 <sub>Ranks are tie bands shared by the engines inside the interval: read the rating, not the rank. On
-40/15, 6.0 sits 18 Elo behind the first entry (Stockfish 19 4 CPU, 3650 ±19). The two lists are not comparable with each other. Both tables are 6.0: 7.0
-has not appeared on either list yet.</sub>
+40/15, 6.0 sits 18 Elo behind the first entry (Stockfish 19 4 CPU, 3650 ±19). On Blitz, 7.0 (750 games
+so far) is eighth among the best version of every engine, single- and multi-CPU mixed, ahead of
+several 8-CPU entries; it has not appeared on 40/15 yet. The two lists are not comparable with each
+other.</sub>
 
 ---
 
