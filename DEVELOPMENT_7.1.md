@@ -170,6 +170,12 @@ a simplification SPRT (`[-1.75, 0.25]`, 10+0.1). A feature stays if removing it 
 | `CorrHistMajor` | major-piece key redundant with the non-pawn key (Coda) | +0.32 ± 3.51 (11,028) | kept |
 | `TTEvalImprove` | +4.55 on 1,758 games, never closed | −17.0 ± 16.2 (660) | kept |
 | `ContHistPrune` | adopted "pending a longer-TC test" after an ultrabullet run | **+5.94 ± 3.98** (8,957) | switched off |
+| `ContHist36` | continuation history 3/6 plies, bundled in June with older networks | +0.93 ± 3.88 (9,303) | kept |
+| `ThreatOrdering` | idem | −10.8 ± 12.4 (972) | kept |
+| `CheckOrdering` | idem | −15.6 ± 12.6 (792) | kept |
+| `PriorBonus` | validated with older networks | −21.5 ± 17.8 (393) | kept |
+| `LowPlyHistory` | idem | +0.81 ± 3.52 (11,201) | kept |
+| `CorrHistMajor` + `ContHist36` together | the two light leans combined | −1.02 ± 5.15 (5,132) | kept |
 
 The code of switched-off features stays; only the default changes. Also measured and left off: a
 correction history keyed by the last move in context (Coda, Cinder), −7.6 ± 7.8 at 20+0.2. Coda's
@@ -209,9 +215,10 @@ block, after the next network.
   prefetch and permutation experiments that were measured and rejected): about 2,000 lines fewer.
   Same tree, checked: bench 240500 and identical node counts on the 50 test positions. Search
   options that are switched off stay in the code.
-- **Next:** the remaining ablations (continuation history 3/6, threat and check ordering, prior bonus,
-  low-ply history), then the next network (larger L1), with an L1 penalty on the feature-transformer
-  activations in the recipe (one of the recipe changes behind Coda 0.9.4's gain).
+- **Ablation campaign closed:** nine tests, two features switched off (about +7 Elo together), the rest
+  needed or neutral.
+- **Next:** the next network (larger L1), with an L1 penalty on the feature-transformer activations in
+  the recipe (one of the recipe changes behind Coda 0.9.4's gain).
 - Found on the way: the engine does not support Chess960 FENs (it accepts the castling rights and then
   generates castling moves from the wrong squares). To be rejected at parse time.
 
