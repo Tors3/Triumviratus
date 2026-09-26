@@ -19,7 +19,7 @@
 [Why speed](#1-why-speed) · [How it is measured](#2-how-it-is-measured) ·
 [Where we started](#3-where-we-started) · [What changed](#4-what-changed-identical-tree) ·
 [Tried and dropped](#5-tried-and-dropped) · [TT16](#6-tt16-the-one-change-that-alters-the-tree) ·
-[Result](#7-result-against-70) · [Status](#8-status) · [7.0 log](DEVELOPMENT_7.0.md)
+[Result](#7-result-against-70) · [Ablations](#8-ablations-switching-off-instead-of-adding) · [Endgame depth](#9-endgame-depth-study) · [Status](#10-status) · [7.0 log](DEVELOPMENT_7.0.md)
 
 </div>
 
@@ -31,7 +31,8 @@
 > same node counts on 50 positions at depth 15), so it can only change speed, never play. Against the
 > official 7.0 binary, the same tree now runs **+8.7% faster**, and **+11.5%** with the new
 > transposition table (section 6). In games, 7.1 beats the 7.0 release by **+14.7 ± 5.4 Elo** at
-> 12+0.12 (section 7).
+> 12+0.12 and, with two search features switched off after ablation tests (section 8), by
+> **+11.7 ± 4.6 Elo at 60+0.6** (section 7).
 
 ---
 
@@ -151,26 +152,66 @@ against itself) gave +0.05% under load and −0.10% on an idle machine, so the t
 | TC | hash | games | W / D / L | pentanomial | Elo | SPRT |
 |---|---:|---:|---|---|---:|---|
 | 12+0.12 | 128 MB | 4,664 | 1,135 / 2,595 / 934 | [26, 478, 1131, 659, 34] | **+14.71 ± 5.41** | `[0, 3]` H1 accepted |
+| **60+0.6** | 256 MB | 5,422 | 1,247 / 3,110 / 1,065 | [7, 549, 1421, 717, 14] | **+11.68 ± 4.61** | `[0, 3]` H1 accepted |
 
-UHO 2024 (+0.85/+0.94). Speed is worth most at short time controls, where every extra node is a
-larger share of the search; the gain is expected to shrink as the time control grows.
+UHO 2024 (+0.85/+0.94). The 12+0.12 row is the speed work plus TT16; the 60+0.6 row is the release
+candidate `rc2`, which also has the two features switched off in section 8 (bench 273477). Speed is
+worth most at short time controls; at 60+0.6 the gain holds.
 
-## 8. Status
+## 8. Ablations: switching off instead of adding
+
+Porting search ideas from other engines kept coming back flat, so we tried the opposite: switch off,
+one at a time, features that had been accepted on weak evidence or validated with older networks, with
+a simplification SPRT (`[-1.75, 0.25]`, 10+0.1). A feature stays if removing it costs Elo.
+
+| feature | why it was suspect | without it | outcome |
+|---|---|---:|---|
+| `QuietOffense` (wall-pawn penalty) | accepted on a trend in July, never closed | **+1.21 ± 2.12** (30,440 games) | switched off |
+| `CorrHistMajor` | major-piece key redundant with the non-pawn key (Coda) | +0.32 ± 3.51 (11,028) | kept |
+| `TTEvalImprove` | +4.55 on 1,758 games, never closed | −17.0 ± 16.2 (660) | kept |
+| `ContHistPrune` | adopted "pending a longer-TC test" after an ultrabullet run | **+5.94 ± 3.98** (8,957) | switched off |
+
+The code of switched-off features stays; only the default changes. Also measured and left off: a
+correction history keyed by the last move in context (Coda, Cinder), −7.6 ± 7.8 at 20+0.2. Coda's
+time-management fix for rising evaluations does not apply here: our eval-stability factor is already
+symmetric.
+
+## 9. Endgame depth study
+
+In CCRL games Stockfish reaches depth 60–80 in endgames within a minute, while 7.0 stays much shallower.
+Measured on 60 real endgames (10 pieces) at equal node budgets: Stockfish 19 reaches depth 40.6, we
+reach 33.5. Up to depth 20 the two trees grow alike; above it ours keeps branching (1.25 per ply
+against 1.15). Instrumented builds of both engines found three differences at depth ≥ 12:
+
+| | Triumviratus | Stockfish 19 |
+|---|---:|---:|
+| mean LMR reduction | 3.6 ply | 6.5 ply |
+| TT entries whose bound fits the window | 53% | 66% |
+| successful null moves | 60% | 72% |
+
+Our LMR table was tuned by SPSA at short time controls, where searches never pass depth 15, so its
+slope beyond that was never seen by the tuner. But none of the differences transplants on its own:
+Stockfish's reduction base goes 4 ply deeper in endgames and loses 33 Elo; a steeper slope only above
+depth 12 is neutral at 40+0.4; Stockfish's TT replacement rule and null-move conditions do not shorten
+our tree. Stockfish's tree shape comes from all its parameters tuned together, at long time controls.
+The options are in the code (off) as axes for a long-time-control tuning of the LMR and null-move
+block, after the next network.
+
+## 10. Status
 
 - Every change in section 4 is in `source/` and enabled on all targets (AVX2, AVX-512, VNNI, ICL,
   `-intel`).
-- **Done:** TT16 adopted (+6.3 ± 5.1); 7.1 against 7.0 at 12+0.12: +14.7 ± 5.4, SPRT passed.
+- **Done:** TT16 adopted (+6.3 ± 5.1); 7.1 against 7.0: +14.7 ± 5.4 at 12+0.12 and +11.7 ± 4.6 at 60+0.6,
+  both SPRTs passed. Ablations A1 and A4 switched off two features; bench is now **273477**.
 - **Tried:** a correction history keyed by the last move in context (hash of parent XOR hash of
   node, as in Coda and Cinder): −7.6 ± 7.8 on 2,069 games at 20+0.2. Left in the code, switched off.
 - **Cleanup:** 14 finished compile-time switches removed (the old table, the speed-work oracles,
   prefetch and permutation experiments that were measured and rejected): about 2,000 lines fewer.
   Same tree, checked: bench 240500 and identical node counts on the 50 test positions. Search
   options that are switched off stay in the code.
-- **Next:** a correction history keyed by the last move in context (as in Coda and Cinder), then a
-  series of **ablation tests**: switching off, one at a time, search features that were accepted on
-  weak evidence or validated with older networks, to find the ones that no longer pay. After that,
-  the next network (larger L1), with an L1 penalty on the feature-transformer activations in the
-  recipe (one of the recipe changes behind Coda 0.9.4's gain).
+- **Next:** the remaining ablations (continuation history 3/6, threat and check ordering, prior bonus,
+  low-ply history), then the next network (larger L1), with an L1 penalty on the feature-transformer
+  activations in the recipe (one of the recipe changes behind Coda 0.9.4's gain).
 - Found on the way: the engine does not support Chess960 FENs (it accepts the castling rights and then
   generates castling moves from the wrong squares). To be rejected at parse time.
 

@@ -59,8 +59,8 @@ open. Measured against Stockfish 19 with the same compiler and the same network 
 now executes **fewer instructions per node (5,647 vs 6,087)** and has fewer branch mispredictions.
 Against the **official 7.0 binary**, measured with paired simultaneous runs on the same CPU cores:
 **+8.7% NPS with an identical search tree**, and **+11.5%** with the new transposition table. In
-games against the 7.0 release: **+14.7 ± 5.4 Elo** at 12+0.12 (SPRT passed), a gain expected to
-shrink at longer time controls.
+games against the 7.0 release: **+14.7 ± 5.4 Elo** at 12+0.12 and **+11.7 ± 4.6 Elo at 60+0.6**
+(both SPRTs passed; the second with two search features switched off after ablation tests).
 
 `source/` holds the 7.1 development code; the 7.0 release is the tag `v7.0`. Details, method and
 numbers: **[`DEVELOPMENT_7.1.md`](DEVELOPMENT_7.1.md)**.

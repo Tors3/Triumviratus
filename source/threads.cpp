@@ -651,7 +651,11 @@ void set_probcut(bool v) { g_probcut = v; }
 // combined (butterfly + continuation) history is strongly negative are pruned
 // at low depth. Toggle off for a clean A/B; tunable via ContHistDiv /
 // HistPruneMargin.
-static bool g_cont_hist_prune = true;
+// ABLAZIONE A4 (audit 7.1, 26/09/2026): la conferma a TC lungo non era mai arrivata. ContHistPrune=false
+// contro base, SPRT [-1.75, 0.25] a 10+0.1 Hash 64: +5,94 ± 3,98 Elo su 8.957 partite (zero escluso,
+// LLR ~1,7; fermata e accettata dall'utente). Senza la potatura l'albero cresce del 14% al bench, ma il
+// motore GUADAGNA. SPENTA di default; il codice resta. La conferma a TC lungo e' lo SPRT 7.1 contro 7.0.
+static bool g_cont_hist_prune = false; // BAKED OFF 2026-09-26 (ablazione A4); era true (provvisorio)
 void set_cont_hist_prune(bool v) { g_cont_hist_prune = v; }
 
 // Multi-ply continuation history on/off (UCI option "ContHistMulti"). Default
@@ -894,6 +898,7 @@ void set_upcoming_rep(bool v) { g_upcoming_rep = v; }
 bool g_ttmove24 = true; // P0.1: TT move 24 bit (OFF = troncamento 21-bit
                         // come 3.7). extern in tt.h.
 void set_ttmove24(bool v) { g_ttmove24 = v; }
+int g_tt_keep_margin = 0; // TTKeepMargin, vedi store_tt in tt.h (0 = regola storica)
 bool g_tt_move_keep =
     true; // TTMoveKeep (default off = byte-identico): conserva la TT move sui
           // store fail-low senza mossa (SF). Alza ttrate ai cut-node. extern in
@@ -1931,7 +1936,11 @@ int g_check_bonus = 13357; // bonus ordering per quiet che da scacco diretto
 //   2026-07-24 sul trend (LOS>99%, mai chiuso ma non evapora, l'opposto del
 //   pattern B1) in attesa di chiusura SPRT formale e di un mega co-tune finale
 //   di 6.0 per la magnitudine esatta.
-static bool g_quiet_offense = true; // BAKED 2026-07-24 (solo wall-pawn; offense-squares spento)
+// ABLAZIONE A1 (audit 7.1, 25/09/2026): senza la penalita' wall-pawn il motore NON perde, anzi:
+// QuietOffense=false contro base, SPRT [-1.75, 0.25] a 10+0.1 Hash 64, +1,21 ± 2,12 Elo su 30.440
+// partite (LLR ~1,5 verso H1, fermata e accettata dall'utente). Bakata a luglio sul trend con la rete di
+// allora, con `legio-septima` non serve piu'. SPENTA di default; il codice resta.
+static bool g_quiet_offense = false; // BAKED OFF 2026-09-25 (ablazione A1); era true dal 24/07
 int g_offense_bonus = 0;       // spento: isolato NEGATIVO, vedi nota sopra
 int g_wallpawn_penalty = 16800; // BAKED 2026-07-24 (3x, vedi nota sopra); era 5600
 // ---- ContHist 3/6-ply (#4 SF, 2026-06-07) -----------------------------------
@@ -2213,6 +2222,17 @@ int g_lmr_base_x100 = 22; // baseline reduction floor [3.7 BAKE 41->37; SPSA
                           // 75->47; BAKED #1 47->41]
 int g_lmr_div_x100 = 447; // bigger divisor = LESS reduction [3.7 BAKE 345->310;
                           // SPSA 225->270; BAKED #1 270->345]
+// LMRSFBase: vedi il commento accanto a lmr_sf_table (init_lmr_table).
+int g_lmr_sf_base = 0;
+int g_lmr_sf_mult = 2244; // x100: SF reductions[i] = int(2872/128 * ln i) = int(22,44 ln i)
+int g_lmr_sf_off = 982;   // 1/1024 ply: il +982 di SF reduction()
+// LMRDeepK (studio finali, variante 1, 25/09/2026). LMRSFBase ha perso -33 a 40+0.4: la base di SF
+// sopra i NOSTRI termini riduce troppo ovunque. Qui si tocca solo la zona che lo SPSA a TC corto non
+// ha mai visto: sopra profondita' LMRDeepD0 si aggiunge  k * (ln d - ln d0) * ln(mossa, da 1)  in
+// 1/1024 di ply. k = 276 porta la nostra pendenza in profondita' a quella di SF 19 (~0,49 contro
+// 0,22 per unita' di ln d * ln m); sotto d0 non cambia nulla. 0 = off, byte-identico.
+int g_lmr_deep_k = 0;
+int g_lmr_deep_d0 = 12;
 // ⭐ 5.1 STRUTTURALE — riduzione LMR "FINE" stile-SF in 1/1024 di ply (default
 // OFF = byte-identico). La nostra LMR monta la riduzione in PLY INTERI (±1) =
 // grezza: tagliando di piu' si sovra-pota OVUNQUE (l'SPSA del cut-block era
@@ -3723,6 +3743,10 @@ bool set_search_param(const char *name, int value) {
     g_tt_move_keep = value != 0;
     return true;
   }
+  if (!strcmp(name, "TTKeepMargin")) {
+    g_tt_keep_margin = value < 0 ? 0 : value;
+    return true;
+  }
   if (!strcmp(name, "ProbCutInCheckMargin")) {
     g_probcut_incheck_margin = value < 0 ? 0 : value;
     return true;
@@ -3769,6 +3793,30 @@ bool set_search_param(const char *name, int value) {
   }
   if (!strcmp(name, "LMRBase")) {
     g_lmr_base_x100 = value;
+    init_lmr_table();
+    return true;
+  }
+  if (!strcmp(name, "LMRDeepK")) {
+    g_lmr_deep_k = value;
+    init_lmr_table();
+    return true;
+  }
+  if (!strcmp(name, "LMRDeepD0")) {
+    g_lmr_deep_d0 = value < 2 ? 2 : value;
+    init_lmr_table();
+    return true;
+  }
+  if (!strcmp(name, "LMRSFBase")) {
+    g_lmr_sf_base = value != 0;
+    return true;
+  }
+  if (!strcmp(name, "LMRSFMult")) {
+    g_lmr_sf_mult = value;
+    init_lmr_table();
+    return true;
+  }
+  if (!strcmp(name, "LMRSFOff")) {
+    g_lmr_sf_off = value;
     init_lmr_table();
     return true;
   }
@@ -3894,7 +3942,7 @@ static const TriumvFrozenRef g_frozen_refs[] = {
     {"g_check_ordering", (const void*)&g_check_ordering, 1, 1},
     {"g_cmhc_ply1", (const void*)&g_cmhc_ply1, 0, 0},
     {"g_cmhc_scale", (const void*)&g_cmhc_scale, 0, 6},
-    {"g_cont_hist_prune", (const void*)&g_cont_hist_prune, 1, 1},
+    {"g_cont_hist_prune", (const void*)&g_cont_hist_prune, 1, 0},
     {"g_conthist36", (const void*)&g_conthist36, 1, 1},
     {"g_conthist36_weight", (const void*)&g_conthist36_weight, 0, 37},
     {"g_conthist_lmr", (const void*)&g_conthist_lmr, 1, 1},
@@ -4104,7 +4152,7 @@ static const TriumvFrozenRef g_frozen_refs[] = {
     {"g_qs_stalemate_check", (const void*)&g_qs_stalemate_check, 1, 1},
     {"g_qs_tt_quiets", (const void*)&g_qs_tt_quiets, 0, 0},
     {"g_qsearch_corr", (const void*)&g_qsearch_corr, 1, 1},
-    {"g_quiet_offense", (const void*)&g_quiet_offense, 1, 1},
+    {"g_quiet_offense", (const void*)&g_quiet_offense, 1, 0},
     {"g_razor_base", (const void*)&g_razor_base, 0, 272},
     {"g_razor_depth4", (const void*)&g_razor_depth4, 1, 0},
     {"g_razor_depth_cap", (const void*)&g_razor_depth_cap, 0, 6},
@@ -4201,7 +4249,7 @@ void triumv_frozen_check();
 #define g_check_ordering true
 #define g_cmhc_ply1 0
 #define g_cmhc_scale 6
-#define g_cont_hist_prune true
+#define g_cont_hist_prune false
 #define g_conthist36 true
 #define g_conthist36_weight 37
 #define g_conthist_lmr true
@@ -4411,7 +4459,7 @@ void triumv_frozen_check();
 #define g_qs_stalemate_check true
 #define g_qs_tt_quiets 0
 #define g_qsearch_corr true
-#define g_quiet_offense true
+#define g_quiet_offense false
 #define g_razor_base 272
 #define g_razor_depth4 false
 #define g_razor_depth_cap 6
@@ -4600,6 +4648,16 @@ static inline int td_see_at_least(ThreadData &td, int move, int thr) {
 }
 
 int lmr_table[64][64];
+// LMRSFBase (studio finali 25/09/2026, docs/audit_7.1/H_FINALI.md). Nei nodi non-PV a
+// profondita' >= 12 Stockfish riduce in media 6,5 ply, noi 3,6, e sopra profondita' 20 il nostro
+// albero cresce ~1,25x per ply contro 1,15x. La base della nostra riduzione (lmr_table) ha tre
+// differenze dalla loro: pendenza in profondita' meta' (div 4,47 contro ~2,1), troncamento
+// all'intero, e indice mosse da 0 (la 2a mossa ha ln(1) = 0; SF usa moveCount da 1).
+// Con LMRSFBase=1 la LMRFine parte dalla base di SF 19 (search.cpp:713, :1886):
+//   R(i) = int(LMRSFMult/100 * ln i),  base = R(depth) * R(mossa, da 1) + LMRSFOff   [1/1024 ply]
+// Tutti gli altri termini della LMRFine restano i nostri. 0 = off, byte-identico.
+int lmr_sf_table[64][64];
+int lmr_deep_table[64][64]; // LMRDeepK, 1/1024 ply
 
 void init_lmr_table() {
   for (int depth = 0; depth < 64; depth++) {
@@ -4613,6 +4671,18 @@ void init_lmr_table() {
       }
     }
   }
+  // LMRSFBase: tabella alla SF, indice mosse = moves_searched + 1 (numero della mossa)
+  for (int depth = 0; depth < 64; depth++)
+    for (int moves = 0; moves < 64; moves++) {
+      const int rd = depth > 0 ? (int)(g_lmr_sf_mult / 100.0 * log(depth)) : 0;
+      const int rm = (int)(g_lmr_sf_mult / 100.0 * log(moves + 1));
+      lmr_sf_table[depth][moves] = depth > 0 ? rd * rm + g_lmr_sf_off : 0;
+      // LMRDeepK: solo sopra d0, indice mosse = numero della mossa (moves_searched + 1)
+      lmr_deep_table[depth][moves] =
+          depth > g_lmr_deep_d0
+              ? (int)(g_lmr_deep_k * (log(depth) - log(g_lmr_deep_d0)) * log(moves + 1))
+              : 0;
+    }
 }
 
 // LMP thresholds
@@ -10132,8 +10202,10 @@ int td_negamax(ThreadData &td, int alpha, int beta, int depth, bool is_cut_node,
           // ⭐ Riduzione FINE stile-SF in 1/1024 di ply (port
           // search.cpp:1287-1334): blenda i segnali con peso fine e taglia
           // FORTE solo dove e' sicuro. r in millesimi di ply.
-          long long r = (long long)lmr_table[d_idx][m_idx] *
-                        1024; // base dalla nostra tabella
+          long long r = g_lmr_sf_base ? (long long)lmr_sf_table[d_idx][m_idx]
+                                      : (long long)lmr_table[d_idx][m_idx] *
+                        1024; // base dalla nostra tabella (o da quella alla SF, vedi LMRSFBase)
+          r += lmr_deep_table[d_idx][m_idx]; // LMRDeepK: 0 sotto d0 o con k = 0
           if (tt_pv && !pv_node)
             r -= g_lmrf_ttpv; // protezione ex-PV
           if (pv_node)

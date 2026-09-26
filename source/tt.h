@@ -138,6 +138,7 @@ extern bool g_tt_twolevel;
 // store tronca la mossa a 21 bit come la 3.7 (i flag double/ep/castling si perdono
 // di nuovo). Definita in threads.cpp.
 extern bool g_ttmove24;
+extern int g_tt_keep_margin;   // TTKeepMargin (studio finali 26/09): vedi store_tt
 extern bool g_tt_move_keep;   // TTMoveKeep: conserva la TT move sui fail-low senza mossa (SF)
 extern bool g_tt_secondary_age;   // TTSecondaryAge (R-01): decisive non-EXACT depth>=5 invecchiano piu' in fretta nel replacement
 
@@ -356,7 +357,14 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         const U64 old_w    = entry->kw ^ old_data;
         if (g_tt_move_keep && move == 0) move = unpack_move(old_data);
         if (ev16 == 0) ev16 = (int)(old_w & 0xFFFF);   // conserva l'eval se lo store non ne porta
-        if (unpack_age(old_data) == current_age && unpack_depth(old_data) > depth && flag != hash_flag_exact) {
+        // TTKeepMargin (studio finali 26/09/2026, docs/audit_7.1/H_FINALI.md). Nei finali, a profondita' >= 12,
+        // l'entry c'e' quanto in SF (74%) e e' profonda abbastanza piu' spesso (32% contro 26%), ma il suo
+        // bound serve alla finestra meno spesso (53% contro 66%): teniamo l'entry PIU' PROFONDA anche se il
+        // suo bound e' vecchio. SF sovrascrive se  depth + 2*pv > vecchia - 4  (tt.cpp, TTWriter::write):
+        // preferisce l'informazione fresca fino a 3 ply piu' corta. Con margine m > 0 si tiene la vecchia
+        // solo se e' piu' profonda di oltre m ply (+2 sui nodi PV). 0 = regola storica, byte-identico.
+        const int keep_margin = g_tt_keep_margin > 0 ? g_tt_keep_margin + (pv ? 2 : 0) : 0;
+        if (unpack_age(old_data) == current_age && unpack_depth(old_data) > depth + keep_margin && flag != hash_flag_exact) {
             // Conserva l'entry piu' profonda; aggiorna solo l'eval se mancava.
             const U64 w = (old_w & ~0xFFFFULL) | (U64)ev16;
             if (w != old_w) entry->kw = w ^ old_data;

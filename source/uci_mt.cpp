@@ -573,7 +573,7 @@ void uci_loop()
             printf("option name SingularExt type check default true\n");
             printf("option name CorrHist type check default true\n");
             printf("option name ProbCut type check default true\n");
-            printf("option name ContHistPrune type check default true\n");
+            printf("option name ContHistPrune type check default false\n");   // BAKED OFF 2026-09-26 (ablazione A4: spenta +5,94 ± 3,98 su 8.957g)
             printf("option name TT4Way type check default false\n");
             printf("option name TTEvalImprove type check default true\n");   // P1.1: tt_score come eval migliorata nelle decisioni di pruning
             printf("option name UpcomingRep type check default true\n");     // P1.2: ripetizione imminente (cuckoo) -> alpha >= 0
@@ -606,7 +606,7 @@ void uci_loop()
             printf("option name FHTRfp type spin default 512 min 0 max 1024\n");          // reverse futility pruning
             printf("option name CheckOrdering type check default true\n");   // bonus quiet che danno scacco diretto (SF #3), filtro SEE>=-75
             printf("option name CheckBonus type spin default 13357 min 0 max 30000\n");  // bonus scacco diretto; co-tunabile (fix 2026-06-10: printf diceva 8000 ma g_=4201)
-            printf("option name QuietOffense type check default true\n");    // BAKED 2026-07-24 (solo wall-pawn, vedi WallPawnPenalty); port Reckless move-ordering
+            printf("option name QuietOffense type check default false\n");    // BAKED OFF 2026-09-25 (ablazione A1: spenta +1,21 ± 2,12 su 30.440g); era ON dal 24/07 (wall-pawn, port Reckless)
             printf("option name OffenseBonus type spin default 0 min 0 max 40000\n");        // spento: isolato NEGATIVO (-9.70 LOS 3.38% @1290g) -> in attesa di ri-test a peso grosso
             printf("option name WallPawnPenalty type spin default 16800 min 0 max 40000\n"); // BAKED 2026-07-24 (3x: +8.43 nElo LOS 99.14% @9652g, 12+0.12); era 5600
             printf("option name ContHist36 type check default true\n");      // conthist 3-ply+6-ply nell'ordering quiet (SF #4)
@@ -678,6 +678,11 @@ void uci_loop()
             printf("option name LMRTTDepth type spin default 1 min 0 max 3\n");
             printf("option name LMRBase type spin default 22 min 0 max 200\n");   // [3.7]
             printf("option name LMRDiv type spin default 447 min 100 max 500\n");   // [3.7]
+            printf("option name LMRSFBase type spin default 0 min 0 max 1\n");   // studio finali 25/09: base LMR alla SF 19 (pendenza, niente troncamento, mosse da 1)
+            printf("option name LMRSFMult type spin default 2244 min 1000 max 3500\n");
+            printf("option name LMRSFOff type spin default 982 min -2048 max 3072\n");
+            printf("option name LMRDeepK type spin default 0 min 0 max 1024\n");   // studio finali var. 1: riduzione extra solo sopra LMRDeepD0
+            printf("option name LMRDeepD0 type spin default 12 min 2 max 40\n");
             printf("option name RFPMargin type spin default 53 min 20 max 200\n");        // bakato: 30->21
             printf("option name RazorBase type spin default 272 min 100 max 600\n");
             printf("option name RazorMult type spin default 118 min 20 max 250\n");       // bakato: 102->139
@@ -757,6 +762,7 @@ void uci_loop()
             printf("option name ContHistPruneDepth type spin default 2 min 1 max 12\n");  // PASSO2 SF: gate conthist-prune (SF lmrDepth<6). Col blocco si alza
             printf("option name CutoffStats type spin default 0 min 0 max 1\n");    // diagnostica move-ordering: 1=stampa 'info string FMC ...' (first-move-cutoff rate) a fine ricerca
             printf("option name TTMoveKeep type spin default 1 min 0 max 1\n");      // SF: conserva la TT move sui fail-low senza mossa -> +ttrate ai cut-node. 0=off (byte-identico), 1=on
+            printf("option name TTKeepMargin type spin default 0 min 0 max 16\n");   // studio finali 26/09: TT tiene l'entry vecchia solo se piu' profonda di oltre m ply (SF ~3); 0 = storico
             printf("option name TTTwoLevel type spin default 1 min 0 max 1\n");       // 5.1 BAKE ON: TT a 2 livelli (depth-preferred + always-replace), ~-4%% nodi. 0=off (1-via), 1=on
             printf("option name LargePages type spin default 1 min 0 max 1\n");        // TT su large pages 2MB (come i pesi NNUE). 0=off (new[], baseline), 1=on. Richiede privilegio "Lock pages in memory"
             printf("option name EvalTTWrite type spin default 0 min 0 max 1\n");       // cache static eval su MISS (SF :830). PROVATO 1-via=albero x1.87 (roundtrip eval). Re-test con two-level. 0=off, 1=on
