@@ -1630,11 +1630,12 @@ against a full refresh) for the network, and builds with the verification macros
 `_TTSTORE`, and new ones for the new shortcuts) that compare each shortcut with the original code and abort on the
 first disagreement.
 
-**Two starting figures corrected.** The 46 branch mispredictions per node against 29 for Stockfish quoted in
-section 16 predate the corrected node count of 8 October: today the engine has 27–28 per node, level with Stockfish.
-And the network is no longer behind in computation: 2.16 accumulator updates per evaluation against a minimum of about
-2, with the inner loop already minimal. What remains of the gap is instructions in the search infrastructure and the
-memory traffic of a 170 MB network with four experts.
+**Where the branches stand.** Section 16 found 46 mispredicted branches per node against 29 for Stockfish. The
+branch-free work since then (sections 20, 27–30 and 36) brought this to 27–28 per node today, level with Stockfish;
+part of the drop is the node count corrected on 8 October, which had inflated every per-node figure by about a third,
+so on today's count the starting point was about 34. The network is no longer behind in computation either: 2.16
+accumulator updates per evaluation against a minimum of about 2, with the inner loop already minimal. What remains of
+the gap is instructions in the search infrastructure and the memory traffic of a 170 MB network with four experts.
 
 | series | patch | what it changes |
 |---|---|---|
@@ -1650,19 +1651,19 @@ memory traffic of a 170 MB network with four experts.
 
 **Measurement.** Deterministic profile-guided builds of the same source (AVX-512 variant, ten training workers each,
 so every build gets the same profile), xperf on the test machine with the engine pinned to one processor, search
-threads only, four rounds in alternating order, 30 middlegame positions. Two builds of the unchanged source differ by
-0.02%, so the session noise is far below the effects.
+threads only, four rounds in alternating order, 30 middlegame and 30 endgame positions. Two builds of the unchanged
+source differ by 0.02% (middlegame) and 0.17% (endgames), so the session noise is well below the effects.
 
-| package (middlegame) | instructions per node | cycles per node | branch misses per node |
-|---|---:|---:|---:|
-| search (AA1–AA4) | −0.77% | **−1.33%** | −5.4% |
-| infrastructure (all four) | −2.37% | **−0.91%** | +1.1% |
-| network (AC1 + AC4) | +0.62% | **+0.56%** | +1.6% |
+| package | instructions per node | cycles per node, middlegame | cycles per node, endgames | branch misses per node |
+|---|---:|---:|---:|---:|
+| search (AA1–AA4) | −0.77% / −0.97% | **−1.33%** | **−1.30%** | −5.4% / −4.6% |
+| infrastructure (all four) | −2.37% / −2.50% | **−0.91%** | **−0.85%** | +1.1% / +1.5% |
+| network (AC1 + AC4) | +0.62% / +0.62% | **+0.56%** | **+0.82%** | +1.6% / +1.6% |
 
 The search patches gain most with the fewest instructions removed: they remove mispredicted branches. The
-infrastructure patches remove three times as many instructions but gain less, part of the saving being absorbed by
-memory waits. The network patches are slower on this machine and are not kept unless the endgame figures say
-otherwise. The two first series overlap (both compute bishop and rook attacks together and both copy the unmake
+infrastructure patches remove more than twice as many instructions but gain less, part of the saving being absorbed
+by memory waits. The network patches are slower on this machine in both phases and are not kept. The two first
+series overlap (both compute bishop and rook attacks together and both copy the unmake
 state), so they do not add up; the measurements of each patch alone, and the endgame positions, decide which version
 of each idea is kept and whether the vectorised hash bucket joins the search series.
 
