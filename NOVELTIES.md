@@ -70,7 +70,7 @@ experts of the network.
 | Guard on the low-depth hash-move extension (`LdseMax`) | Revisited | 8.0 | **+6.25 ± 7.89** (15+0.15, 2,112) | adopted |
 | Passed-pawn pushes in endgames reduced less, never pruned (`PassedPushRed`) | Revisited | 8.0 | +4.4 ± 6.8 on an endgame book | adopted |
 | Passed-pawn push bonus in move ordering (`PassedPush`) | Revisited | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
-| Passed-pawn push to the seventh searched in quiescence in endgames (`QsPasserPush`), with its own levers | Revisited | 8.0 dev | −0.77 ± 7.48 (2,264); +1.1 ± 3.8 (3,370) | testing again; levers for an SPSA |
+| Passed-pawn push to the seventh searched in quiescence in endgames (`QsPasserPush`), with its own levers | Revisited | 8.0 dev | −0.77 ± 7.48 (2,264); +1.1 ± 3.8 (3,370); endgames +0.23 ± 2.45 (7,516) | closed, off |
 | Neuron study of the first layer, per expert | Revisited | 8.0 | no dead or duplicate neurons; experts specialise by intensity | study |
 | Universal executable from one unit per source file | Revisited | 8.0 | −0.28% / −0.17% cycles per node against the separate build | adopted |
 | Refresh cache of the pawn input blocks keyed by the pawn bitboards | Revisited | 7.0 | +2.8% NPS (AVX2), identical tree | adopted |
@@ -309,7 +309,9 @@ These entries take a known idea and change its form, its scale or its use. Those
   5 October; −0.77 ± 7.48 over 2,264 games at 15+0.15 and +1.1 ± 3.8 over 3,370 at 10+0.1, so on 10 October it
   received three levers of its own for an SPSA: the material threshold (`QsPushNpm`, until then shared with
   `PassedPushRed`), the exchange bound the push must meet (`QsPushSee`, until then the general one of quiescence) and
-  the number of quiescence plies in which it is tried (`QsPushPly`). Off by default.
+  the number of quiescence plies in which it is tried (`QsPushPly`). Tested the same day: only in the first
+  quiescence ply −1.8 ± 7.2 over about 2,070 games (UHO, 15+0.15); only below 2,600 of non-pawn material +0.23 ±
+  2.45 over 7,516 games on the endgame book at 12+0.12. It does not gain even in endgames: closed, off.
 - **Refresh cache of the pawn blocks, 7.0.** `PawnPair` and `PassedPawns` depend only on the pawn bitboards and the
   orientation, and refreshes come from king moves, which leave the pawns alone; their contribution is kept with the
   full pawn bitboards as key (no collision possible). +2.8% NPS on AVX2 with an identical tree. The principle of the
