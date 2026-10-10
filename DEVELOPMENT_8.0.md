@@ -41,6 +41,7 @@
 [Experimental grafts](#37-experimental-grafts-on-consilium-910-october-2026) ·
 [PR4, causal reduction, PassedState](#38-pr4-and-the-causal-reduction-baked-and-a-passed-pawn-block-that-replaces-passedpawns-910-october-2026) ·
 [Release candidate of 10 October](#39-the-release-candidate-of-10-october-2026) ·
+[Speed gap, identical tree](#40-the-speed-gap-to-stockfish-19-with-an-identical-tree-10-october-2026) ·
 [All ideas tested](#appendix-every-search-idea-tested-since-the-restructured-search) · [7.0 log](archive/DEVELOPMENT_7.0.md)
 
 </div>
@@ -1617,6 +1618,57 @@ games on time, 78 the candidate and 85 the base; without the pairs that contain 
 
 **Publication.** The executable was published on 10 October as the pre-release on the tag `v8.0`, replacing the one
 of 9 October.
+
+## 40. The speed gap to Stockfish 19, with an identical tree (10 October 2026)
+
+Section 36 left a gap of about 1.15× in cycles per node against Stockfish 19. On the evening of 10 October three
+research agents (Claude) each took one part of the engine and wrote patches that leave the search tree exactly as it
+was: the search hot path and its branches, the infrastructure around it (transposition table, exchange evaluation,
+make/unmake), and the network inference. Every patch keeps `bench` at 222811 and passes the checks of the parts it
+touches: `tdperft` (standard and Chess960) for move generation and make/unmake, `nnperft` (every incremental update
+against a full refresh) for the network, and builds with the verification macros (`TRIUMV_VERIFY_NNSYNC`, `_SEEQ`,
+`_TTSTORE`, and new ones for the new shortcuts) that compare each shortcut with the original code and abort on the
+first disagreement.
+
+**Two starting figures corrected.** The 46 branch mispredictions per node against 29 for Stockfish quoted in
+section 16 predate the corrected node count of 8 October: today the engine has 27–28 per node, level with Stockfish.
+And the network is no longer behind in computation: 2.16 accumulator updates per evaluation against a minimum of about
+2, with the inner loop already minimal. What remains of the gap is instructions in the search infrastructure and the
+memory traffic of a 170 MB network with four experts.
+
+| series | patch | what it changes |
+|---|---|---|
+| search | AA1 | bishop and rook attacks from one vectorised slider computation (DualMagic) where both were needed on the same square (exchange evaluation, check squares, legality, the threat features of the network); before, each call computed both and discarded one. Slider computations per node: from 9.8 to 5.1 in the middlegame, from 11.3 to 5.7 in endgames |
+| search | AA2 | the ordering terms switched on by PR4 (section 38), never optimised: the opponent's attack maps and the safe-square attacks come from one pass over the sliders instead of nine loops, and a hardware division becomes an exact reciprocal |
+| search | AA3 | unmake restores the hash keys, the fifty-move counter and the occupancies from a 64-byte copy taken at make, and make/unmake no longer branch on captures or on the fifty-move counter |
+| search | AA4 | the captures-only generator writes the first capture unconditionally (fewer mispredicted loop exits) |
+| infrastructure | slider, slider_nn | the same idea as AA1 written inline, in the search and in the network threats |
+| infrastructure | undo | unmake restores the partial keys and occupancies copied at make, as Stockfish's `StateInfo` does |
+| infrastructure | tt | the four entries of a hash bucket compared in one AVX-512 register, for probe and store |
+| network | AC1 | in the first sparse layer, on CPUs without VNNI, the products of two input chunks are summed at 16 bits before the multiply-add; exact because the neurons are reordered at load so that the chunks whose weights could overflow come last |
+| network | AC4 | x-ray captures no longer emit two threat entries that cancel each other |
+
+**Measurement.** Deterministic profile-guided builds of the same source (AVX-512 variant, ten training workers each,
+so every build gets the same profile), xperf on the test machine with the engine pinned to one processor, search
+threads only, four rounds in alternating order, 30 middlegame positions. Two builds of the unchanged source differ by
+0.02%, so the session noise is far below the effects.
+
+| package (middlegame) | instructions per node | cycles per node | branch misses per node |
+|---|---:|---:|---:|
+| search (AA1–AA4) | −0.77% | **−1.33%** | −5.4% |
+| infrastructure (all four) | −2.37% | **−0.91%** | +1.1% |
+| network (AC1 + AC4) | +0.62% | **+0.56%** | +1.6% |
+
+The search patches gain most with the fewest instructions removed: they remove mispredicted branches. The
+infrastructure patches remove three times as many instructions but gain less, part of the saving being absorbed by
+memory waits. The network patches are slower on this machine and are not kept unless the endgame figures say
+otherwise. The two first series overlap (both compute bishop and rook attacks together and both copy the unmake
+state), so they do not add up; the measurements of each patch alone, and the endgame positions, decide which version
+of each idea is kept and whether the vectorised hash bucket joins the search series.
+
+**Found on the way, not identical-tree.** The repetition check (`td_upcoming_repetition`) still has the form of
+Stockfish 16: without the filter Stockfish 19 added, it also reports cycles completed by an opponent's move, on
+0.08–0.24% of nodes. Fixing it changes the tree, so it is left to an SPRT.
 
 ## Appendix: every search idea tested since the restructured search
 
