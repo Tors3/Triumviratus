@@ -386,23 +386,24 @@ static inline void pv_extend(ThreadData &td, int m) {
 // immediata) e' tattica. Un pedone che arriva in 7a e' passato per costruzione: davanti ha solo l'ottava. Una sola
 // spinta per nodo; 0 se non ce n'e' o se c'e' troppo materiale (QsPushNpm; fino al 10/10/2026 era PassedPushNpm, la
 // soglia di PassedPushRed, con lo stesso valore di default).
+// 10/10/2026 sera: prima la spinta (una maschera, quasi sempre vuota fuori dai finali), poi il materiale, che costava
+// otto popcount a ogni nodo di quiescenza in ogni fase. Stessa mossa di prima: albero identico.
 static int qs_passer_push(const ThreadData &td) {
+  const int us = td.side, pc = us == white ? P : p;
+  // a8 = 0: la 6a traversa del bianco e' la riga 2 (case 16-23), quella del nero la riga 5 (case 40-47).
+  const U64 on6 = td.bitboards[pc] & (us == white ? 0x0000000000FF0000ULL : 0x0000FF0000000000ULL);
+  // Case davanti libere: per il bianco 8 case piu' in alto (indici minori), per il nero piu' in basso.
+  const U64 free_ahead = us == white ? on6 & ~(td.occupancies[both] << 8) : on6 & ~(td.occupancies[both] >> 8);
+  if (!free_ahead)
+    return 0;
   int npm = 0;
   for (int t = N; t <= Q; t++)
     npm += unit_value[t] * (count_bits(td.bitboards[t]) + count_bits(td.bitboards[t + 6]));
   if (npm > QsPushNpm)
     return 0;
-  const int us = td.side, pc = us == white ? P : p;
-  // a8 = 0: la 6a traversa del bianco e' la riga 2 (case 16-23), quella del nero la riga 5 (case 40-47).
-  U64 cand = td.bitboards[pc] & (us == white ? 0x0000000000FF0000ULL : 0x0000FF0000000000ULL);
-  while (cand) {
-    const int from = get_ls1b_index(cand);
-    const int to = us == white ? from - 8 : from + 8;
-    if (!((td.occupancies[both] >> to) & 1))
-      return encode_move(from, to, pc, 0, 0, 0, 0, 0);
-    pop_lsb_bb(cand);
-  }
-  return 0;
+  const int from = get_ls1b_index(free_ahead);
+  const int to = us == white ? from - 8 : from + 8;   // variabile: encode_move e' una macro
+  return encode_move(from, to, pc, 0, 0, 0, 0, 0);
 }
 
 // QCHK (AnQsChecks, modalita' analisi, 09/10/2026, idea nostra): primo ply della quiescenza chiamato dalla ricerca
