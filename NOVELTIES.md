@@ -50,7 +50,7 @@ margin and the number of games; the full context of each is in [`DEVELOPMENT_8.0
 
 ## Summary
 
-Of 46 entries, **9 are new**, **21 are known ideas revisited in a different form**, and **16 were done elsewhere
+Of 47 entries, **9 are new**, **22 are known ideas revisited in a different form**, and **16 were done elsewhere
 first**. Three of the new ones are adopted and measured as gains, and together they form the core of 8.0: a network
 divided by game phase, an input block that the king-relative block cannot express, and corrections that follow the
 experts of the network.
@@ -70,6 +70,7 @@ experts of the network.
 | Guard on the low-depth hash-move extension (`LdseMax`) | Revisited | 8.0 | **+6.25 ± 7.89** (15+0.15, 2,112) | adopted |
 | Passed-pawn pushes in endgames reduced less, never pruned (`PassedPushRed`) | Revisited | 8.0 | +4.4 ± 6.8 on an endgame book | adopted |
 | Passed-pawn push bonus in move ordering (`PassedPush`) | Revisited | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
+| Passed-pawn push to the seventh searched in quiescence in endgames (`QsPasserPush`), with its own levers | Revisited | 8.0 dev | −0.77 ± 7.48 (2,264); +1.1 ± 3.8 (3,370) | testing again; levers for an SPSA |
 | Neuron study of the first layer, per expert | Revisited | 8.0 | no dead or duplicate neurons; experts specialise by intensity | study |
 | Universal executable from one unit per source file | Revisited | 8.0 | −0.28% / −0.17% cycles per node against the separate build | adopted |
 | Refresh cache of the pawn input blocks keyed by the pawn bitboards | Revisited | 7.0 | +2.8% NPS (AVX2), identical tree | adopted |
@@ -300,6 +301,15 @@ These entries take a known idea and change its form, its scale or its use. Those
 - **Passed-pawn pushes in endgames (`PassedPushRed`).** With little material, a push to the sixth or seventh rank is
   reduced less and never pruned, because the network sees passers through `PassedPawns`: +4.4 ± 6.8 on an endgame
   book. Stockfish 8 exempted advanced pawn pushes from shallow pruning.
+- **Passed-pawn push in quiescence (`QsPasserPush`), 8.0 dev.** In endgames, below a non-pawn material threshold, a
+  pawn push from the sixth to the seventh rank is searched in quiescence as a tactical move, one push per node, so
+  that the horizon does not cut the move that decides a pawn race; the network judges a pawn on the seventh well
+  through `PassedPawns`, but only if the search reaches it. Searching seventh-rank pushes in quiescence is a classical
+  technique; Stockfish 19's quiescence searches only captures and promotions. Proposed in the search study of
+  5 October; −0.77 ± 7.48 over 2,264 games at 15+0.15 and +1.1 ± 3.8 over 3,370 at 10+0.1, so on 10 October it
+  received three levers of its own for an SPSA: the material threshold (`QsPushNpm`, until then shared with
+  `PassedPushRed`), the exchange bound the push must meet (`QsPushSee`, until then the general one of quiescence) and
+  the number of quiescence plies in which it is tried (`QsPushPly`). Off by default.
 - **Refresh cache of the pawn blocks, 7.0.** `PawnPair` and `PassedPawns` depend only on the pawn bitboards and the
   orientation, and refreshes come from king moves, which leave the pawns alone; their contribution is kept with the
   full pawn bitboards as key (no collision possible). +2.8% NPS on AVX2 with an identical tree. The principle of the
