@@ -276,6 +276,11 @@ static bool td_upcoming_repetition(ThreadData &td) {
     end = td.repetition_index;
   if (end < 3)
     return false;
+  // RepCycleFifty (10/10/2026, nostra): il ciclo vale come patta solo da RepCycleFifty semimosse del contatore delle
+  // 50 mosse in su. Sotto, la posizione e' ancora viva (la nostra valutazione si smorza col contatore, eval_refade) e
+  // il motore non si accontenta della patta. 0 = sempre, come prima.
+  if (td.fifty < RepCycleFifty)
+    return false;
   const U64 orig = td.hash_key;
   // RepCycleOther (10/10/2026, segnalato dall'agente velocita'): il filtro "other" di SF19. Somma le differenze di
   // chiave delle mosse dell'AVVERSARIO lungo la finestra; il ciclo vale solo se si annullano (i suoi pezzi sono
