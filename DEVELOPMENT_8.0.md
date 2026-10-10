@@ -84,8 +84,9 @@ the confirmed values.
   (section 35, one unit per variant); the next release uses the faster universal build and the SPSA PR4 vector.
 - **Against Stockfish 19** at 133+1 (section 26): **+5 =310 −5 over 320, 50.0%**; at 30+0.3 on random openings
   −4.4 ± 7.1 over 395 (section 27). In blitz the remaining gap lies in defence with a short clock (section 32).
-- **Baked on 9–10 October (section 38):** the SPSA PR4 vector and the causal reduction; bench **222811**. Running: an
-  A/B of today's universal build against the public executable of 8 October at 15+0.15.
+- **Baked on 9–10 October (section 38):** the SPSA PR4 vector and the causal reduction; bench **222811**. The graft
+  blocks were tried and closed (section 38): none enters 8.0. Running: an A/B of today's universal build against the
+  public executable of 8 October at 15+0.15.
 - **Open:** the correction SPSA CORR1; the time levers of section 33 at 40+0.4; a short SPSA of the deep levers at
   40+0.4; the shape of the next network.
 - **Test rules,** as they evolved: one idea at a time on the same binary; at least 20,000 games or a clear verdict
@@ -1564,8 +1565,20 @@ positions with at least one passed pawn) the training loss first doubled, then f
 epoch 40 and ended 11% lower, yet at 60,000 nodes per move on endgame openings the network scored −2.1 ± 3.7 Elo
 over 4,320 games. A continuation at 1e-3 left the loss unchanged. Unfreezing the layers after the accumulator for 15
 epochs at 2e-5 (the block itself barely moved) gave +3.3 ± 5.0 over 2,190 games at fixed nodes: the information is
-there, but the frozen layers could not use it. The deciding test, at 25+0.25 on endgame openings so that the speed
-cost is paid, is running. Training material: `04_consilium/graft_passedstate` in the training repository.
+there, but the frozen layers could not use it. At 25+0.25 on endgame openings, paying its speed cost, it scored
++2.9 ± 3.7 over 2,620 games.
+
+**Outcome: no graft enters 8.0.** The release decision rests on ordinary games, so the two candidates were played on
+the UHO book against the same source compiled without any graft code (`-DTRIUMV_NO_GRAFTS`), both networks built into
+deterministic profile-guided executables. PassedState with the retrained layers lost (−4.8 ± 11.9 at 20+0.2, 0.15 ply
+less, and −6 at fixed nodes): retraining the layers after the accumulator helped endgames and hurt the positions
+without passed pawns. PassedState trained alone lost more (−16.5 ± 15.8 at 80,000 nodes per move). PassedRel scored
+−2.9 ± 7.5 over 2,034 games at 12+0.12 on physical cores only, with the two sockets of the test machine disagreeing:
++4.1 on the socket with four memory channels, −8.6 at 12 s and −16.8 at 18 s on the socket with two, where the block's
+extra rows cost more depth (0.26 ply at 18 s). A feature whose value depends on the memory bandwidth of the machine is a
+poor candidate for a release that runs on every kind of computer. The graft code was removed from the engine on
+10 October; it is kept, with the blocks removed earlier and the cost reports, in the training repository
+(`04_consilium/graft_engine_storico`), and the training material in `04_consilium/graft_passedstate`.
 
 ## Appendix: every search idea tested since the restructured search
 

@@ -59,7 +59,7 @@ experts of the network.
 |---|---|---|---|---|
 | Consilium: four experts by material on the king-relative input block | New | 8.0 | 8.0 against 7.0 **+27.3 ± 8.3** (15+0.15, 2,000 games), of which about +15 from the network with its tuning | adopted, the 8.0 network |
 | `PassedPawns` input block (96 inputs) | New | 6.0 | **+6.96 ± 6.56** (15+0.15, 2,596), network alone | in every network since 6.0 |
-| Passed-pawn blocks with relations, grafted on Consilium: `PassedRel` (rows added to `PassedPawns`) and `PassedState` (replaces it, one row per passer in one of 100 states) | New | 8.0 dev | `PassedRel` +1.8 ± 4.1 (20+0.2 endgames, 2,484); `PassedState` −2.1 ± 3.7 trained alone, +3.3 ± 5.0 with the layers after the accumulator (60k nodes, endgames) | under test; engine cost 2 to 3% of cycles per node |
+| Passed-pawn blocks with relations, grafted on Consilium: `PassedRel` (rows added to `PassedPawns`) and `PassedState` (replaces it, one row per passer in one of 100 states) | New | 8.0 dev | `PassedRel` +1.8 ± 4.1 (20+0.2 endgames, 2,484); `PassedState` −2.1 ± 3.7 trained alone, +3.3 ± 5.0 with the layers after the accumulator (60k nodes, endgames); on ordinary games against a build without grafts `PassedRel` −2.9 ± 7.5 (2,034), `PassedState` −4.8 to −16.5 | closed, not in 8.0; engine cost 2 to 3% of cycles per node |
 | Correction history per expert (`CorrPhase`) | New in its form | 8.0 | **+3.2 ± 3.8** (12+0.12, 8,634) | adopted |
 | Knight outposts in move ordering (`OutpostOrder`) | New | 8.0 | +0.21 ± 3.93 (10+0.1, 8,244) at a hand-set value | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
 | Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
@@ -172,8 +172,12 @@ Two blocks were written for this and grafted on the finished Consilium with the 
   material class, and in pawn endgames whether the enemy king can catch it). At the start every state equals the old
   row, so the network evaluates exactly as before; training moves the states apart. Trained alone it did not gain
   (−2.1 ± 3.7 at 60,000 nodes per move on endgame openings, 4,320 games). When the layers after the accumulator were
-  also trained, with the first layer still frozen, it gained +3.3 ± 5.0 (2,190 games) at fixed nodes; the game test at
-  25+0.25 on endgame openings, which pays its speed cost of about 2.0% / 2.5% cycles per node, is running.
+  also trained, with the first layer still frozen, it gained +3.3 ± 5.0 (2,190 games) at fixed nodes and +2.9 ± 3.7 at
+  25+0.25 on endgame openings, which pays its speed cost of about 2.0% / 2.5% cycles per node.
+
+Neither block entered 8.0. On ordinary games (UHO book), against the same engine built without graft code, PassedRel
+scored −2.9 ± 7.5 over 2,034 games and PassedState lost between −4.8 and −16.5: the retrained layers hurt the positions
+without passed pawns, and the extra rows cost more depth on a machine with less memory bandwidth.
 
 Two lessons follow. The relations of passed pawns are mostly already available to the network through the square
 encoding and the pairwise product of the first layer, as the 6.0 design assumed: what remains is worth a few Elo in
