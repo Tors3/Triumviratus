@@ -129,14 +129,22 @@ void search_clear() {
 // ---------------------------------------------------------------------------
 // Thread
 // ---------------------------------------------------------------------------
+// AA3 (10/10/2026, velocita', stessa scacchiera): la make copia qui, prima di toccarli, i 64 byte contigui di
+// ThreadData da hash_key a plies_from_null (chiave, sei chiavi parziali, contatore delle 50 mosse, ply dalla mossa nulla)
+// e le tre occupazioni; la unmake li rimette con due copie invece di ricalcolarli (td_keys_update: sei XOR in memoria
+// lette e riscritte, td_occ_update con il salto sulla cattura). Come lo StateInfo di SF, che do_move copia e undo_move
+// lascia indietro.
 struct UndoInfo {
   int captured_piece;
   int captured_square;
   int old_castle;
   int old_enpassant;
-  int old_fifty;
-  U64 old_hash;
+  U64 keys[8];   // hash_key, pawn_key, mm_key[2], np_key[2], key_sink, fifty | plies_from_null
+  U64 occ[3];
 };
+static_assert(offsetof(ThreadData, plies_from_null) + sizeof(int) == offsetof(ThreadData, hash_key) + sizeof(UndoInfo::keys) &&
+              offsetof(ThreadData, fifty) == offsetof(ThreadData, hash_key) + 56,
+              "AA3: hash_key ... plies_from_null devono essere 64 byte contigui in ThreadData");
 
 static void init_cuckoo();
 static void nn_dirty_init();

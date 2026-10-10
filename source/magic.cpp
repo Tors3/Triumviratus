@@ -134,6 +134,12 @@ U64 get_queen_attacks(int square, U64 occupancy) {
     const auto [b, r] = hq_both(square, occupancy);
     return b | r;
 }
+// AA1 (10/10/2026): la coppia alfiere/torre di un solo calcolo, nel registro xmm (magic.h).
+SliderPair get_slider_pair(int square, U64 occupancy) {
+    const auto [b, r] = hq_both(square, occupancy);
+    return _mm_set_epi64x((long long)r, (long long)b);
+}
+#define TRIUMV_AA1_PAIR_DONE
 // Le funzioni a tabelle restano, con un altro nome, per la verifica.
 #define get_bishop_attacks pext_bishop_attacks
 #define get_rook_attacks pext_rook_attacks
@@ -191,3 +197,16 @@ U64 get_queen_attacks(int square, U64 occupancy)
     return queen_attacks;
 #endif
 }
+
+#ifndef TRIUMV_AA1_PAIR_DONE
+// AA1 senza DualMagic (build senza AVX2 o -DTRIUMV_NO_DUALHQ): le due tabelle, come prima.
+SliderPair get_slider_pair(int square, U64 occupancy)
+{
+    const U64 b = get_bishop_attacks(square, occupancy), r = get_rook_attacks(square, occupancy);
+#if defined(__x86_64__) || defined(_M_X64)
+    return _mm_set_epi64x((long long)r, (long long)b);
+#else
+    return SliderPair{b, r};
+#endif
+}
+#endif

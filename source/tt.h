@@ -290,6 +290,34 @@ inline U64 tt_mulhi64(U64 a, U64 b) {
 inline U64 tt_base_index(U64 key) { return tt_mulhi64(key, hash_entries / TT_WAYS) * TT_WAYS; }
 inline int tt_ways() { return TT_WAYS; }
 
+// TT A VETTORE (10/10/2026, velocita', stessa via, stessi valori). Con AVX-512 il bucket (64 byte, una linea) entra in
+// UN registro: v = [kw0 d0 kw1 d1 kw2 d2 kw3 d3]. Scambiando le due parole di ogni via (sw), v ^ sw ha kw ^ data nelle
+// corsie pari e v | sw dice se la via e' vuota: il confronto delle quattro vie e' un confronto vettoriale con maschera.
+// Bit 2i della maschera = via i non vuota con la chiave giusta; il bit piu' basso e' la prima via, come prima.
+// Perche': nel codice clang -O3 di probe_tt il confronto scalare costava ~13 istruzioni per via (due letture, xor,
+// shift, confronto, or, test, and e le copie di d[i] e w[i] sullo stack per l'indice variabile), ~58 per lettura su
+// ~90; qui ~12, piu' due estrazioni dal registro per la via trovata. Contatori (bench 12 sulle 30 posizioni del
+// mediogioco): 1,10 letture e 0,75 scritture per nodo. La riga e' gia' anticipata dalla make (prefetch del figlio):
+// il guadagno e' di istruzioni, non di attesa. Nella lettura i valori della via trovata si prendono DAL REGISTRO
+// (stessa istantanea della verifica, come il BUG FIX del 16/07/2026 sulle letture spezzate con piu' thread).
+// Era fra le idee scartate di X4 (08/10, "~20 istruzioni per lettura, stima < 0,2%", senza misura): il conteggio sul
+// codice vero e' circa il doppio, e la stessa ricerca serve anche alla scrittura. -DTRIUMV_NO_TT_VEC torna alle vie
+// scalari; -DTRIUMV_VERIFY_TTSTORE confronta anche questa scrittura con tt_find/tt_victim.
+#if defined(USE_AVX512) && defined(__AVX512F__) && !defined(TRIUMV_NO_TT_VEC)
+#define TRIUMV_TT_VEC 1
+#include <immintrin.h>
+inline unsigned tt_match4(__m512i v, U64 tag, __m512i& w) {
+    const __m512i sw = _mm512_shuffle_epi32(v, _MM_PERM_BADC);   // in ogni via: [data, kw]
+    w = _mm512_xor_si512(v, sw);                                  // corsie pari: kw ^ data
+    const __m512i o = _mm512_or_si512(v, sw);                     // kw | data (0 = via vuota)
+    const __mmask8 tag_ok = _mm512_mask_cmpeq_epu64_mask(0x55, _mm512_srli_epi64(w, 16), _mm512_set1_epi64((long long)tag));
+    return (unsigned)_mm512_mask_test_epi64_mask(tag_ok, o, o);
+}
+inline U64 tt_lane(__m512i v, int lane) {
+    return (U64)_mm_cvtsi128_si64(_mm512_castsi512_si128(_mm512_permutexvar_epi64(_mm512_set1_epi64(lane), v)));
+}
+#endif
+
 // Slot del bucket che contiene questa posizione, o nullptr.
 // 04/10/2026 sera — le quattro vie si confrontano SENZA SALTI (maschera a 4 bit, poi un solo salto "trovata o no"):
 // il ciclo con uscita anticipata era mal predetto quasi a ogni lettura (xperf). A piu' vie uguali vince la prima,
@@ -326,6 +354,46 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     PROF_GUARD(prof_tt);
     tt_entry* b = &hash_table[tt_base_index(hash_key)];
     const U64 tag = tt_tag(hash_key);
+#ifdef TRIUMV_TT_VEC
+    {
+        // TT a vettore (10/10/2026, vedi tt_match4): stessa via, stessi valori, presi dal registro della verifica.
+        __m512i w4;
+        const __m512i v4 = _mm512_load_si512(reinterpret_cast<const void*>(b));
+        const unsigned m = tt_match4(v4, tag, w4);
+#ifdef TRIUMV_VERIFY_TTSTORE   // verifica: la stessa via (o nessuna) della ricerca scalare
+        if ((m ? &b[get_ls1b_index(m) >> 1] : nullptr) != tt_find(hash_key)) {
+            printf("info string TTVEC: via diversa nella lettura\n"); fflush(stdout); abort();
+        }
+#endif
+        if (m) {
+            const int lane = get_ls1b_index(m);   // 2 * via
+            tt_entry* entry = &b[lane >> 1];
+            const U64 data = tt_lane(v4, lane + 1);
+            const U64 wi   = tt_lane(w4, lane);
+#ifdef TRIUMV_VERIFY_TTSTORE   // (un solo thread) le parole estratte dal registro sono quelle della via
+            if (data != entry->data || wi != (entry->kw ^ entry->data)) {
+                printf("info string TTVEC: parole diverse\n"); fflush(stdout); abort();
+            }
+#endif
+            tt_move  = unpack_move(data);
+            tt_score = unpack_score(data);
+            tt_depth = unpack_depth(data);
+            tt_flag  = unpack_flag(data);
+            tt_eval  = tt_unpack_eval16(wi);
+            is_pv    = (unpack_pv(data) != 0);
+            if (g_tt_age_refresh && unpack_age(data) != current_age) {
+                U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
+                entry->data = new_data;
+                entry->kw   = wi ^ new_data;
+            }
+            if (tt_flag == hash_flag_none) return false;   // entry eval-only (EvalTTWrite)
+            return true;
+        }
+        tt_move = 0; tt_score = 0; tt_depth = 0;
+        tt_flag = hash_flag_alpha; tt_eval = tt_eval_none; is_pv = false;
+        return false;
+    }
+#else
     // Un solo snapshot delle due parole per via: la verifica e l'unpack leggono gli STESSI valori (niente torn read
     // fra verifica e uso, cfr. BUG FIX 2026-07-16). 04/10/2026 sera: le quattro vie senza salti, come in tt_find.
     U64 d[TT_WAYS], w[TT_WAYS];
@@ -357,6 +425,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     tt_move = 0; tt_score = 0; tt_depth = 0;
     tt_flag = hash_flag_alpha; tt_eval = tt_eval_none; is_pv = false;
     return false;
+#endif
 }
 
 inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, int& tt_flag) {
@@ -379,11 +448,19 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
     const U64 tag = tt_tag(hash_key);
     U64 kk[TT_WAYS], dd[TT_WAYS];
     unsigned found = 0;
+#ifdef TRIUMV_TT_VEC
+    {
+        // TT a vettore (10/10/2026, vedi tt_match4): bit 2i -> bit i (pext), cosi' il resto e' quello di prima.
+        __m512i w4;
+        found = _pext_u32(tt_match4(_mm512_load_si512(reinterpret_cast<const void*>(b)), tag, w4), 0x55u);
+    }
+#else
     for (int i = 0; i < TT_WAYS; i++) {
         kk[i] = b[i].kw;
         dd[i] = b[i].data;
         found |= (unsigned)((((kk[i] ^ dd[i]) >> 16) == tag) & ((kk[i] | dd[i]) != 0)) << i;
     }
+#endif
     tt_entry* entry;
     if (found) {
         entry = &b[get_ls1b_index(found)];   // a piu' vie uguali vince la prima, come tt_find
@@ -411,6 +488,12 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         // Vittima senza salti, stessa regola di tt_victim: la prima via vuota, altrimenti il valore depth - 8 * eta'
         // piu' basso e a parita' la via piu' bassa. Chiave = valore * 4 + via (valore in [-248, 255]), le vie vuote a
         // -2^20 + via: la chiave minima e' la via scelta da tt_victim, e i suoi due bit bassi sono la via.
+#ifdef TRIUMV_TT_VEC
+        for (int i = 0; i < TT_WAYS; i++) {   // la linea e' appena stata letta nel registro: qui e' in L1
+            kk[i] = b[i].kw;
+            dd[i] = b[i].data;
+        }
+#endif
         int best = 1 << 30;
         for (int i = 0; i < TT_WAYS; i++) {
             const int rel_age = (current_age - unpack_age(dd[i])) & 0x1F;

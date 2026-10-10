@@ -129,10 +129,11 @@ static inline bool on_line(int a, int b, int c) {
 
 static inline U64 attackers_with(const ThreadData &td, int sq, int by, U64 occ) {
   const int off = by == white ? 0 : 6;
+  const SliderPair sp = get_slider_pair(sq, occ);   // AA1 (10/10/2026): un calcolo per i due (magic.h)
   return (pawn_attacks[by ^ 1][sq] & td.bitboards[P + off]) | (knight_attacks[sq] & td.bitboards[N + off]) |
          (king_attacks[sq] & td.bitboards[K + off]) |
-         (get_bishop_attacks(sq, occ) & (td.bitboards[B + off] | td.bitboards[Q + off])) |
-         (get_rook_attacks(sq, occ) & (td.bitboards[R + off] | td.bitboards[Q + off]));
+         (pair_bishop(sp) & (td.bitboards[B + off] | td.bitboards[Q + off])) |
+         (pair_rook(sp) & (td.bitboards[R + off] | td.bitboards[Q + off]));
 }
 
 // Contesto del nodo per legalita' (inchiodature del nostro re) e scacco (case di scacco sul re nemico),
@@ -177,8 +178,9 @@ __attribute__((noinline)) static bool legal_before_slow(ThreadData &td, MoveSafe
     const int capsq = us == white ? to + 8 : to - 8;
     const U64 occ = (td.occupancies[both] ^ (1ULL << from) ^ (1ULL << capsq)) | (1ULL << to);
     const int eoff = them == white ? 0 : 6;
-    return !(get_rook_attacks(s.our_king, occ) & (td.bitboards[R + eoff] | td.bitboards[Q + eoff])) &&
-           !(get_bishop_attacks(s.our_king, occ) & (td.bitboards[B + eoff] | td.bitboards[Q + eoff]));
+    const SliderPair sp = get_slider_pair(s.our_king, occ);
+    return !(pair_rook(sp) & (td.bitboards[R + eoff] | td.bitboards[Q + eoff])) &&
+           !(pair_bishop(sp) & (td.bitboards[B + eoff] | td.bitboards[Q + eoff]));
   }
   if (from == s.our_king)
     return !attackers_with(td, to, them, td.occupancies[both] ^ (1ULL << from));
@@ -219,8 +221,9 @@ static bool checks_before(ThreadData &td, MoveSafety &s, int m) {
   if (get_move_enpassant(m)) {
     const int capsq = td.side == white ? to + 8 : to - 8;
     const U64 o = (occ ^ (1ULL << from) ^ (1ULL << capsq)) | (1ULL << to);
-    return (get_rook_attacks(s.their_king, o) & (td.bitboards[R + off] | td.bitboards[Q + off])) ||
-           (get_bishop_attacks(s.their_king, o) & (td.bitboards[B + off] | td.bitboards[Q + off]));
+    const SliderPair sp = get_slider_pair(s.their_king, o);
+    return (pair_rook(sp) & (td.bitboards[R + off] | td.bitboards[Q + off])) ||
+           (pair_bishop(sp) & (td.bitboards[B + off] | td.bitboards[Q + off]));
   }
   if (castling) {
     int rook_pc, rf, rt;

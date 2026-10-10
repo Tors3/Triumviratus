@@ -11,5 +11,6 @@
 extern unsigned long long knight_attacks[64];
 extern unsigned long long get_bishop_attacks(int square, unsigned long long occupancy);
 extern unsigned long long get_rook_attacks(int square, unsigned long long occupancy);
+extern unsigned long long get_queen_attacks(int square, unsigned long long occupancy);   // AA1 (10/10/2026)
 
 #endif  // NN_ATTACKS_H_INCLUDED

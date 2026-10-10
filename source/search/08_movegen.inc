@@ -11,13 +11,13 @@
 // Bitboard degli attaccanti di `sq` del colore `by` (P2.3 EvasionGen).
 static inline U64 td_attackers_to(ThreadData &td, int sq, int by) {
   const int off = (by == white) ? 0 : 6;
-  const U64 occ = td.occupancies[both];
+  const SliderPair sp = get_slider_pair(sq, td.occupancies[both]);   // AA1 (10/10/2026): un calcolo per i due
   return (pawn_attacks[by ^ 1][sq] & td.bitboards[P + off]) |
          (knight_attacks[sq] & td.bitboards[N + off]) |
          (king_attacks[sq] & td.bitboards[K + off]) |
-         (get_bishop_attacks(sq, occ) &
+         (pair_bishop(sp) &
           (td.bitboards[B + off] | td.bitboards[Q + off])) |
-         (get_rook_attacks(sq, occ) &
+         (pair_rook(sp) &
           (td.bitboards[R + off] | td.bitboards[Q + off]));
 }
 
@@ -91,6 +91,17 @@ static inline int mg_emit_targets(int *mg_out, int mg_cnt, U64 attacks, U64 enem
 #else
   (void)captures_only;
 #endif
+  // AA4 (10/10/2026, velocita', stesse mosse nello stesso ordine): con le sole catture un pezzo ne ha 0 (68%), 1 (25%),
+  // 2 (6%) o piu' (2%) (contatori, bench 15-16 su fens30/eg30, ~1,1 pezzi per nodo): l'uscita del ciclo dipendeva da
+  // quel numero, e un predittore a 2 bit per sito la sbaglia ~0,53-0,55 volte per nodo. La prima cattura si scrive
+  // sempre nello slot corrente e il contatore avanza di 0 o 1 (come i pedoni, 04/10/2026); senza catture lo slot resta
+  // fuori dal conteggio (la casa 63 e' solo un valore lecito per l'indice). Il ciclo resta per la seconda e oltre.
+  if (captures_only) {
+    const int first = get_ls1b_index(attacks | (1ULL << 63));
+    mg_out[mg_cnt] = encode_move(source_square, first, piece, 0, (int)((enemies >> first) & 1), 0, 0, 0);
+    mg_cnt += attacks != 0;
+    attacks &= attacks - 1;
+  }
   while (attacks) {
     const int target_square = get_ls1b_index(attacks);
     mg_out[mg_cnt++] = encode_move(source_square, target_square, piece, 0,

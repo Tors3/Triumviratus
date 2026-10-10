@@ -246,13 +246,15 @@ static int see_ge_impl(ThreadData& td, int move, int threshold) {
     // si maschera con `occupied` a ogni giro, i pezzi "pelati" spariscono da soli.
     const U64 diag_sliders = td.bitboards[B] | td.bitboards[b] | td.bitboards[Q] | td.bitboards[q];
     const U64 orth_sliders = td.bitboards[R] | td.bitboards[r] | td.bitboards[Q] | td.bitboards[q];
+    // AA1 (10/10/2026): alfiere e torre da un solo calcolo (magic.h, get_slider_pair), qui e negli x-ray di W2.
+    const SliderPair sp0 = get_slider_pair(to, occupied);
     U64 attackers =
           (pawn_attacks[black][to] & td.bitboards[P])
         | (pawn_attacks[white][to] & td.bitboards[p])
         | (knight_attacks[to] & (td.bitboards[N] | td.bitboards[n]))
         | (king_attacks[to]   & (td.bitboards[K] | td.bitboards[k]))
-        | (get_bishop_attacks(to, occupied) & diag_sliders)
-        | (get_rook_attacks(to, occupied)   & orth_sliders);
+        | (pair_bishop(sp0) & diag_sliders)
+        | (pair_rook(sp0)   & orth_sliders);
 
     int stm = td.side;
     int res = 1;                 // 1 = "la soglia regge" per il lato che ha mosso
@@ -288,8 +290,9 @@ static int see_ge_impl(ThreadData& td, int move, int threshold) {
             if ((swap = see_piece_values[t] - swap) < res) break;
             const U64 bb = stm_att & td.bitboards[base + t];
             occupied ^= (bb & (0 - bb));
-            attackers |= (get_bishop_attacks(to, occupied) & diag_sliders & diag_mask[t])
-                       | (get_rook_attacks(to, occupied)   & orth_sliders & orth_mask[t]);
+            const SliderPair sp = get_slider_pair(to, occupied);
+            attackers |= (pair_bishop(sp) & diag_sliders & diag_mask[t])
+                       | (pair_rook(sp)   & orth_sliders & orth_mask[t]);
             continue;
         }
 

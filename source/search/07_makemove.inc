@@ -24,10 +24,11 @@ static inline int td_is_square_attacked(ThreadData &td, int square,
       return 1;
     if (king_attacks[square] & td.bitboards[K])
       return 1;
-    U64 occ = td.occupancies[both];
-    if (get_bishop_attacks(square, occ) & (td.bitboards[B] | td.bitboards[Q]))
+    // AA1 (10/10/2026): alfiere e torre da un solo calcolo (magic.h).
+    const SliderPair sp = get_slider_pair(square, td.occupancies[both]);
+    if (pair_bishop(sp) & (td.bitboards[B] | td.bitboards[Q]))
       return 1;
-    if (get_rook_attacks(square, occ) & (td.bitboards[R] | td.bitboards[Q]))
+    if (pair_rook(sp) & (td.bitboards[R] | td.bitboards[Q]))
       return 1;
   } else {
     if (pawn_attacks[white][square] & td.bitboards[p])
@@ -36,10 +37,10 @@ static inline int td_is_square_attacked(ThreadData &td, int square,
       return 1;
     if (king_attacks[square] & td.bitboards[k])
       return 1;
-    U64 occ = td.occupancies[both];
-    if (get_bishop_attacks(square, occ) & (td.bitboards[b] | td.bitboards[q]))
+    const SliderPair sp = get_slider_pair(square, td.occupancies[both]);
+    if (pair_bishop(sp) & (td.bitboards[b] | td.bitboards[q]))
       return 1;
-    if (get_rook_attacks(square, occ) & (td.bitboards[r] | td.bitboards[q]))
+    if (pair_rook(sp) & (td.bitboards[r] | td.bitboards[q]))
       return 1;
   }
   return 0;
@@ -79,8 +80,9 @@ static inline void td_lmp_chk_init(ThreadData &td, LmpChkCtx &c) {
   const U64 occ = td.occupancies[both];
 
   c.chk[N] = knight_attacks[eksq];
-  c.chk[B] = get_bishop_attacks(eksq, occ);
-  c.chk[R] = get_rook_attacks(eksq, occ);
+  const SliderPair sp = get_slider_pair(eksq, occ);   // AA1 (10/10/2026): un calcolo per i due
+  c.chk[B] = pair_bishop(sp);
+  c.chk[R] = pair_rook(sp);
   c.chk[Q] = c.chk[B] | c.chk[R];
   c.chk[P] =
       pawn_attacks[us ^ 1][eksq]; // da dove un NOSTRO pedone attacca quel re
@@ -138,7 +140,8 @@ static inline void td_castle_rook(int target, int &rook_pc, int &rf, int &rt) {
 // instead of OR-recomputing all 12 bitboards (+2.89% NPS, node-identical). XOR
 // is self-inverse, so calling it again with the same move reverses it (used on
 // make-forward, illegal rollback, and unmake). 'us' must be the MOVING side at
-// the call site.
+// the call site. AA3 (10/10/2026): rollback e unmake rimettono le occupazioni (e le chiavi di td_keys_update) dalla
+// copia in UndoInfo; qui resta solo la make.
 // captured_piece == -1 means no capture. For castling the rook squares derive
 // from the king target. Produces occupancies identical to the full recompute.
 static inline void td_occ_update(ThreadData &td, int us, int source, int target,
@@ -148,9 +151,8 @@ static inline void td_occ_update(ThreadData &td, int us, int source, int target,
   // arrocca senza muoversi (source == target) non cambia nulla, invece di svuotare la propria casa. Con le
   // quattro case di re e torre in XOR anche le sovrapposizioni del 960 (re dove partiva la torre) tornano giuste.
   td.occupancies[us] ^= (1ULL << source) ^ (1ULL << target);
-  if (captured_piece != -1)
-    td.occupancies[us ^ 1] ^=
-        (1ULL << captured_square); // capture (== target, or e.p. square)
+  // capture (== target, or e.p. square). AA3 (10/10/2026): senza salto, maschera nulla senza vittima.
+  td.occupancies[us ^ 1] ^= captured_piece != -1 ? 1ULL << (captured_square & 63) : 0;
   if (castling) {
     int rook_pc, rf, rt;
     td_castle_rook(target, rook_pc, rf, rt);
@@ -203,8 +205,9 @@ static inline void td_mailbox_apply(ThreadData &td, int piece, int source, int t
     td.piece_on[rt] = rook_pc;
     return;
   }
-  if (captured_piece != -1)
-    td.piece_on[captured_square] = -1;
+  // AA3 (10/10/2026): senza salto sulla cattura; senza vittima la prima scrittura cade sulla casa di partenza. L'indice
+  // si sceglie con una maschera: con `?:` clang mette un salto per non leggere captured_square.
+  td.piece_on[source ^ ((source ^ captured_square) & -int(captured_piece != -1))] = -1;
   td.piece_on[source] = -1;
   td.piece_on[target] = promoted ? promoted : piece;
 }
@@ -225,10 +228,10 @@ static inline void td_mailbox_revert(ThreadData &td, int piece, int source, int 
   }
   // Ordine speculare: si svuota target e POI si rimette la vittima, cosi' quando
   // captured_square == target (cattura normale) la vittima riprende il suo posto.
+  // AA3 (10/10/2026): senza salto sulla cattura. Senza vittima la terza scrittura rimette -1 su target.
   td.piece_on[target] = -1;
   td.piece_on[source] = piece;
-  if (captured_piece != -1)
-    td.piece_on[captured_square] = captured_piece;
+  td.piece_on[target ^ ((target ^ captured_square) & -int(captured_piece != -1))] = captured_piece;
 }
 
 // ============================================================================
@@ -317,10 +320,9 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
   PROF_GUARD(prof_make);
   undo.old_castle = td.castle;
   undo.old_enpassant = td.enpassant;
-  undo.old_fifty = td.fifty;
-  undo.old_hash = td.hash_key;
-  undo.captured_piece = -1;
-  undo.captured_square = -1;
+  // AA3 (10/10/2026): chiavi, 50 mosse, ply dalla nulla e occupazioni di prima, per la unmake (vedi UndoInfo).
+  std::memcpy(undo.keys, &td.hash_key, sizeof(undo.keys));
+  std::memcpy(undo.occ, td.occupancies, sizeof(undo.occ));
 
   int source = get_move_source(move);
   int target = get_move_target(move);
@@ -339,20 +341,20 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
 
   // Pezzo catturato e sua casa, dalla scacchiera ancora intatta (07/10/2026: calcolati qui in cima, prima di ogni
   // modifica, perche' servono anche alle dirty della rete qui sotto; stessi valori di prima).
-  if (capture) {
-    if (enpass) {
-      undo.captured_square = (td.side == white) ? target + 8 : target - 8;
-      undo.captured_piece = (td.side == white) ? p : P;
-    } else {
-      undo.captured_square = target;
-      int start = (td.side == white) ? p : P;
-      int end = (td.side == white) ? k : K;
-      // Il test di range replica esattamente il ciclo sostituito, che cercava solo fra i pezzi AVVERSARI e lasciava
-      // -1 se non trovava nulla.
-      const int mb_pc = td.piece_on[target];
-      if (mb_pc >= start && mb_pc <= end)
-        undo.captured_piece = mb_pc;
-    }
+  // AA3 (10/10/2026, velocita', stessi valori): scelte di valore invece di salti. La cattura e' un dato della mossa
+  // (24-28% delle make nei contatori, bench 15-16 su fens30/eg30), e il salto su di lei qui, piu' sotto e nella unmake
+  // era mal predetto: un predittore a 2 bit per sito sbaglia ~0,23-0,28 volte per nodo in ognuno dei due siti.
+  {
+    const int start = (td.side == white) ? p : P;
+    const int end = (td.side == white) ? k : K;
+    // Il test di range replica esattamente il ciclo sostituito, che cercava solo fra i pezzi AVVERSARI e lasciava
+    // -1 se non trovava nulla.
+    const int mb_pc = td.piece_on[target];
+    const int cp_normal = (mb_pc >= start && mb_pc <= end) ? mb_pc : -1;
+    const int csq = enpass ? ((td.side == white) ? target + 8 : target - 8) : target;
+    const int cp = enpass ? ((td.side == white) ? p : P) : cp_normal;
+    undo.captured_square = capture ? csq : -1;
+    undo.captured_piece = capture ? cp : -1;
   }
 
   // Le dirty della rete per questa mossa, sulla scacchiera PRIMA della mossa (06_nndirty.inc): un nuovo stato sulla
@@ -369,17 +371,16 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
   td.hash_key ^= piece_keys[piece][source];
   td.hash_key ^= piece_keys[piece][target];
 
-  td.fifty++;
-  if (piece == P || piece == p)
-    td.fifty = 0;
-
-  if (capture) {
-    td.fifty = 0;
-
-    if (undo.captured_piece != -1) {
-      pop_bit(td.bitboards[undo.captured_piece], undo.captured_square);
-      td.hash_key ^= piece_keys[undo.captured_piece][undo.captured_square];
-    }
+  // AA3: 50 mosse e vittima senza salti. Senza vittima la maschera e' nulla (bitboard 0 invariata) e la riga 15 di
+  // piece_keys e' a zero (vedi td_keys_update).
+  // Con || e ?: clang emette tre salti (cattura, pedone bianco, pedone nero): qui and di bit, nessun salto.
+  const int fifty_runs = int(piece != P) & int(piece != p) & int(capture == 0);
+  td.fifty = (td.fifty + 1) & -fifty_runs;
+  {
+    const int cp = undo.captured_piece;
+    const U64 cbit = cp != -1 ? 1ULL << (undo.captured_square & 63) : 0;
+    td.bitboards[cp != -1 ? cp : 0] &= ~cbit;
+    td.hash_key ^= piece_keys[cp & 15][undo.captured_square & 63];
   }
 
   if (promoted) {
@@ -457,12 +458,9 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
 
     td.castle = undo.old_castle;
     td.enpassant = undo.old_enpassant;
-    td.fifty = undo.old_fifty;
-    td.hash_key = undo.old_hash;
-
-    td_occ_update(td, td.side, source, target, undo.captured_square,
-                  undo.captured_piece, castling);
-    td_keys_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square, castling);
+    // AA3: chiavi, 50 mosse e occupazioni dalla copia (plies_from_null non era ancora cambiato).
+    std::memcpy(&td.hash_key, undo.keys, sizeof(undo.keys));
+    std::memcpy(td.occupancies, undo.occ, sizeof(undo.occ));
     td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
                       undo.captured_square, castling);  // sito 2/3: mossa illegale
     MB_VERIFY(td, "rollback-illegale");
@@ -515,7 +513,7 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
 static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
   PROF_GUARD(prof_make);
   nn_unmake_dirty(td);   // lo stato della rete di questa mossa esce dalla pila
-  td.plies_from_null--;  // P2.2 (speculare al ++ del make riuscito)
+  // P2.2 (plies_from_null, speculare al ++ del make riuscito): torna con la copia di AA3 qui sotto.
   td.side ^= 1;
 
   int source = get_move_source(move);
@@ -532,8 +530,11 @@ static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
     set_bit(td.bitboards[piece], source);
   }
 
-  if (undo.captured_piece != -1) {
-    set_bit(td.bitboards[undo.captured_piece], undo.captured_square);
+  // AA3 (10/10/2026): la vittima torna senza salto (senza vittima maschera nulla sulla bitboard 0).
+  {
+    const int cp = undo.captured_piece;
+    const U64 cbit = cp != -1 ? 1ULL << (undo.captured_square & 63) : 0;
+    td.bitboards[cp != -1 ? cp : 0] |= cbit;
   }
 
   if (castling) {
@@ -545,12 +546,10 @@ static inline void td_unmake_move(ThreadData &td, int move, UndoInfo &undo) {
 
   td.castle = undo.old_castle;
   td.enpassant = undo.old_enpassant;
-  td.fifty = undo.old_fifty;
-  td.hash_key = undo.old_hash;
-
-  td_occ_update(td, td.side, source, target, undo.captured_square,
-                undo.captured_piece, castling);
-  td_keys_update(td, piece, source, target, promoted, undo.captured_piece, undo.captured_square, castling);
+  // AA3: chiave, chiavi parziali, 50 mosse, plies_from_null e occupazioni dalla copia della make, al posto di
+  // td_occ_update e td_keys_update (stessi valori: sono quelli di prima della mossa).
+  std::memcpy(&td.hash_key, undo.keys, sizeof(undo.keys));
+  std::memcpy(td.occupancies, undo.occ, sizeof(undo.occ));
   td_mailbox_revert(td, piece, source, target, promoted, undo.captured_piece,
                     undo.captured_square, castling);  // sito 3/3: unmake
   MB_VERIFY(td, "unmake");

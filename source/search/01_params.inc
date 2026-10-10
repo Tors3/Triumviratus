@@ -345,6 +345,7 @@
   P(LmrExp3, 0, -1536, 1536)                                                                              \
   P(Contempt, 0, 0, 200)                 /* idea 3: patta = -c per il colore di radice (Elo di lista) */  \
   P(PhaseEdgeNoFut, 0, 0, 1)             /* idea 4: la cattura che cambia esperto della rete non si pota e non si riduce di piu' */ \
+  P(RepCycleOther, 0, 0, 1)              /* 10/10/2026: filtro "other" di SF19 nel ciclo cuckoo (10_order) */  \
   P(QsPasserPush, 0, 0, 1)               /* idea 7: in quiescenza la spinta in 7a di un passato e' tattica */ \
   /* 10/10/2026, leve della spinta in quiescenza per uno SPSA (agiscono solo con QsPasserPush=1; i default rifanno la  \
      spinta di prima: con QsPasserPush=1 bench 211937). */                                                           \

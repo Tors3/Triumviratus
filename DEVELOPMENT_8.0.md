@@ -1664,8 +1664,19 @@ The search patches gain most with the fewest instructions removed: they remove m
 infrastructure patches remove more than twice as many instructions but gain less, part of the saving being absorbed
 by memory waits. The network patches are slower on this machine in both phases and are not kept. The two first
 series overlap (both compute bishop and rook attacks together and both copy the unmake
-state), so they do not add up; the measurements of each patch alone, and the endgame positions, decide which version
-of each idea is kept and whether the vectorised hash bucket joins the search series.
+state), so they do not add up.
+
+Each patch alone, in the middlegame (eight builds, four rounds; the spread between rounds is up to 0.9%, so
+differences below 0.3% are not resolved): the unmake of the search series −0.61% against −0.29% for the
+infrastructure version; the slider pair with the ordering terms (AA1 + AA2) −0.36% against −0.11% for the inline
+version; the vectorised hash bucket −0.21% (−1.39% instructions); AC1 +0.72%. For both overlapping ideas the search
+series' version wins, and the whole series (−1.33%) is worth more than its parts (−0.97%).
+
+**The combination.** The search series with the vectorised hash bucket on top, against the search series alone
+(three rounds): the same cycles in the middlegame (−1.34% both) and within the noise in endgames (−1.02% against
+−1.16%), with 1.2% fewer instructions per node. The hash table waits on memory, so fewer instructions do not show
+on this machine; they may on processors with a different balance, and the bucket code is used only by the AVX-512
+variants. The combination is kept: AA1–AA4 with the vectorised bucket, about −1.0 to −1.3% cycles per node.
 
 **Found on the way, not identical-tree.** The repetition check (`td_upcoming_repetition`) still has the form of
 Stockfish 16: without the filter Stockfish 19 added, it also reports cycles completed by an opponent's move, on

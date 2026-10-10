@@ -105,13 +105,17 @@ static inline void nn_write_multi(const Look &look, U64 mask, std::uint32_t tmpl
 }
 #endif
 
-static inline U64 nn_piece_attacks(int pc, int s, U64 occupied) {
+// AA1 (10/10/2026, velocita', stesse tuple): gli attacchi lunghi del pezzo sono quelli che nn_piece_threats ha gia'
+// calcolato dalla stessa casa con la stessa occupazione (bAttacks, rAttacks): prima si ricalcolavano qui, 1 volta per
+// alfiere e torre e 2 per la donna, oltre alle 2 di nn_piece_threats (contatori, bench 15 su fens30: 1,19 chiamate e
+// 3,05 calcoli DualMagic per nodo; ora 1 per chiamata).
+static inline U64 nn_piece_attacks(int pc, int s, U64 bAttacks, U64 rAttacks) {
   switch (pc >= 6 ? pc - 6 : pc) {
   case NN_PAWN: return pawn_attacks[pc >= 6][s];
   case NN_KNIGHT: return knight_attacks[s];
-  case NN_BISHOP: return get_bishop_attacks(s, occupied);
-  case NN_ROOK: return get_rook_attacks(s, occupied);
-  default: return get_bishop_attacks(s, occupied) | get_rook_attacks(s, occupied);  // NN_QUEEN
+  case NN_BISHOP: return bAttacks;
+  case NN_ROOK: return rAttacks;
+  default: return bAttacks | rAttacks;  // NN_QUEEN
   }
 }
 
@@ -125,8 +129,9 @@ static inline void nn_piece_threats(const NnTB &tb, const Look &look, int pc, bo
   const U64 occupied = tb.occ;
   const U64 rookQueens = tb.type[NN_ROOK] | tb.type[NN_QUEEN];
   const U64 bishopQueens = tb.type[NN_BISHOP] | tb.type[NN_QUEEN];
-  const U64 rAttacks = get_rook_attacks(s, occupied);
-  const U64 bAttacks = get_bishop_attacks(s, occupied);
+  const SliderPair sp = get_slider_pair(s, occupied);   // AA1: un calcolo per i due (magic.h)
+  const U64 rAttacks = pair_rook(sp);
+  const U64 bAttacks = pair_bishop(sp);
   const U64 occupiedNoK = occupied ^ tb.type[NN_KING];
 
   // Filtro delle coppie non valide (cadrebbero comunque su feature morte).
@@ -159,7 +164,7 @@ static inline void nn_piece_threats(const NnTB &tb, const Look &look, int pc, bo
 
   // Le relazioni pedone -> pedone non sono nel feature set: un pedone minaccia solo cavalli e torri, e i pedoni
   // contano come attaccanti solo di cavalli e torri.
-  U64 threatened = nn_piece_attacks(pc, s, occupied) & occupiedNoK;
+  U64 threatened = nn_piece_attacks(pc, s, bAttacks, rAttacks) & occupiedNoK;
   U64 incoming_threats = knight_attacks[s] & tb.type[NN_KNIGHT];
   if (pt == NN_KNIGHT || pt == NN_ROOK) {
     const U64 wp = tb.type[NN_PAWN] & tb.color[white], bp = tb.type[NN_PAWN] & tb.color[black];
@@ -334,8 +339,10 @@ static inline void nn_make_dirty(ThreadData &td, int piece, int source, int targ
 static inline void nn_unmake_dirty(ThreadData &td) {
   NnStack &S = *td.nnstack;
   --S.size;
-  if (S.ready > S.size)
-    S.ready = S.size;
+  // AA3 (10/10/2026, velocita', stesso stato): scrittura sempre fatta, con il minimo (cmov) invece del salto. Il salto
+  // dipende dal figlio, valutato o no: vero nel 51-59% delle unmake (contatori, bench 15-16 su fens30/eg30), e un
+  // predittore a 2 bit per sito lo sbaglia ~0,24-0,26 volte per nodo.
+  S.ready = std::min(S.ready, S.size);
 }
 
 // Disfare e rifare una mossa sulle copie locali del recupero. Qui i salti restano: le mosse in sospeso sono quasi sempre una e i rami sono ben previsti. Provata una versione senza

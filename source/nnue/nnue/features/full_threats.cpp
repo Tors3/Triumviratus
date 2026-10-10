@@ -323,8 +323,8 @@ static inline Bitboard engine_attacks(int pt, int s, Bitboard occupied) {
         return get_bishop_attacks(s, occupied);
     case NN_ROOK :
         return get_rook_attacks(s, occupied);
-    default :  // NN_QUEEN
-        return get_bishop_attacks(s, occupied) | get_rook_attacks(s, occupied);
+    default :  // NN_QUEEN: un solo calcolo DualMagic invece di due (AA1, 10/10/2026, stessi attacchi)
+        return get_queen_attacks(s, occupied);
     }
 }
 

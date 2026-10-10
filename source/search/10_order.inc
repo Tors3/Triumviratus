@@ -277,8 +277,17 @@ static bool td_upcoming_repetition(ThreadData &td) {
   if (end < 3)
     return false;
   const U64 orig = td.hash_key;
+  // RepCycleOther (10/10/2026, segnalato dall'agente velocita'): il filtro "other" di SF19. Somma le differenze di
+  // chiave delle mosse dell'AVVERSARIO lungo la finestra; il ciclo vale solo se si annullano (i suoi pezzi sono
+  // tornati dov'erano), cioe' se a chiuderlo basta una mossa del lato al tratto. Senza, la tabella cuckoo trova anche
+  // cicli fatti da una mossa dell'avversario (~0,08-0,24% dei nodi). Spenta = forma di SF16, albero invariato.
+  // Chiave di k semimosse fa: repetition_table[repetition_index - (k - 1)].
+  U64 other = orig ^ td.repetition_table[td.repetition_index] ^ side_key;
   for (int i = 3; i <= end; i += 2) {
     const U64 prev = td.repetition_table[td.repetition_index - (i - 1)];
+    other ^= td.repetition_table[td.repetition_index - (i - 2)] ^ prev ^ side_key;
+    if (RepCycleOther && other)
+      continue;
     const U64 move_key = orig ^ prev;
     int j;
     if ((j = cuckoo_h1(move_key), cuckoo_key[j] == move_key) ||

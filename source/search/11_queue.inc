@@ -211,6 +211,25 @@ static inline int score_tactic(const ThreadData &td, int m) {
   return s;
 }
 
+// AA2 (10/10/2026): case attaccate dall'insieme dei cavalli in `b`, con gli spostamenti di mask_knight_attacks
+// (attacks.cpp) applicati alla bitboard intera: la stessa unione del ciclo su knight_attacks[]. Numerazione a8 = 0:
+// la colonna a e' il bit 0 di ogni byte, quindi uno spostamento a destra di 1 o 2 bit va verso la colonna a.
+static inline U64 knight_fill(U64 b) {
+  const U64 l1 = (b >> 1) & 0x7F7F7F7F7F7F7F7FULL, l2 = (b >> 2) & 0x3F3F3F3F3F3F3F3FULL;
+  const U64 r1 = (b << 1) & 0xFEFEFEFEFEFEFEFEULL, r2 = (b << 2) & 0xFCFCFCFCFCFCFCFCULL;
+  const U64 h1 = l1 | r1, h2 = l2 | r2;
+  return (h1 << 16) | (h1 >> 16) | (h2 << 8) | (h2 >> 8);
+}
+
+// Reciproci a 40 bit di 1 + ply per la storia dei primi ply (score_quiets): |8 * voce| < 2^16, divisore <= 5, quindi
+// moltiplicare per M = ceil(2^40 / D) e troncare da' la divisione intera (errore M*D - 2^40 < D, come W1).
+static constexpr auto low_ply_recip = [] {
+  std::array<unsigned long long, LOW_PLY_SIZE> r{};
+  for (int p = 0; p < LOW_PLY_SIZE; p++)
+    r[p] = ((1ULL << 40) + (unsigned long long)p) / (unsigned long long)(p + 1);
+  return r;
+}();
+
 // Punteggi delle quiete: statistiche (pesate), bonus agli scacchi diretti che non perdono materiale, e la mossa
 // di un pezzo che esce da (o entra in) una casa attaccata da un pezzo nemico di valore minore.
 static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
@@ -221,20 +240,40 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
   const int eoff = them == white ? 0 : 6, us_off = 6 - eoff;
   const U64 occ = td.occupancies[both];
 
-  U64 by_knight = 0, by_bishop = 0, by_rook = 0, by_queen = 0;
   // Case attaccate da tutti i pedoni avversari insieme: gli stessi due shift di mask_pawn_attacks (attacks.cpp)
   // applicati alla bitboard intera, quindi la stessa unione del ciclo per pedone (04/10/2026).
   const U64 epawns = td.bitboards[P + eoff];
   const U64 by_pawn = them == white ? ((epawns >> 7) & not_a_file) | ((epawns >> 9) & not_h_file)
                                     : ((epawns << 7) & not_h_file) | ((epawns << 9) & not_a_file);
-  U64 bb = td.bitboards[N + eoff];
-  while (bb) { by_knight |= knight_attacks[get_ls1b_index(bb)]; pop_lsb_bb(bb); }
-  bb = td.bitboards[B + eoff];
-  while (bb) { by_bishop |= get_bishop_attacks(get_ls1b_index(bb), occ); pop_lsb_bb(bb); }
-  bb = td.bitboards[R + eoff];
-  while (bb) { by_rook |= get_rook_attacks(get_ls1b_index(bb), occ); pop_lsb_bb(bb); }
-  bb = td.bitboards[Q + eoff];
-  while (bb) { by_queen |= get_queen_attacks(get_ls1b_index(bb), occ); pop_lsb_bb(bb); }
+  // AA2 (10/10/2026, velocita', stessi punteggi): mappe dell'avversario e attacchi da casa sicura (AttackOrder*) da
+  // UN calcolo DualMagic per pezzo lungo nemico (get_slider_pair, AA1), invece dei quattro cicli by_* e dei cinque cicli
+  // di attack_to, che ricalcolavano gli attacchi degli stessi pezzi (alfiere, torre e donna di nuovo, due volte per la
+  // donna). Contatori (bench 15 su fens30): 0,16 riempimenti per nodo, 0,84 calcoli per nodo prima, ~0,35 ora; nove
+  // cicli a lunghezza variabile per riempimento diventano tre (piu' corti), cavalli e pedoni passano per insiemi.
+  // Primo passo, sui pezzi lunghi: by_bishop, by_rook, by_queen e le parti di attack_to che non dipendono da `safe`
+  // (le torri e la donna sono sempre bersagli per l'alfiere, la donna per la torre).
+  const U64 eN = td.bitboards[N + eoff], eB = td.bitboards[B + eoff], eR = td.bitboards[R + eoff],
+            eQ = td.bitboards[Q + eoff];
+  const U64 by_knight = knight_fill(eN);
+  U64 by_bishop = 0, by_rook = 0, by_queen = 0;
+  U64 aa_b = 0, aa_r = 0, aa_q = 0;            // attack_to[B], [R], [Q] (vedi sotto per i bersagli)
+  U64 sl_b[16], sl_r[16];                      // attacchi di alfiere e di torre dei pezzi lunghi, per il secondo passo
+  unsigned char sl_slot[64];                   // indice in sl_b/sl_r per casa (scritto solo per i pezzi lunghi)
+  int nsl = 0;
+  for (U64 t = eB | eR | eQ; t; pop_lsb_bb(t)) {
+    const int sq = get_ls1b_index(t);
+    const SliderPair sp = get_slider_pair(sq, occ);
+    const U64 b = pair_bishop(sp), r = pair_rook(sp);
+    const U64 mB = 0 - ((eB >> sq) & 1), mR = 0 - ((eR >> sq) & 1), mQ = 0 - ((eQ >> sq) & 1);
+    by_bishop |= b & mB;
+    by_rook |= r & mR;
+    by_queen |= (b | r) & mQ;
+    aa_b |= b & (mR | mQ);
+    aa_r |= r & mQ;
+    sl_b[nsl] = b;
+    sl_r[nsl] = r;
+    sl_slot[sq] = (unsigned char)nsl++;
+  }
   const U64 by_minor = by_knight | by_bishop;
   // Mappa per see_holds_q (la donna e il re non entrano in lesser[], solo qui).
   q.opp_slider = by_bishop | by_rook | by_queen;
@@ -315,16 +354,58 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
   U64 attack_to[6] = {0, 0, 0, 0, 0, 0};
   if (AttackOrder || AttackOrderQ) {
     const U64 safe = ~q.opp_att;
-    const U64 minors = td.bitboards[N + eoff] | td.bitboards[B + eoff];
-    const U64 er = td.bitboards[R + eoff], eq = td.bitboards[Q + eoff];
+    const U64 minors = eN | eB;
+    // AA2, secondo passo. Bersagli: dell'alfiere er|eq|(minors&safe), della torre eq|((minors|er)&safe), della donna
+    // (minors|er)&safe, del cavallo come l'alfiere, del pedone minors|er|eq. Le parti senza `safe` sono gia' in aa_b e
+    // aa_r; alfieri e torri al sicuro riusano i loro attacchi del primo passo; i cavalli al sicuro (0-2) sono gli
+    // unici bersagli che chiedono un calcolo nuovo. Cavalli e pedoni come insiemi (knight_fill, shift dei pedoni).
+    for (U64 t = (eB | eR) & safe; t; pop_lsb_bb(t)) {
+      const int sq = get_ls1b_index(t), k = sl_slot[sq];
+      aa_b |= sl_b[k] & (0 - ((eB >> sq) & 1));
+      aa_r |= sl_r[k];
+      aa_q |= sl_b[k] | sl_r[k];
+    }
+    for (U64 t = eN & safe; t; pop_lsb_bb(t)) {
+      const SliderPair sp = get_slider_pair(get_ls1b_index(t), occ);
+      aa_b |= pair_bishop(sp);
+      aa_r |= pair_rook(sp);
+      aa_q |= pair_bishop(sp) | pair_rook(sp);
+    }
     if (AttackOrder) {
-      for (U64 t = minors | er | eq; t; pop_lsb_bb(t)) attack_to[P] |= pawn_attacks[them][get_ls1b_index(t)];
-      for (U64 t = er | eq | (minors & safe); t; pop_lsb_bb(t)) attack_to[N] |= knight_attacks[get_ls1b_index(t)];
-      for (U64 t = er | eq | (minors & safe); t; pop_lsb_bb(t)) attack_to[B] |= get_bishop_attacks(get_ls1b_index(t), occ);
-      for (U64 t = eq | ((minors | er) & safe); t; pop_lsb_bb(t)) attack_to[R] |= get_rook_attacks(get_ls1b_index(t), occ);
+      const U64 tp = minors | eR | eQ;   // gli attacchi di un pedone nemico posto su ogni bersaglio
+      attack_to[P] = them == white ? ((tp >> 7) & not_a_file) | ((tp >> 9) & not_h_file)
+                                   : ((tp << 7) & not_h_file) | ((tp << 9) & not_a_file);
+      attack_to[N] = knight_fill(eR | eQ | (minors & safe));
+      attack_to[B] = aa_b;
+      attack_to[R] = aa_r;
     }
     if (AttackOrderQ)
-      for (U64 t = (minors | er) & safe; t; pop_lsb_bb(t)) attack_to[Q] |= get_queen_attacks(get_ls1b_index(t), occ);
+      attack_to[Q] = aa_q;
+#ifdef TRIUMV_VERIFY_AA2   // verifica: i cicli di prima (08/10/2026) devono dare le stesse mappe
+    {
+      const U64 er = eR, eq = eQ;
+      U64 old[6] = {0, 0, 0, 0, 0, 0}, ok = 0, ob = 0, orr = 0, oq = 0;
+      for (U64 t = eN; t; pop_lsb_bb(t)) ok |= knight_attacks[get_ls1b_index(t)];
+      for (U64 t = eB; t; pop_lsb_bb(t)) ob |= get_bishop_attacks(get_ls1b_index(t), occ);
+      for (U64 t = eR; t; pop_lsb_bb(t)) orr |= get_rook_attacks(get_ls1b_index(t), occ);
+      for (U64 t = eQ; t; pop_lsb_bb(t)) oq |= get_queen_attacks(get_ls1b_index(t), occ);
+      if (AttackOrder) {
+        for (U64 t = minors | er | eq; t; pop_lsb_bb(t)) old[P] |= pawn_attacks[them][get_ls1b_index(t)];
+        for (U64 t = er | eq | (minors & safe); t; pop_lsb_bb(t)) old[N] |= knight_attacks[get_ls1b_index(t)];
+        for (U64 t = er | eq | (minors & safe); t; pop_lsb_bb(t)) old[B] |= get_bishop_attacks(get_ls1b_index(t), occ);
+        for (U64 t = eq | ((minors | er) & safe); t; pop_lsb_bb(t)) old[R] |= get_rook_attacks(get_ls1b_index(t), occ);
+      }
+      if (AttackOrderQ)
+        for (U64 t = (minors | er) & safe; t; pop_lsb_bb(t)) old[Q] |= get_queen_attacks(get_ls1b_index(t), occ);
+      bool same = ok == by_knight && ob == by_bishop && orr == by_rook && oq == by_queen;
+      for (int k = P; k <= Q; k++) same = same && old[k] == attack_to[k];
+      if (!same) {
+        printf("info string AA2 SBAGLIATA: mappe d'attacco diverse\n");
+        fflush(stdout);
+        abort();
+      }
+    }
+#endif
     // AttackSafeSee 0: casa d'arrivo non attaccata da nessun pezzo nemico. 1: non attaccata da pezzi di valore minore
     // (lesser[]), e lo scambio sulla casa si controlla mossa per mossa con la SEE (sotto).
     for (int k = P; k <= Q; k++) attack_to[k] &= AttackSafeSee ? ~lesser[k] : safe;
@@ -335,6 +416,9 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
                    &c4 = *f[-4].cont_hist, &c6 = *f[-6].cont_hist;
   const PieceToRow &prow = pawn_row(td);
   const int ply = f->ply;
+  // AA2: la divisione per 1 + ply (ply < 5: il 17% delle quiete punteggiate a bench 13, ~8% a 15-16) era una idiv
+  // per mossa, perche' il divisore non e' costante; ora il reciproco del ply del nodo (stesso valore, vedi sopra).
+  const unsigned long long lp_recip = ply < LOW_PLY_SIZE ? low_ply_recip[ply] : 0;
 
   for (int i = 0; i < n; i++) {
     const int m = mv[i];
@@ -345,8 +429,14 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
     if (((checks.chk[pt] >> to) & 1) && see_holds_q(td, q, m, -75))
       s += CheckOrderBonus;
     s += unit_value[pt] * ThreatOrderMul * (int((lesser[pt] >> from) & 1) - int((lesser[pt] >> to) & 1));
-    if (ply < LOW_PLY_SIZE)
-      s += 8 * td.low_ply_hist[ply][key] / (1 + ply);
+    if (ply < LOW_PLY_SIZE) {
+      const int x = 8 * td.low_ply_hist[ply][key];
+      const int lq = (int)(((unsigned long long)(x < 0 ? -x : x) * lp_recip) >> 40);
+#ifdef TRIUMV_VERIFY_AA2
+      if ((x < 0 ? -lq : lq) != x / (1 + ply)) { printf("info string AA2 SBAGLIATA: low ply\n"); fflush(stdout); abort(); }
+#endif
+      s += x < 0 ? -lq : lq;
+    }
     if (shield >> from & 1)
       s -= KingShield;
     if (pt == N && (outpost >> to & 1))

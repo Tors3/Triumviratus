@@ -21,4 +21,22 @@ extern U64 get_bishop_attacks(int square, U64 occupancy);
 extern U64 get_rook_attacks(int square, U64 occupancy);
 extern U64 get_queen_attacks(int square, U64 occupancy);
 
+// AA1 (10/10/2026, velocita', stessi attacchi): alfiere E torre dalla stessa casa con la stessa occupazione in UNA
+// chiamata. Con DualMagic (P4, 08/10) ogni get_bishop_attacks / get_rook_attacks calcola gia' entrambi gli attacchi e
+// ne butta uno: chi chiedeva i due per la stessa casa (SEE, case di scacco, legalita' del re, minacce della rete) pagava
+// due volte lo stesso calcolo, fuori linea in magic.cpp. Contatori (bench 15 su fens30): 9,8 calcoli per nodo, ~4,4
+// doppioni. La coppia torna in un registro xmm (ABI Windows x64: __m128i nel registro di ritorno), non in memoria come
+// il get_both_attacks a puntatore di P4b (08/10, scartato). Corsia 0 = alfiere, corsia 1 = torre.
+#if defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+typedef __m128i SliderPair;
+static inline U64 pair_bishop(SliderPair v) { return (U64)_mm_cvtsi128_si64(v); }
+static inline U64 pair_rook(SliderPair v) { return (U64)_mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)); }
+#else
+struct SliderPair { U64 b, r; };
+static inline U64 pair_bishop(SliderPair v) { return v.b; }
+static inline U64 pair_rook(SliderPair v) { return v.r; }
+#endif
+extern SliderPair get_slider_pair(int square, U64 occupancy);
+
 #endif
