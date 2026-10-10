@@ -29,7 +29,17 @@ struct NodeState {
   int  quiets[TRACKED], n_quiets;
   int  tacts[TRACKED], n_tacts;
   U64  causal;                    // CausalRed: case della confutazione dell'ultima quieta fallita bassa (0 = nessuna)
+  int  expert;                    // esperto della rete per il materiale del nodo (net_phase), per i margini *Exp*
 };
+
+// Margini per esperto (10/10/2026, nostra): Consilium valuta con quattro esperti per fascia di materiale (net_phase),
+// e la fiducia nella valutazione statica non e' la stessa nei quattro. Le leve RfpExp*, FutExp*, LmrExp* spostano
+// il margine della futility inversa, quello della futility delle quiete e la riduzione LMR secondo l'esperto del nodo
+// (estensione delle correzioni per esperto, CorrPhase +3,2). Tutte a 0 = albero invariato; nella release, con i
+// parametri costanti a 0, il compilatore toglie anche il calcolo dell'esperto.
+static inline int by_expert(int e, int v0, int v1, int v2, int v3) {
+  return e == 0 ? v0 : e == 1 ? v1 : e == 2 ? v2 : v3;
+}
 
 // CausalRed (09/10/2026, idea di giugno "potatura causale", riscritta sulla ricerca attuale). Quando una nostra mossa
 // quieta fallisce bassa, la mossa dell'avversario che la confuta (il taglio beta nel figlio) dice dove sta il problema:
@@ -243,6 +253,7 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
   n.signal = corr_signal(td, f);
   n.signal_x = corr_signal_extra(td);
   n.excluded = f->excluded;
+  n.expert = net_phase(count_bits(td.occupancies[both]));
 
   hash_read(td, n.h);
   f->tt_hit = n.h.hit;
@@ -400,6 +411,7 @@ static int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
     if (AN && td.gd_rfp_pct != 100)   // AnGold: margine allargato (150% in attacco o con sacrifici, 120% in manovra)
       mult = mult * td.gd_rfp_pct / 100;
     mult -= RfpNoTTHit * !f->tt_hit;
+    mult += by_expert(n.expert, RfpExp0, RfpExp1, RfpExp2, RfpExp3);
     const int imp = RfpImproving * n.improving;
     const int margin = mult * n.depth - (imp + RfpOppWorse * n.opp_worse) * mult / 1024 +
                        std::abs(n.signal) / RfpCorrDiv;
@@ -535,7 +547,7 @@ static bool skip_move(ThreadData &td, NodeFrame *f, NodeState &n, MoveQueue &q, 
     red_depth += hist < 0 ? -q : q;
   }
   const int fut = f->static_eval + QuietFutDepth * red_depth + e_quiet_fut_alpha(td) * (f->static_eval > n.alpha) + QuietFutBase +
-                  (AN ? td.dz_fut : deep_term(td, DeepFut));
+                  (AN ? td.dz_fut : deep_term(td, DeepFut)) + by_expert(n.expert, FutExp0, FutExp1, FutExp2, FutExp3);
   if (!n.in_check && red_depth < 12 && fut <= n.alpha) {
     if (n.best <= fut && !val_decided(n.best) && !val_won(fut))
       n.best = fut;
@@ -680,6 +692,7 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
       r = gd_style == 1 ? r * 97 / 100 : gd_style == 2 ? r * 103 / 100 : r;
     if (f->tt_pv)
       r += LmrTtPvAdd;
+    r += by_expert(n.expert, LmrExp0, LmrExp1, LmrExp2, LmrExp3);
 
     const bool passer = PassedPushRed && !tact && passed_push(td, m);
     // Idea 4: cattura che cambia esperto della rete (si calcola prima della mossa).

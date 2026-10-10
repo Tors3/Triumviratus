@@ -328,6 +328,21 @@
   P(DeepHist, 0, -800, 800)              /* /1024: peso della storia nella profondita' ridotta della futility */   \
   P(DeepTtPv, 0, -2048, 2048)            /* /1024 di ply: riduzione in meno nei nodi ttPv                 */      \
   P(DeepExt, 0, -120, 120)               /* margini delle estensioni doppia e tripla della singolare      */      \
+  /* 10/10/2026, margini per esperto della rete (nostra; esperto = fascia di pezzi <=9, 10-15, 16-23, >=24, come      \
+     net_phase): si sommano al moltiplicatore della futility inversa (RfpExp, base RfpMultBase 50), al margine della  \
+     futility delle quiete (FutExp) e alla riduzione LMR in 1024-esimi di ply (LmrExp). Tutte a 0 = albero invariato. */ \
+  P(RfpExp0, 0, -40, 40)                 /* esperto 0: <= 9 pezzi  */                                     \
+  P(RfpExp1, 0, -40, 40)                 /* esperto 1: 10-15 pezzi */                                     \
+  P(RfpExp2, 0, -40, 40)                 /* esperto 2: 16-23 pezzi */                                     \
+  P(RfpExp3, 0, -40, 40)                 /* esperto 3: >= 24 pezzi */                                     \
+  P(FutExp0, 0, -200, 200)                                                                                \
+  P(FutExp1, 0, -200, 200)                                                                                \
+  P(FutExp2, 0, -200, 200)                                                                                \
+  P(FutExp3, 0, -200, 200)                                                                                \
+  P(LmrExp0, 0, -1536, 1536)                                                                              \
+  P(LmrExp1, 0, -1536, 1536)                                                                              \
+  P(LmrExp2, 0, -1536, 1536)                                                                              \
+  P(LmrExp3, 0, -1536, 1536)                                                                              \
   P(Contempt, 0, 0, 200)                 /* idea 3: patta = -c per il colore di radice (Elo di lista) */  \
   P(PhaseEdgeNoFut, 0, 0, 1)             /* idea 4: la cattura che cambia esperto della rete non si pota e non si riduce di piu' */ \
   P(QsPasserPush, 0, 0, 1)               /* idea 7: in quiescenza la spinta in 7a di un passato e' tattica */ \
