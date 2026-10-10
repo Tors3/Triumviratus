@@ -50,7 +50,7 @@ margin and the number of games; the full context of each is in [`DEVELOPMENT_8.0
 
 ## Summary
 
-Of 44 entries, **8 are new**, **20 are known ideas revisited in a different form**, and **16 were done elsewhere
+Of 46 entries, **9 are new**, **21 are known ideas revisited in a different form**, and **16 were done elsewhere
 first**. Three of the new ones are adopted and measured as gains, and together they form the core of 8.0: a network
 divided by game phase, an input block that the king-relative block cannot express, and corrections that follow the
 experts of the network.
@@ -59,21 +59,23 @@ experts of the network.
 |---|---|---|---|---|
 | Consilium: four experts by material on the king-relative input block | New | 8.0 | 8.0 against 7.0 **+27.3 ± 8.3** (15+0.15, 2,000 games), of which about +15 from the network with its tuning | adopted, the 8.0 network |
 | `PassedPawns` input block (96 inputs) | New | 6.0 | **+6.96 ± 6.56** (15+0.15, 2,596), network alone | in every network since 6.0 |
+| Passed-pawn blocks with relations, grafted on Consilium: `PassedRel` (rows added to `PassedPawns`) and `PassedState` (replaces it, one row per passer in one of 100 states) | New | 8.0 dev | `PassedRel` +1.8 ± 4.1 (20+0.2 endgames, 2,484); `PassedState` −2.1 ± 3.7 trained alone, +3.3 ± 5.0 with the layers after the accumulator (60k nodes, endgames) | under test; engine cost 2 to 3% of cycles per node |
 | Correction history per expert (`CorrPhase`) | New in its form | 8.0 | **+3.2 ± 3.8** (12+0.12, 8,634) | adopted |
-| Knight outposts in move ordering (`OutpostOrder`) | New | 8.0 | +0.21 ± 3.93 (10+0.1, 8,244) at a hand-set value | in the running SPSA |
-| Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone | in the running SPSA |
+| Knight outposts in move ordering (`OutpostOrder`) | New | 8.0 | +0.21 ± 3.93 (10+0.1, 8,244) at a hand-set value | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
+| Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
 | Expert-boundary ideas (PhaseEdge) | New | 8.0 | from +1.3 ± 2.3 (24,292) to −14.1 | closed |
 | Correction from the opponent's two last moves (`CorrContOppW`) | New | 8.0 | −4.8 ± 8.7 (1,806); real signal, correlation +0.24 | off, in a tuning queue |
 | `Mobility` input block | New as an idea | 8.0 dev | cost only: −16.2% NPS | archived, never trained |
 | Surprise rule (`TmSurpriseScale`) | Revisited | 8.0 | **+6.23 ± 6.75** at 40+0.4 (2,174); neutral at 16+0.16 | adopted |
 | Guard on the low-depth hash-move extension (`LdseMax`) | Revisited | 8.0 | **+6.25 ± 7.89** (15+0.15, 2,112) | adopted |
 | Passed-pawn pushes in endgames reduced less, never pruned (`PassedPushRed`) | Revisited | 8.0 | +4.4 ± 6.8 on an endgame book | adopted |
-| Passed-pawn push bonus in move ordering (`PassedPush`) | Revisited | 8.0 | not measured alone | in the running SPSA |
+| Passed-pawn push bonus in move ordering (`PassedPush`) | Revisited | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
 | Neuron study of the first layer, per expert | Revisited | 8.0 | no dead or duplicate neurons; experts specialise by intensity | study |
 | Universal executable from one unit per source file | Revisited | 8.0 | −0.28% / −0.17% cycles per node against the separate build | adopted |
 | Refresh cache of the pawn input blocks keyed by the pawn bitboards | Revisited | 7.0 | +2.8% NPS (AVX2), identical tree | adopted |
 | `tdperft` and `nnperft` | Revisited | 8.0 | 0 errors on 482 M nodes and on the Chess960 suite | permanent tools |
 | Zero-initialised graft of a new block on a finished network, base frozen | Revisited | 6.0 | `PassedPawns` +7 Elo in about 4 epochs | in use |
+| Graft blocks chosen from the residual between static evaluation and deep search (`KingFiles`, `Space`, `LockedPawns` and two reduced forms) | Revisited | 8.0 dev | −7 to −19 Elo (500 to 1,100 games each) | removed |
 | Analysis mode compiled as a second copy of the search | Revisited | 8.0 | more test positions solved; nothing changes in games | adopted |
 | Fine-tuning one expert at a time | Revisited | 8.0 | +0.7 ± 6.1 (15+0.15, 3,302) | not kept |
 | Material-key correction table | Elsewhere first (Caissa, Stockfish) | 6.0 | +10.43 ± 5.57 at 10+0.1, −6.89 ± 9.01 at 20+0.2 | removed in 7.0 |
@@ -92,9 +94,9 @@ experts of the network.
 | `PawnPair` input block | Elsewhere first (Pawnocchio) | 6.0 | +18.27 ± 9.94 (1,104), with self-play data | in every network since 6.0 |
 | Less time when behind on the clock (`TmBehindMul`) | Elsewhere first (Stockfish after 19) | 8.0 | **+5.23 ± 4.72** at 6+0.06 (6,378) | adopted |
 | Low-depth hash-move extension (LDSE) | Elsewhere first (Reckless, Stormphrax) | 8.0 | **+4.5 ± 3.3** (10+0.1, 11,604) | adopted |
-| King-shield malus in move ordering (`KingShield`) | Elsewhere first (inspired by Reckless) | 6.0, 8.0 | +3.53 ± 3.42 (6.0); −1.57 ± 4.32 (8.0) | in the running SPSA |
-| Attack from a safe square in move ordering (`AttackOrder`) | Elsewhere first (Reckless), our target rule | 8.0 | +0.39 ± 5.42 with the outposts (4,428) | in the running SPSA |
-| Queen promotion in move ordering (`PromoOrder`) | Elsewhere first (Reckless) | 8.0 | not measured alone | in the running SPSA |
+| King-shield malus in move ordering (`KingShield`) | Elsewhere first (inspired by Reckless) | 6.0, 8.0 | +3.53 ± 3.42 (6.0); −1.57 ± 4.32 (8.0) | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
+| Attack from a safe square in move ordering (`AttackOrder`) | Elsewhere first (Reckless), our target rule | 8.0 | +0.39 ± 5.42 with the outposts (4,428) | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
+| Queen promotion in move ordering (`PromoOrder`) | Elsewhere first (Reckless) | 8.0 | not measured alone | adopted with the SPSA PR4 vector (+3.4 ± 3.9, about 8,100 games) |
 | Advanced pawn pushes exempt from pruning (`PasserGuard`, `PasserLmr`) | Elsewhere first (Stockfish 8) | 7.0 dev | −9.04 ± 7.49; +0.30 ± 2.56 (22,000) | closed |
 | Fifty-move band in the hash key and in the corrections | Elsewhere first (Reckless) | 8.0 | `CorrFiftyStep` +1.25 ± 2.87 | closed |
 | Deterministic PGO training at fixed nodes | Elsewhere first (Stockfish) | 8.0 | repeatable speed measurements | adopted |
@@ -152,6 +154,35 @@ file ("passed pawns by file?").
 
 **Category.** New: to our knowledge the first passed-pawn input block implemented and measured.
 
+**Follow-up in 8.0: passed pawns with their relations.** The block above encodes only where each passed pawn stands,
+on the assumption that the first layer can combine it with the other inputs. On 9 October a regression of the
+difference between Consilium's static evaluation and the engine's deep search, on 3,888 positions, found that the
+network still undervalues some passed pawns in endgames: those outside the enemy king's square and connected ones.
+Two blocks were written for this and grafted on the finished Consilium with the rest of the network frozen
+([`docs/moe_experimental_grafts.md`](docs/moe_experimental_grafts.md), [`DEVELOPMENT_8.0.md`](DEVELOPMENT_8.0.md)
+§37–38):
+
+- **`PassedRel`** adds, for each passed pawn, a second row with three relations: outside the enemy king's square,
+  connected to another passed pawn, free path to promotion. It is cheap to train and showed a small positive signal in
+  endgames (+1.8 ± 4.1 at 20+0.2 on endgame openings, 2,484 games), but each passed pawn now costs two rows, and the
+  relation that follows the enemy king changes on many king moves: +1.5% cycles per node in the middlegame and +2.9%
+  in endgames.
+- **`PassedState`** replaces the `PassedPawns` rows instead of adding to them: one row per passed pawn, in one of 100
+  states (what stands on the square in front of it, protection by a pawn, a connected passed pawn, the opponent's
+  material class, and in pawn endgames whether the enemy king can catch it). At the start every state equals the old
+  row, so the network evaluates exactly as before; training moves the states apart. Trained alone it did not gain
+  (−2.1 ± 3.7 at 60,000 nodes per move on endgame openings, 4,320 games). When the layers after the accumulator were
+  also trained, with the first layer still frozen, it gained +3.3 ± 5.0 (2,190 games) at fixed nodes; the game test at
+  25+0.25 on endgame openings, which pays its speed cost of about 2.0% / 2.5% cycles per node, is running.
+
+Two lessons follow. The relations of passed pawns are mostly already available to the network through the square
+encoding and the pairwise product of the first layer, as the 6.0 design assumed: what remains is worth a few Elo in
+endgames, close to the cost of computing it. And when a new block carries information the network did not have, the
+frozen layers after the accumulator may be unable to use it: the gain of `PassedState` appeared only when those layers
+were allowed to adapt, while the block itself hardly changed.
+
+**Category.** New, as an extension of the `PassedPawns` block (no engine with passed-pawn inputs was found).
+
 ## 3. Correction history per expert (CorrPhase)
 
 **What it is.** The keys of the pawn and minor-piece correction tables are mixed with the material band, that is with
@@ -173,10 +204,11 @@ expert of the network.
 
 ## 4. Move ordering with chess knowledge
 
-Written on 8 October 2026, off by default, now in an SPSA of 46 search parameters at 20+0.2. At hand-set values no
-term moves the result, because an ordering bonus acts together with the histories and the thresholds that separate
-good quiet moves from bad ones ([`DEVELOPMENT_8.0.md`](DEVELOPMENT_8.0.md) §34). The SPSA will decide their values;
-an SPRT of the final vector against the defaults will decide whether they stay.
+Written on 8 October 2026, off by default, then tuned in an SPSA of 46 search parameters at 20+0.2. At hand-set
+values no term moves the result, because an ordering bonus acts together with the histories and the thresholds that
+separate good quiet moves from bad ones ([`DEVELOPMENT_8.0.md`](DEVELOPMENT_8.0.md) §34). The SPSA vector, with all
+these terms on, was checked against the defaults (+3.4 ± 3.9 over about 8,100 games) and baked on 9–10 October
+(§38); the terms are now active in games.
 
 - **Knight outposts (`OutpostOrder`, `OutpostSafe`), the author's idea.** A bonus for a knight move to a square on
   ranks 4-6 defended by an own pawn and out of reach of every enemy pawn, now and later; with `OutpostSafe` also
@@ -281,7 +313,12 @@ These entries take a known idea and change its form, its scale or its use. Those
 - **Zero-initialised graft with the base frozen, 6.0.** A new block is added at zero to a finished network (identical
   output at the start, checked with the bench) and trained alone: enough for `PassedPawns` (+7 Elo in about 4 epochs)
   and a cheap way to screen input features. Function-preserving initialisation is known in machine learning; as a
-  screening method for NNUE features no description was found.
+  screening method for NNUE features no description was found. In 8.0 it was used to screen six blocks chosen from the
+  residual between static evaluation and deep search (passed-pawn relations, open files next to the king, space,
+  blocked pawns): only the passed-pawn blocks showed a signal, and the others, which describe what the king-relative
+  inputs already contain, lost 7 to 19 Elo and were removed (§2). Two limits of the method appeared: a block that
+  starts from existing rows instead of zero needs a lower learning rate (at 1e-2 the training loss first doubled), and
+  a frozen network can only use new information in the way its later layers already read the accumulator.
 - **Analysis mode, 8.0.** With `UCI_AnalyseMode` or `go infinite` the search prunes and reduces less at depth; the
   search is compiled twice, a game copy with every analysis term a compile-time constant and an analysis copy, so
   games are unaffected.
