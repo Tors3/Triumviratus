@@ -84,6 +84,12 @@ void PawnGrafts::append_active_indices(Color perspective, const NnBoard& pos, co
         active.push_back(FoldOffset + make_index(perspective, ksq, S.graftList[src][i]));
 }
 
+// O1 (_wip pst_opt): voci di PassedState da capo per il refresh di uno stato senza lista del recupero (radice di uno
+// stato di appoggio: eval, nnueverify). Fuori linea perche' qui NnBoard e' completo.
+int PawnGrafts::pst_entries_scratch(const NnBoard& pos, std::uint16_t* buf) {
+    return PassedState::entries_of(pos.bbs(), pos.occ(), buf);
+}
+
 #ifdef TRIUMV_VERIFY_GRAFT
 // -DTRIUMV_VERIFY_GRAFT: confronto come insiemi e uscita al primo disaccordo (verify_v1_fused, R1).
 namespace {

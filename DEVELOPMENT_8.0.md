@@ -1533,7 +1533,11 @@ value stays a parameter of the closing SPSA runs. Bench **222811**.
 
 **Speed since the public executable of 8 October.** That executable was the universal build with one unit per
 variant, which cost about 1% of cycles per node against a separate build (section 35). Today's source is built with
-one unit per file, the SEE patch and the linker flag of section 36: about 1.5% fewer cycles per node in total. Two
+one unit per file, the SEE patch and the linker flag of section 36, worth about 1.5% of cycles per node on the same
+search. Measured against the public executable itself (xperf, four rounds, two identical builds within 0.14%), today's
+build runs 0.9% fewer cycles per node in the middlegame and 0.1% more in endgames: the two searches differ, and the
+ordering terms switched on by PR4 and the causal reduction add about 3.7% instructions per node, which the build
+recovers. Two
 changes for the PassedRel block (an incremental table of row differences, and the passed pawns computed once per
 move for the original PassedPawns rows) gave nothing measurable on deterministic profile-guided builds. The engine
 code of the graft blocks, even unused, cost 1.4% of cycles per node in endgames; a compile switch,
@@ -1547,12 +1551,21 @@ one of 100 states (what stands on the square in front of it, whether it is prote
 connected to another passed pawn, the opponent's material class, and in pawn endgames whether the enemy king is
 outside its square), so a pawn that advances costs what it cost before. At the start every state equals the
 PassedPawns row and the network evaluates exactly as Consilium (bench unchanged, checked with a network exported by
-the new `exportpst` command). In the engine it is verified with `nnperft` against a full refresh. Measured on
-deterministic profile-guided builds it costs +1.9% of cycles per node in the middlegame and +2.8% in endgames, above
-the target of 1–1.5%; the likely reason is that its rows sit outside the pawn-structure cache and outside the
-locality-ordered part of the weight table, which can be improved if the block gains enough Elo. It is being trained
-on the frozen Consilium (60 epochs, positions with at least one passed pawn): the training loss went above the
-starting value early, with the large learning rate, and fell below it at epoch 40 as the rate decreased.
+the new `exportpst` command). In the engine it is verified with `nnperft` against a full refresh, and its indices
+against the trainer's reference on 57,295 positions (a new `pstidx` command; no difference). Two exact changes
+reduce its work, its rows kept in the pawn-structure cache and a leaner per-move update, but they gain only 0.2%: on
+deterministic profile-guided builds the block costs about 2.0% of cycles per node in the middlegame and 2.5% in
+endgames, above the target of 1–1.5%. An analysis of the code (no measurement) attributes most of it to the extra rows
+when a state changes (a king or rook on the square in front of a passed pawn, captures that change the material
+class) and to the per-move update; reaching the target would need a different block shape and new training.
+
+It was trained on the frozen Consilium in three steps. With the block alone at a learning rate of 1e-2 (60 epochs,
+positions with at least one passed pawn) the training loss first doubled, then fell below the starting value at
+epoch 40 and ended 11% lower, yet at 60,000 nodes per move on endgame openings the network scored −2.1 ± 3.7 Elo
+over 4,320 games. A continuation at 1e-3 left the loss unchanged. Unfreezing the layers after the accumulator for 15
+epochs at 2e-5 (the block itself barely moved) gave +3.3 ± 5.0 over 2,190 games at fixed nodes: the information is
+there, but the frozen layers could not use it. The deciding test, at 25+0.25 on endgame openings so that the speed
+cost is paid, is running. Training material: `04_consilium/graft_passedstate` in the training repository.
 
 ## Appendix: every search idea tested since the restructured search
 

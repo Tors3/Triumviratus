@@ -404,6 +404,23 @@ class PawnGrafts {
         append_active_indices(perspective, pos, st, active);
     }
 
+    // O1 (_wip pst_opt, 10/10/2026): le voci di PassedState dello stato st per il refresh (cache "pe" estesa,
+    // update_accumulator_refresh_cache): quelle del recupero (NnStack::graftList) se ci sono, in l senza copia;
+    // altrimenti da capo nella posizione, in buf (l = buf). Restituisce il numero (<= 16).
+    static inline int
+    pst_entries(const NnBoard& pos, const NnState& st, std::uint16_t* buf, const std::uint16_t*& l) {
+        const NnStack& S   = nn_stack_of(st);
+        const int      src = S.graftSrc[st.idx];
+        if (src != 255)
+        {
+            l = S.graftList[src];
+            return S.graftN[src];
+        }
+        l = buf;
+        return pst_entries_scratch(pos, buf);
+    }
+    static int pst_entries_scratch(const NnBoard& pos, std::uint16_t* buf);
+
     // (LockedPawns, l'ultimo blocco sulla strada dei pedoni con Space e Space24, tolto il 10/10/2026: niente piu'
     // append_pawn_*, la cache "pe" del refresh torna a tenere solo PawnPair e PassedPawns.)
 

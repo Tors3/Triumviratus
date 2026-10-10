@@ -805,6 +805,25 @@ void uci_loop()
             fflush(stdout);
         }
 
+        // DIAGNOSI (10/10/2026): "pstidx" -> righe di PassedState della posizione per le due prospettive, crescenti,
+        // nel formato del riferimento del trainer (_wip/passer_study/kit/verify_passedstate.py, confronto degli indici).
+        else if (strncmp(input, "pstidx", 6) == 0)
+        {
+            unsigned long long bb[12];
+            for (int i = 0; i < 12; i++)
+                bb[i] = bitboards[i];
+            for (int p = 0; p < 2; p++)
+            {
+                unsigned  idx[16];
+                const int n = nn_pst_indices(bb, occupancies[both], p, idx);
+                printf("pstidx %d", p);
+                for (int i = 0; i < n; i++)
+                    printf(" %u", idx[i]);
+                printf("\n");
+            }
+            fflush(stdout);
+        }
+
         // DIAGNOSTIC: "eval" -> static NNUE eval of the current position (cp,
         // side-to-move relative), no search => byte-identical for cross-checks.
         else if (strncmp(input, "eval", 4) == 0)

@@ -41,6 +41,7 @@
 #include "nnue/bitboard.h"
 #include "nnue/memory.h"          // LargePagePtr / make_unique_large_page (pesi rete su large pages)
 #include "nnue/nn_board.h"         // la scacchiera del motore vista dalla rete (niente piu' Position)
+#include "nnue/nnue/features/passed_state.h"  // pstidx (diagnosi degli indici di PassedState)
 #include "nnue/types.h"
 #include "nnue/evaluate.h"         // EvalFileDefaultName (nome del net embeddato)
 #include "nnue/nnue/network.h"
@@ -414,6 +415,17 @@ int nn_export_graft(unsigned mask, const char* path) {
 }
 
 int nn_export_pst(const char* path) { return NET_REF.save_pst(std::string(path)) ? 1 : 0; }
+
+int nn_pst_indices(const unsigned long long* bb12, unsigned long long occ, int persp, unsigned* out) {
+    using Eval::NNUE::Features::PassedState;
+    std::uint16_t e[16];
+    const int     n   = PassedState::entries_of(bb12, occ, e);
+    const int     ksq = int(lsb(Bitboard(bb12[5 + 6 * persp])));
+    for (int i = 0; i < n; i++)
+        out[i] = unsigned(PassedState::make_index(Color(persp), ksq, e[i]));
+    std::sort(out, out + n);
+    return n;
+}
 
 int nn_graft_entries(unsigned mask, const unsigned long long* bb12, unsigned long long occ, unsigned short* out) {
     return Eval::NNUE::Features::PawnGrafts::entries_of(mask, bb12, occ, reinterpret_cast<std::uint16_t*>(out));

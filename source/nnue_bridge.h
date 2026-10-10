@@ -39,6 +39,9 @@ int nn_export_graft(unsigned mask, const char* path);
 // PassedState di partenza (10/10/2026, "exportpst <file>"): stati = riga v1, v1 a zero; solo da una rete senza blocchi.
 int nn_export_pst(const char* path);
 int nn_graft_entries(unsigned mask, const unsigned long long* bb12, unsigned long long occ, unsigned short* out);
+// Diagnosi (10/10/2026, "pstidx"): righe di PassedState (senza offset del blocco, crescenti) della posizione per la
+// prospettiva persp (0 bianco, 1 nero): il confronto con il riferimento del trainer (verify_passedstate.py).
+int nn_pst_indices(const unsigned long long* bb12, unsigned long long occ, int persp, unsigned* out);
 
 // Reload the network at runtime (UCI option "EvalFile"). Safe to call when no
 // search is running. Returns 1 on success, 0 if the path could not be loaded.

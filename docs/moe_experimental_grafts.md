@@ -237,3 +237,13 @@ are queued on the training machine.
   score, converted to the scale of the data (the frozen base stays consistent with its labels, λ stays 0.75). The tools
   are written (`04_consilium/residual_labels`).
 * The engine mechanism and its verification tools stay: any future pawn-structure block can use them.
+
+## 8. Follow-up: PassedState (10 October)
+
+The study of section 7 produced PassedState (PassedPawns v3), a block that replaces the PassedPawns rows with one row
+per passed pawn in one of 100 states. Its engine implementation, the index check against the trainer, the three
+training runs and their results are in [DEVELOPMENT_8.0.md, section 38](../DEVELOPMENT_8.0.md); the training material
+is in `04_consilium/graft_passedstate` of the training repository. In short: −2.1 ± 3.7 Elo at fixed nodes with the
+block trained alone, +3.3 ± 5.0 once the layers after the accumulator were unfrozen, an engine cost of about 2.0% /
+2.5% of cycles per node (middlegame / endgames), and a game test at 25+0.25 on endgame openings running. The engine
+can now be built without any graft code (`-DTRIUMV_NO_GRAFTS`); the release is built that way unless a block passes.

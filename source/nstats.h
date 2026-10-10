@@ -45,13 +45,18 @@ enum Key {
     PREL_V1_SKIP,   // R1: aggiornamenti (incrementali e ibridi, una chiamata per percorso) con evento di pedone in cui
                     // la v1 non ricalcola i passati (righe v1 dalla diff di PassedRel)
     PREL_DELTA,     // R3: righe delta usate (ognuna sostituisce due righe di PassedRel), per prospettiva
+    // _wip pst_opt (10/10/2026, O1): con PassedState REF_PAWN_HIT conta gli hit con la lista uguale (righe del blocco
+    // gratis); questi i refresh con pedoni, orientazione ed epoca uguali ma lista diversa (miss per la sola lista).
+    REF_PST_LISTMISS,
+    REF_PST_VERIFIED_HIT,  // -DTRIUMV_VERIFY_PST_PE: hit della cache "pe" con PassedState controllati da zero
     NKEYS
 };
 inline const char* const kName[NKEYS] = {"EVAL", "INC", "INC_BOTH", "REFRESH", "HYBRID", "COMBINED", "PSQ_ROWS",
                                          "THR_ROWS", "HYB_OLD_ROWS", "HYB_NEW_ROWS", "REF_ROWS", "GRAFT_ST",
                                          "GRAFT_PASS", "GRAFT_REBUILD", "GRAFT_RESTATE", "GRAFT_CHG", "GRAFT_ROWS",
                                          "GRAFT_REF_ROWS", "GRAFT_ROWS_INC", "GRAFT_ROWS_HYB", "GRAFT_ROWS_REF",
-                                         "REF_PAWN_HIT", "REF_PAWN_ROWS", "PREL_V1_SKIP", "PREL_DELTA"};
+                                         "REF_PAWN_HIT", "REF_PAWN_ROWS", "PREL_V1_SKIP", "PREL_DELTA",
+                                         "REF_PST_LISTMISS", "REF_PST_VERIFIED_HIT"};
 inline std::uint64_t c[NKEYS];
 inline void dump() {
     const char* f = std::getenv("NSTATS_FILE");

@@ -20,6 +20,7 @@
 
 #include <cassert>
 #include <new>
+#include <cstring>       // O1 (_wip pst_opt): lista di PassedState nella cache "pe" (memcmp, memcpy)
 #include <type_traits>   // std::true_type / false_type: tile con o senza PSQT in apply_combined
 // ADOTTATE 08/10/2026 sera (xperf 6 giri, docs/audit_8.0/X4_VELOCITA_PROFONDA.md): OLDWB + BIASBASE insieme -1,06%
 // cicli/nodo in mediogioco (rumore A/A +-0,26), -0,96% nei finali (+-0,42). Accese di default; -DTRIUMV_NO_SPEED_X4
@@ -42,6 +43,10 @@
     #include <cstdio>    // verifiche X2: messaggio e abort al primo disaccordo
     #include <cstdlib>
     #include <cstring>
+#endif
+#if defined(TRIUMV_VERIFY_PST_PE)
+    #include <cstdio>    // O1 (_wip pst_opt): verifica della cache "pe" con PassedState, abort al primo disaccordo
+    #include <cstdlib>
 #endif
 
 #include "../../profile.h"
@@ -1145,6 +1150,51 @@ void vg_check_acc(const char*               where,
 }
 #endif
 
+#ifdef TRIUMV_VERIFY_PST_PE
+// O1 (_wip pst_opt, 10/10/2026): la somma della entry "pe" (hit o miss) ricalcolata da zero, scalare, dai riferimenti
+// della posizione: PawnPair, PassedPawns v1 (se accesa) e PassedState (PawnGraftSet::append_active_indices, voci da
+// capo con entries_of, non quelle del recupero). Un hit con una chiave che non basta, o righe sbagliate nel miss,
+// danno una somma diversa: messaggio e abort. Serve perche' nnperft confronta solo l'accumulatore finale, e il suo
+// refresh di confronto passa dalla stessa cache "pe" del thread: un hit sbagliato potrebbe darlo a tutti e due.
+[[noreturn]] void pe_fail(const char* what, Color perspective, int ksq, bool hit) {
+    std::fprintf(stderr, "[PST_PE] %s della entry pe diverso dal riferimento: lato %d re %d %s\n", what,
+                 int(perspective), ksq, hit ? "HIT" : "miss");
+    std::fflush(stderr);
+    std::abort();
+}
+void pe_verify_pst(Color                     perspective,
+                   const FeatureTransformer& ft,
+                   const NnBoard&            pos,
+                   const std::int16_t*       peAcc,
+                   const std::int32_t*       pePsqt,
+                   bool                      hit) {
+    constexpr IndexType              Dimensions = FeatureTransformer::OutputDimensions;
+    static thread_local std::int16_t acc[Dimensions];
+    std::int32_t                     psqt[PSQTBuckets] = {};
+    std::memset(acc, 0, sizeof(acc));
+    ThreatFeatureSet::IndexList ref;
+    PawnFeatureSet::append_active_indices(perspective, pos, ref);
+    if (!PawnGraftSet::v1_off())
+        PassedFeatureSet::append_active_indices(perspective, pos, ref);
+    PawnGraftSet::append_active_indices(perspective, pos, ref);
+    for (int i = 0; i < ref.ssize(); ++i)
+    {
+        const usize idx = usize(ref[i]);
+        for (IndexType j = 0; j < Dimensions; ++j)
+            acc[j] = std::int16_t(std::uint16_t(acc[j])
+                                  + std::uint16_t(std::int16_t(ft.threatWeights[idx * Dimensions + j])));
+        for (usize k = 0; k < PSQTBuckets; ++k)
+            psqt[k] = std::int32_t(std::uint32_t(psqt[k]) + std::uint32_t(ft.threatPsqtWeights[idx * PSQTBuckets + k]));
+    }
+    if (std::memcmp(acc, peAcc, sizeof(acc)) != 0)
+        pe_fail("accumulatore", perspective, pos.king(perspective), hit);
+    if (std::memcmp(psqt, pePsqt, sizeof(psqt)) != 0)
+        pe_fail("PSQT", perspective, pos.king(perspective), hit);
+    if (hit)
+        NSTAT(REF_PST_VERIFIED_HIT);
+}
+#endif
+
 // ============================================================================
 //  update_accumulator_hybrid — porting di Stockfish db98633b (26/07/2026)
 //
@@ -1604,6 +1654,10 @@ void update_accumulator_refresh_cache(Color                     perspective,
         Bitboard wp = ~Bitboard(0), bp = ~Bitboard(0);  // stato iniziale impossibile => miss
         int      orient = -1;
         unsigned epoch  = ~0u;  // nn_net_epoch della rete con cui la somma e' stata fatta (_wip graft_space_locked)
+        // O1 (_wip pst_opt, 10/10/2026): con PassedState la somma contiene anche le sue righe, e la chiave anche la
+        // lista delle sue voci (scritta solo con PassedState; con le altre reti non si legge). Sta nella prima linea.
+        std::uint8_t  pstN = 0;
+        std::uint16_t pst[NN_GRAFT_MAX];
         alignas(64) std::int16_t acc[FeatureTransformer::OutputDimensions];
         alignas(64) std::int32_t psqt[PSQTBuckets];
     };
@@ -1619,7 +1673,8 @@ void update_accumulator_refresh_cache(Color                     perspective,
 // ✅ 25/09/2026 — RIACCESA anche su AVX-512 (stessa misura dell'ibrido, sopra): -1,41%
 // istruzioni/nodo, branch miss e miss L3 invariati. -DTRIUMV_NO_PAWN_CACHE_AVX512 la rispegne.
 #if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && (!defined(USE_AVX512) || !defined(TRIUMV_NO_PAWN_CACHE_AVX512))
-    const bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient) & (pe.epoch == nn_net_epoch);
+    #define TRIUMV_PE_CACHE_ON
+    bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient) & (pe.epoch == nn_net_epoch);
 #else
     // Misurato 3/08/2026, interleaved, 60 posizioni depth 19, nodi identici:
     //   AVX2    +1,37%  (40/60 posizioni, test del segno p≈0,009)  -> ATTIVA
@@ -1634,10 +1689,36 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
+    // O1 (_wip pst_opt, 10/10/2026; docs/audit_8.0/PASSEDSTATE_COSTO.md §2, R-pe): le righe di PassedState dentro la
+    // cache "pe". Dipendono dalla prospettiva e dal re solo attraverso l'orientazione (PassedState::make_index ->
+    // PassedPawns::make_index), gia' nella chiave; il resto e' la lista delle voci (passati, stop, prot, conn, mu), che
+    // entra nella chiave PER INTERO: hit = stessi pedoni, orientazione ed epoca della rete E stessa lista (numero e
+    // voci, confronto esatto, nessun hash). Le voci sono ordinate e uniche per (colore, casa): stessa lista = stesse
+    // righe. Nel miss le righe vanno dopo nThreat, nella somma che si scrive nella entry; nell'hit non si enumerano ne'
+    // si sommano. Somme intere modulo 2^16 / 2^32: l'ordine non conta, valutazione identica. Le voci sono quelle del
+    // recupero (NnStack::graftList) o, senza (radice di uno stato di appoggio), quelle da capo.
+    // -DTRIUMV_VERIFY_PST_PE ricalcola la somma della entry a ogni refresh con PassedState (pe_verify_pst).
+    const bool           pstOn = (nn_graft_mask & PawnGraftSet::PASSED_STATE) != 0;
+    std::uint16_t        pstBuf[NN_GRAFT_MAX];
+    const std::uint16_t* pstL = pstBuf;
+    int                  pstN = 0;
+    if (pstOn)
+    {
+        pstN = PawnGraftSet::pst_entries(pos, state, pstBuf, pstL);
+#ifdef TRIUMV_PE_CACHE_ON
+        const bool pstSame =
+          pe.pstN == pstN && std::memcmp(pe.pst, pstL, usize(pstN) * sizeof(std::uint16_t)) == 0;
+    #ifdef TRIUMV_NSTATS
+        if (pawnHit && !pstSame)
+            NSTAT(REF_PST_LISTMISS);
+    #endif
+        pawnHit = pawnHit && pstSame;
+#endif
+    }
     // Blocco da innesto (09/10/2026): PassedRel con le minacce, fuori dalla cache dei blocchi pedoni (dipende anche dai
     // re e dall'occupazione). Le voci sono quelle gia' calcolate dal recupero per questo stato. (Space e LockedPawns,
     // che stavano nella cache dei pedoni, tolti il 10/10/2026 con KingFiles e KingFilesQ.)
-    if (nn_graft_mask & PawnGraftSet::LISTS)
+    else if (nn_graft_mask & PawnGraftSet::LISTS)
     {
 #ifdef TRIUMV_NSTATS
         const int g0 = active.ssize();
@@ -1653,6 +1734,15 @@ void update_accumulator_refresh_cache(Color                     perspective,
         PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
         if (!PawnGraftSet::v1_off())  // PassedState con la v1 a zero: righe nulle, non si sommano
             PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
+        if (pstOn)  // O1: righe di PassedState nella somma della entry, lista nella chiave
+        {
+            constexpr IndexType base = PawnGraftSet::FoldOffset + PawnGraftSet::Offset[6];
+            for (int i = 0; i < pstN; ++i)
+                active.push_back(base + Features::PassedState::make_index(perspective, ksq, pstL[i]));
+            pe.pstN = std::uint8_t(pstN);
+            std::memcpy(pe.pst, pstL, usize(pstN) * sizeof(std::uint16_t));
+            NSTATV(GRAFT_REF_ROWS, pstN);
+        }
         pe.wp = wpBB, pe.bp = bpBB, pe.orient = orient, pe.epoch = nn_net_epoch;
         NSTATV(REF_PAWN_ROWS, active.ssize() - nThreat);
     }
@@ -1845,6 +1935,10 @@ void update_accumulator_refresh_cache(Color                     perspective,
     #if defined(TRIUMV_VG_VERIFY_ANY)
     vg_check_entry("refresh, entry", perspective, featureTransformer, entry, ksq, psqPhase);
     vg_check_acc("refresh", perspective, featureTransformer, pos, accumulator);
+    #endif
+    #ifdef TRIUMV_VERIFY_PST_PE
+    if (pstOn)
+        pe_verify_pst(perspective, featureTransformer, pos, pe.acc, pe.psqt, pawnHit);
     #endif
 
 #else
