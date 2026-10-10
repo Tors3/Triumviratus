@@ -125,15 +125,6 @@
     <ClCompile Include="nnue\nnue\features\passed_pawns.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="nnue\nnue\features\passed_rel.cpp">
-      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
-    </ClCompile>
-    <ClCompile Include="nnue\nnue\features\pawn_grafts.cpp">
-      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
-    </ClCompile>
-    <ClCompile Include="nnue\nnue\features\passed_state.cpp">
-      <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
-    </ClCompile>
     <ClCompile Include="nnue\nnue\features\half_ka_v2_hm.cpp">
       <ObjectFileName>$(IntDir)nnue\nnue\features\</ObjectFileName>
     </ClCompile>

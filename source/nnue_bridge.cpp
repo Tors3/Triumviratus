@@ -41,7 +41,6 @@
 #include "nnue/bitboard.h"
 #include "nnue/memory.h"          // LargePagePtr / make_unique_large_page (pesi rete su large pages)
 #include "nnue/nn_board.h"         // la scacchiera del motore vista dalla rete (niente piu' Position)
-#include "nnue/nnue/features/passed_state.h"  // pstidx (diagnosi degli indici di PassedState)
 #include "nnue/types.h"
 #include "nnue/evaluate.h"         // EvalFileDefaultName (nome del net embeddato)
 #include "nnue/nnue/network.h"
@@ -397,39 +396,8 @@ const char* nn_default_net_name(void) { return EvalFileDefaultName; }
 int nn_load_net(const char* net_path) { return load_net_impl(net_path); }
 int nn_reload_big(const char* net_path) { return load_net_impl(net_path); }
 
-// Salva la rete caricata nel formato con i blocchi da innesto di mask (09/10/2026, "exportgraft <mask> <file>" e
-// "exportprel <file>" = mask 1 in uci_mt.cpp): i blocchi che la rete non ha hanno le righe a zero, quindi il file e' la
-// stessa rete con quei blocchi innestati a zero (stessa valutazione, da verificare col bench). Dopo il salvataggio il
-// motore torna allo stato di prima.
-int nn_export_graft(unsigned mask, const char* path) {
-#ifdef TRIUMV_NO_GRAFTS
-    (void) mask, (void) path;
-    return 0;  // build senza blocchi da innesto
-#else
-    const unsigned was = nn_graft_mask;
-    nn_graft_mask      = mask;
-    const bool ok      = NET_REF.save(std::optional<std::string>(std::string(path)));
-    nn_graft_mask      = was;
-    return ok ? 1 : 0;
-#endif
-}
-
-int nn_export_pst(const char* path) { return NET_REF.save_pst(std::string(path)) ? 1 : 0; }
-
-int nn_pst_indices(const unsigned long long* bb12, unsigned long long occ, int persp, unsigned* out) {
-    using Eval::NNUE::Features::PassedState;
-    std::uint16_t e[16];
-    const int     n   = PassedState::entries_of(bb12, occ, e);
-    const int     ksq = int(lsb(Bitboard(bb12[5 + 6 * persp])));
-    for (int i = 0; i < n; i++)
-        out[i] = unsigned(PassedState::make_index(Color(persp), ksq, e[i]));
-    std::sort(out, out + n);
-    return n;
-}
-
-int nn_graft_entries(unsigned mask, const unsigned long long* bb12, unsigned long long occ, unsigned short* out) {
-    return Eval::NNUE::Features::PawnGrafts::entries_of(mask, bb12, occ, reinterpret_cast<std::uint16_t*>(out));
-}
+// (nn_export_graft, nn_export_pst, nn_pst_indices e nn_graft_entries, per i blocchi da innesto: tolte il 10/10/2026,
+// codice in _backup/Triumviratus_8.0_pre_rimozione_graft_2026-10-10 e nel repo del training, 04_consilium/graft_engine_storico.)
 
 void nn_init_tables(void) {
     Bitboards::init();

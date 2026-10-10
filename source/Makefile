@@ -37,9 +37,7 @@ CPP_SRCS := $(filter-out nnt.cpp,$(wildcard *.cpp)) \
             $(V13)/nnue/network.cpp $(V13)/nnue/nnue_accumulator.cpp \
             $(V13)/nnue/features/feat_perm.cpp \
             $(V13)/nnue/features/full_threats.cpp $(V13)/nnue/features/half_ka_v2_hm.cpp \
-            $(V13)/nnue/features/pawn_pair.cpp $(V13)/nnue/features/passed_pawns.cpp \
-            $(V13)/nnue/features/passed_rel.cpp $(V13)/nnue/features/pawn_grafts.cpp \
-            $(V13)/nnue/features/passed_state.cpp
+            $(V13)/nnue/features/pawn_pair.cpp $(V13)/nnue/features/passed_pawns.cpp
 C_SRCS   := fathom/tbprobe.c
 
 OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)

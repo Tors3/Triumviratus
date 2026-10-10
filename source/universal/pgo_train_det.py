@@ -127,8 +127,9 @@ def run_worker(worker_id, exe, positions, times, total_searches, t0,
     if _bnet:
         send(f"setoption name BulletNet value {_bnet}")
     # PGO_EVALFILE (10/10/2026, docs/audit_8.0/GRAFT_PASSEDREL_COSTO2.md §5): rete da caricare per il training al posto
-    # di quella incorporata. Con una rete a blocchi da innesto (es. PassedRel) il codice dei blocchi entra nel profilo:
-    # con la rete incorporata senza blocchi resta a contatore zero e il compilatore lo tratta da freddo (niente messa in
+    # di quella incorporata (i blocchi da innesto sono stati tolti dal motore il 10/10/2026; la nota resta per la storia).
+    # Con una rete a blocchi da innesto (es. PassedRel) il codice dei blocchi entrava nel profilo:
+    # con la rete incorporata senza blocchi restava a contatore zero e il compilatore lo trattava da freddo (niente messa in
     # linea, sezione fredda, salti disposti per il caso "spento"). PGO_EVALFILE_SHARE = percentuale dei worker che la
     # caricano (default 100); con 50 il profilo copre sia la rete incorporata sia quella con i blocchi.
     if evalfile:

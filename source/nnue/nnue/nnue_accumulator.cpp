@@ -20,7 +20,6 @@
 
 #include <cassert>
 #include <new>
-#include <cstring>       // O1 (_wip pst_opt): lista di PassedState nella cache "pe" (memcmp, memcpy)
 #include <type_traits>   // std::true_type / false_type: tile con o senza PSQT in apply_combined
 // ADOTTATE 08/10/2026 sera (xperf 6 giri, docs/audit_8.0/X4_VELOCITA_PROFONDA.md): OLDWB + BIASBASE insieme -1,06%
 // cicli/nodo in mediogioco (rumore A/A +-0,26), -0,96% nei finali (+-0,42). Accese di default; -DTRIUMV_NO_SPEED_X4
@@ -43,10 +42,6 @@
     #include <cstdio>    // verifiche X2: messaggio e abort al primo disaccordo
     #include <cstdlib>
     #include <cstring>
-#endif
-#if defined(TRIUMV_VERIFY_PST_PE)
-    #include <cstdio>    // O1 (_wip pst_opt): verifica della cache "pe" con PassedState, abort al primo disaccordo
-    #include <cstdlib>
 #endif
 
 #include "../../profile.h"
@@ -140,8 +135,6 @@ void AccumulatorStack::reset() noexcept {
     ds.st[0].threats.n = 0;
     ds.st[0].computed[WHITE] = ds.st[0].computed[BLACK] = 0;
     ds.st[0].idx       = 0;
-    ds.st[0].graftRem  = ds.st[0].graftAdd = 0;  // _wip graftfix: diff dei blocchi da innesto in NnState
-    ds.graftSrc[0]     = 255;  // voci dei blocchi da innesto della radice: da calcolare al primo bisogno
     ds.v1PassW[0]      = ~0ULL;  // R4: passati della radice da calcolare al primo recupero
 }
 
@@ -593,21 +586,6 @@ inline void prefetch_psq_rows(const FeatureTransformer&       featureTransformer
         prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(b[i]) * RowBytes);
 }
 
-#ifdef TRIUMV_GRAFT_PF
-// _wip graft_passedrel2 (Q6, DA MISURARE, spento di default): prefetch della prima linea delle righe dei blocchi da
-// innesto appena aggiunte a una lista (dalla voce `from`), come fa FullThreats per le sue righe. Le 768 righe di
-// PassedRel (768 KB) stanno fuori dalla permutazione per localita' e non le tocca nessun altro blocco: con la rete da
-// 170 MB che passa per la L2, e' plausibile che arrivino dalla L3. La regola del progetto (prefetch solo su tabelle che
-// non stanno in cache, qui sopra e in apply_combined) dice di aspettarsi zero o peggio: misurare sotto carico.
-inline void prefetch_graft_rows(const FeatureTransformer& featureTransformer, const ThreatFeatureSet::IndexList& l,
-                                int from) {
-    constexpr usize RowBytes = usize(FeatureTransformer::OutputDimensions) * sizeof(ThreatWeightType);
-    const char*     base     = reinterpret_cast<const char*>(&featureTransformer.threatWeights[0]);
-    for (int i = from; i < l.ssize(); ++i)
-        prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(base + usize(l[i]) * RowBytes);
-}
-#endif
-
 
 template<bool Forward>
 void update_accumulator_incremental(Color                     perspective,
@@ -632,7 +610,7 @@ void update_accumulator_incremental(Color                     perspective,
     const auto& dirtyPiece   = Forward ? target_state.dp : computed_state.dp;
     const auto& dirtyThreats = Forward ? target_state.threats : computed_state.threats;
     const auto& dirtyPawns   = Forward ? target_state.pawns : computed_state.pawns;
-    const NnState& graftState = Forward ? target_state : computed_state;  // blocchi da innesto: nn_graft_of
+    const NnState& pawnState = Forward ? target_state : computed_state;  // R4: passati della mossa (v1_pass_of)
 
     const auto* pfBase   = &featureTransformer.threatWeights[0];
     IndexType   pfStride = FeatureTransformer::OutputDimensions;
@@ -673,38 +651,15 @@ void update_accumulator_incremental(Color                     perspective,
 //    Stessa forma della lezione TTTwoLevel: +4,55 a hash 64, zero a hash 256.
         { PROF_GUARD(prof_idx_pawn);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrRemoved, thrAdded);
-        // R1 (_wip graft_passedrel3, 10/10/2026): con la sola PassedRel nelle liste le righe v1 escono dalla diff del
-        // blocco (PawnGraftSet::append_changed_indices, piu' sotto). Il test su `any` evita anche la chiamata fuori linea
-        // che per una mossa senza pedoni non faceva nulla (v1 esce subito se !any).
-        if (dirtyPawns.any && !PawnGraftSet::v1_skip())
+        // Il test su `any` evita la chiamata fuori linea che per una mossa senza pedoni non farebbe nulla (v1 esce
+        // subito se !any).
+        if (dirtyPawns.any)
         {
             Bitboard pb[COLOR_NB], pa[COLOR_NB];  // R4: passati dal recupero, niente passers() qui
-            v1_pass_of(graftState, pb, pa);
+            v1_pass_of(pawnState, pb, pa);
             V1PASS_VERIFY(dirtyPawns, pb, pa);
             PassedFeatureSet::append_changed_indices_pass(perspective, ksq, pb, pa, thrRemoved, thrAdded);
         }
-        NSTATV(PREL_V1_SKIP, dirtyPawns.any && PawnGraftSet::v1_fused());
-        // _wip graftfix (P2): conteggi in NnState, gia' in L1; zero con una rete senza blocchi o con diff vuota.
-#ifdef TRIUMV_VERIFY_GRAFT
-        const int vr0 = thrRemoved.ssize(), va0 = thrAdded.ssize();  // R1: righe scritte dalla diff dei blocchi
-#endif
-        if (graftState.graftRem | graftState.graftAdd)
-        {
-            NSTATV(GRAFT_ROWS, graftState.graftRem + graftState.graftAdd);
-#ifdef TRIUMV_GRAFT_PF
-            const int r0 = thrRemoved.ssize(), a0 = thrAdded.ssize();
-#endif
-            PawnGraftSet::append_changed_indices(perspective, ksq, graftState, thrRemoved, thrAdded);
-#ifdef TRIUMV_GRAFT_PF
-            prefetch_graft_rows(featureTransformer, thrRemoved, r0);
-            prefetch_graft_rows(featureTransformer, thrAdded, a0);
-#endif
-        }
-#ifdef TRIUMV_VERIFY_GRAFT
-        if (dirtyPawns.any && PawnGraftSet::v1_fused())
-            PawnGraftSet::verify_v1_fused(perspective, ksq, dirtyPawns, thrRemoved.begin() + vr0, thrRemoved.ssize() - vr0,
-                                          thrAdded.begin() + va0, thrAdded.ssize() - va0);
-#endif
         }
 #ifdef TRIUMV_PROFILE
         prof_cols_pawn_inc += thrRemoved.size() + thrAdded.size() - profThrBeforePawn;
@@ -719,27 +674,13 @@ void update_accumulator_incremental(Color                     perspective,
         ThreatFeatureSet::append_changed_indices(perspective, ksq, dirtyThreats, thrAdded,
                                                  thrRemoved, pfBase, pfStride);
         PawnFeatureSet::append_changed_indices(perspective, ksq, dirtyPawns, thrAdded, thrRemoved);
-        if (dirtyPawns.any && !PawnGraftSet::v1_skip())  // R1 (_wip graft_passedrel3), come nel ramo in avanti
+        if (dirtyPawns.any)  // come nel ramo in avanti
         {
             Bitboard pb[COLOR_NB], pa[COLOR_NB];  // R4
-            v1_pass_of(graftState, pb, pa);
+            v1_pass_of(pawnState, pb, pa);
             V1PASS_VERIFY(dirtyPawns, pb, pa);
             PassedFeatureSet::append_changed_indices_pass(perspective, ksq, pb, pa, thrAdded, thrRemoved);
         }
-#ifdef TRIUMV_VERIFY_GRAFT
-        const int vr0 = thrRemoved.ssize(), va0 = thrAdded.ssize();
-#endif
-        if (graftState.graftRem | graftState.graftAdd)
-        {
-            NSTATV(GRAFT_ROWS, graftState.graftRem + graftState.graftAdd);
-            PawnGraftSet::append_changed_indices(perspective, ksq, graftState, thrAdded, thrRemoved);
-        }
-#ifdef TRIUMV_VERIFY_GRAFT
-        // liste scambiate: cio' che v1 chiamerebbe "removed" e' thrAdded
-        if (dirtyPawns.any && PawnGraftSet::v1_fused())
-            PawnGraftSet::verify_v1_fused(perspective, ksq, dirtyPawns, thrAdded.begin() + va0, thrAdded.ssize() - va0,
-                                          thrRemoved.begin() + vr0, thrRemoved.ssize() - vr0);
-#endif
     }
     // NB (2026-07-15): estendere il prefetch a HalfKA/PawnPair/refresh aveva
     // MISURATO -12.9% NPS su Zen4, e per due settimane quel numero ha tenuto
@@ -852,7 +793,7 @@ void update_accumulator_incremental_both(const FeatureTransformer&    featureTra
     const auto& dirtyPiece   = Forward ? target_state.dp : computed_state.dp;
     const auto& dirtyThreats = Forward ? target_state.threats : computed_state.threats;
     const auto& dirtyPawns   = Forward ? target_state.pawns : computed_state.pawns;
-    const NnState& graftState = Forward ? target_state : computed_state;  // blocchi da innesto: nn_graft_of
+    const NnState& pawnState = Forward ? target_state : computed_state;  // R4: passati della mossa (v1_pass_of)
 
     const auto* pfBase   = &featureTransformer.threatWeights[0];
     IndexType   pfStride = FeatureTransformer::OutputDimensions;
@@ -885,45 +826,15 @@ void update_accumulator_incremental_both(const FeatureTransformer&    featureTra
     // PawnPair/PassedPawns: indici folded, entrano nelle stesse liste threat.
     PawnFeatureSet::append_changed_indices(WHITE, ksqW, dirtyPawns, remW, addW);
     PawnFeatureSet::append_changed_indices(BLACK, ksqB, dirtyPawns, remB, addB);
-    // R1 (_wip graft_passedrel3, 10/10/2026): con la sola PassedRel nelle liste le righe v1 delle due prospettive escono
-    // dalla diff del blocco (append_changed_indices_both, piu' sotto): niente otto passers() fuori linea per evento di
-    // pedone. Senza pedoni mossi v1 non fa nulla: anche le due chiamate si saltano.
-    if (dirtyPawns.any && !PawnGraftSet::v1_skip())
+    // Senza pedoni mossi v1 non fa nulla: anche le due chiamate si saltano.
+    if (dirtyPawns.any)
     {
         Bitboard pb[COLOR_NB], pa[COLOR_NB];  // R4: una lettura per le due prospettive
-        v1_pass_of(graftState, pb, pa);
+        v1_pass_of(pawnState, pb, pa);
         V1PASS_VERIFY(dirtyPawns, pb, pa);
         PassedFeatureSet::append_changed_indices_pass(WHITE, ksqW, pb, pa, remW, addW);
         PassedFeatureSet::append_changed_indices_pass(BLACK, ksqB, pb, pa, remB, addB);
     }
-    NSTATV(PREL_V1_SKIP, dirtyPawns.any && PawnGraftSet::v1_fused());
-    // _wip graftfix (P2): una sola decodifica per le due prospettive, solo se la diff non e' vuota.
-#ifdef TRIUMV_VERIFY_GRAFT
-    const int vrW = remW.ssize(), vaW = addW.ssize(), vrB = remB.ssize(), vaB = addB.ssize();  // R1
-#endif
-    if (graftState.graftRem | graftState.graftAdd)
-    {
-        NSTATV(GRAFT_ROWS, 2 * (graftState.graftRem + graftState.graftAdd));
-#ifdef TRIUMV_GRAFT_PF
-        const int rW = remW.ssize(), aW = addW.ssize(), rB = remB.ssize(), aB = addB.ssize();
-#endif
-        PawnGraftSet::append_changed_indices_both(ksqW, ksqB, graftState, remW, addW, remB, addB);
-#ifdef TRIUMV_GRAFT_PF
-        prefetch_graft_rows(featureTransformer, remW, rW);
-        prefetch_graft_rows(featureTransformer, addW, aW);
-        prefetch_graft_rows(featureTransformer, remB, rB);
-        prefetch_graft_rows(featureTransformer, addB, aB);
-#endif
-    }
-#ifdef TRIUMV_VERIFY_GRAFT
-    if (dirtyPawns.any && PawnGraftSet::v1_fused())
-    {
-        PawnGraftSet::verify_v1_fused(WHITE, ksqW, dirtyPawns, remW.begin() + vrW, remW.ssize() - vrW,
-                                      addW.begin() + vaW, addW.ssize() - vaW);
-        PawnGraftSet::verify_v1_fused(BLACK, ksqB, dirtyPawns, remB.begin() + vrB, remB.ssize() - vrB,
-                                      addB.begin() + vaB, addB.ssize() - vaB);
-    }
-#endif
 
 #ifdef TRIUMV_PROFILE
     prof_n_cols += psqAddW.size() + psqRemW.size() + thrAddW.size() + thrRemW.size()
@@ -1133,8 +1044,6 @@ void vg_check_acc(const char*               where,
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
     PawnFeatureSet::append_active_indices(perspective, pos, active);
     PassedFeatureSet::append_active_indices(perspective, pos, active);
-    if (nn_graft_mask)
-        PawnGraftSet::append_active_indices(perspective, pos, active);
     for (int i = 0; i < active.ssize(); ++i)
     {
         const usize idx = usize(active[i]);
@@ -1147,51 +1056,6 @@ void vg_check_acc(const char*               where,
         vg_fail(where, "accumulatore", perspective, ksq, phase);
     if (std::memcmp(psqt, a.psqtAccumulation[perspective].data(), sizeof(psqt)) != 0)
         vg_fail(where, "PSQT dell'accumulatore", perspective, ksq, phase);
-}
-#endif
-
-#ifdef TRIUMV_VERIFY_PST_PE
-// O1 (_wip pst_opt, 10/10/2026): la somma della entry "pe" (hit o miss) ricalcolata da zero, scalare, dai riferimenti
-// della posizione: PawnPair, PassedPawns v1 (se accesa) e PassedState (PawnGraftSet::append_active_indices, voci da
-// capo con entries_of, non quelle del recupero). Un hit con una chiave che non basta, o righe sbagliate nel miss,
-// danno una somma diversa: messaggio e abort. Serve perche' nnperft confronta solo l'accumulatore finale, e il suo
-// refresh di confronto passa dalla stessa cache "pe" del thread: un hit sbagliato potrebbe darlo a tutti e due.
-[[noreturn]] void pe_fail(const char* what, Color perspective, int ksq, bool hit) {
-    std::fprintf(stderr, "[PST_PE] %s della entry pe diverso dal riferimento: lato %d re %d %s\n", what,
-                 int(perspective), ksq, hit ? "HIT" : "miss");
-    std::fflush(stderr);
-    std::abort();
-}
-void pe_verify_pst(Color                     perspective,
-                   const FeatureTransformer& ft,
-                   const NnBoard&            pos,
-                   const std::int16_t*       peAcc,
-                   const std::int32_t*       pePsqt,
-                   bool                      hit) {
-    constexpr IndexType              Dimensions = FeatureTransformer::OutputDimensions;
-    static thread_local std::int16_t acc[Dimensions];
-    std::int32_t                     psqt[PSQTBuckets] = {};
-    std::memset(acc, 0, sizeof(acc));
-    ThreatFeatureSet::IndexList ref;
-    PawnFeatureSet::append_active_indices(perspective, pos, ref);
-    if (!PawnGraftSet::v1_off())
-        PassedFeatureSet::append_active_indices(perspective, pos, ref);
-    PawnGraftSet::append_active_indices(perspective, pos, ref);
-    for (int i = 0; i < ref.ssize(); ++i)
-    {
-        const usize idx = usize(ref[i]);
-        for (IndexType j = 0; j < Dimensions; ++j)
-            acc[j] = std::int16_t(std::uint16_t(acc[j])
-                                  + std::uint16_t(std::int16_t(ft.threatWeights[idx * Dimensions + j])));
-        for (usize k = 0; k < PSQTBuckets; ++k)
-            psqt[k] = std::int32_t(std::uint32_t(psqt[k]) + std::uint32_t(ft.threatPsqtWeights[idx * PSQTBuckets + k]));
-    }
-    if (std::memcmp(acc, peAcc, sizeof(acc)) != 0)
-        pe_fail("accumulatore", perspective, pos.king(perspective), hit);
-    if (std::memcmp(psqt, pePsqt, sizeof(psqt)) != 0)
-        pe_fail("PSQT", perspective, pos.king(perspective), hit);
-    if (hit)
-        NSTAT(REF_PST_VERIFIED_HIT);
 }
 #endif
 
@@ -1306,29 +1170,14 @@ void update_accumulator_hybrid(Color                     perspective,
                                              thrAdded, pfBase, pfStride);
     PawnFeatureSet::append_changed_indices(perspective, newKsq, target_state.pawns, thrRemoved,
                                            thrAdded);
-    // R1 (_wip graft_passedrel3): un ibrido con pedoni e' una cattura di pedone che cambia fascia; con la sola PassedRel
-    // le righe v1 escono dalla diff del blocco, come negli incrementali.
-    if (target_state.pawns.any && !PawnGraftSet::v1_skip())
+    // Un ibrido con pedoni e' una cattura di pedone che cambia fascia.
+    if (target_state.pawns.any)
     {
         Bitboard pb[COLOR_NB], pa[COLOR_NB];  // R4
         v1_pass_of(target_state, pb, pa);
         V1PASS_VERIFY(target_state.pawns, pb, pa);
         PassedFeatureSet::append_changed_indices_pass(perspective, newKsq, pb, pa, thrRemoved, thrAdded);
     }
-    NSTATV(PREL_V1_SKIP, target_state.pawns.any && PawnGraftSet::v1_fused());
-#ifdef TRIUMV_VERIFY_GRAFT
-    const int vr0 = thrRemoved.ssize(), va0 = thrAdded.ssize();  // R1
-#endif
-    if (target_state.graftRem | target_state.graftAdd)
-    {
-        NSTATV(GRAFT_ROWS, target_state.graftRem + target_state.graftAdd);
-        PawnGraftSet::append_changed_indices(perspective, newKsq, target_state, thrRemoved, thrAdded);
-    }
-#ifdef TRIUMV_VERIFY_GRAFT
-    if (target_state.pawns.any && PawnGraftSet::v1_fused())
-        PawnGraftSet::verify_v1_fused(perspective, newKsq, target_state.pawns, thrRemoved.begin() + vr0,
-                                      thrRemoved.ssize() - vr0, thrAdded.begin() + va0, thrAdded.ssize() - va0);
-#endif
 
     const auto& fromAcc     = computed.accumulation[perspective];
     auto&       toAcc       = target.accumulation[perspective];
@@ -1653,11 +1502,7 @@ void update_accumulator_refresh_cache(Color                     perspective,
     struct PawnRefreshEntry {
         Bitboard wp = ~Bitboard(0), bp = ~Bitboard(0);  // stato iniziale impossibile => miss
         int      orient = -1;
-        unsigned epoch  = ~0u;  // nn_net_epoch della rete con cui la somma e' stata fatta (_wip graft_space_locked)
-        // O1 (_wip pst_opt, 10/10/2026): con PassedState la somma contiene anche le sue righe, e la chiave anche la
-        // lista delle sue voci (scritta solo con PassedState; con le altre reti non si legge). Sta nella prima linea.
-        std::uint8_t  pstN = 0;
-        std::uint16_t pst[NN_GRAFT_MAX];
+        unsigned epoch  = ~0u;  // nn_net_epoch della rete con cui la somma e' stata fatta (cambio di rete, nn_dirty.h)
         alignas(64) std::int16_t acc[FeatureTransformer::OutputDimensions];
         alignas(64) std::int32_t psqt[PSQTBuckets];
     };
@@ -1673,8 +1518,7 @@ void update_accumulator_refresh_cache(Color                     perspective,
 // ✅ 25/09/2026 — RIACCESA anche su AVX-512 (stessa misura dell'ibrido, sopra): -1,41%
 // istruzioni/nodo, branch miss e miss L3 invariati. -DTRIUMV_NO_PAWN_CACHE_AVX512 la rispegne.
 #if defined(VECTOR) && !defined(TRIUMV_NO_PAWN_CACHE) && (!defined(USE_AVX512) || !defined(TRIUMV_NO_PAWN_CACHE_AVX512))
-    #define TRIUMV_PE_CACHE_ON
-    bool pawnHit = (pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient) & (pe.epoch == nn_net_epoch);
+    const bool pawnHit =(pe.wp == wpBB) & (pe.bp == bpBB) & (pe.orient == orient) & (pe.epoch == nn_net_epoch);
 #else
     // Misurato 3/08/2026, interleaved, 60 posizioni depth 19, nodi identici:
     //   AVX2    +1,37%  (40/60 posizioni, test del segno p≈0,009)  -> ATTIVA
@@ -1689,60 +1533,15 @@ void update_accumulator_refresh_cache(Color                     perspective,
 
     ThreatFeatureSet::IndexList active;
     ThreatFeatureSet::append_active_indices(perspective, pos, active);
-    // O1 (_wip pst_opt, 10/10/2026; docs/audit_8.0/PASSEDSTATE_COSTO.md §2, R-pe): le righe di PassedState dentro la
-    // cache "pe". Dipendono dalla prospettiva e dal re solo attraverso l'orientazione (PassedState::make_index ->
-    // PassedPawns::make_index), gia' nella chiave; il resto e' la lista delle voci (passati, stop, prot, conn, mu), che
-    // entra nella chiave PER INTERO: hit = stessi pedoni, orientazione ed epoca della rete E stessa lista (numero e
-    // voci, confronto esatto, nessun hash). Le voci sono ordinate e uniche per (colore, casa): stessa lista = stesse
-    // righe. Nel miss le righe vanno dopo nThreat, nella somma che si scrive nella entry; nell'hit non si enumerano ne'
-    // si sommano. Somme intere modulo 2^16 / 2^32: l'ordine non conta, valutazione identica. Le voci sono quelle del
-    // recupero (NnStack::graftList) o, senza (radice di uno stato di appoggio), quelle da capo.
-    // -DTRIUMV_VERIFY_PST_PE ricalcola la somma della entry a ogni refresh con PassedState (pe_verify_pst).
-    const bool           pstOn = (nn_graft_mask & PawnGraftSet::PASSED_STATE) != 0;
-    std::uint16_t        pstBuf[NN_GRAFT_MAX];
-    const std::uint16_t* pstL = pstBuf;
-    int                  pstN = 0;
-    if (pstOn)
-    {
-        pstN = PawnGraftSet::pst_entries(pos, state, pstBuf, pstL);
-#ifdef TRIUMV_PE_CACHE_ON
-        const bool pstSame =
-          pe.pstN == pstN && std::memcmp(pe.pst, pstL, usize(pstN) * sizeof(std::uint16_t)) == 0;
-    #ifdef TRIUMV_NSTATS
-        if (pawnHit && !pstSame)
-            NSTAT(REF_PST_LISTMISS);
-    #endif
-        pawnHit = pawnHit && pstSame;
-#endif
-    }
-    // Blocco da innesto (09/10/2026): PassedRel con le minacce, fuori dalla cache dei blocchi pedoni (dipende anche dai
-    // re e dall'occupazione). Le voci sono quelle gia' calcolate dal recupero per questo stato. (Space e LockedPawns,
-    // che stavano nella cache dei pedoni, tolti il 10/10/2026 con KingFiles e KingFilesQ.)
-    else if (nn_graft_mask & PawnGraftSet::LISTS)
-    {
-#ifdef TRIUMV_NSTATS
-        const int g0 = active.ssize();
-#endif
-        // R2 (_wip graft_passedrel3): sola PassedRel in linea (pawn_grafts.h), il resto fuori linea come prima.
-        PawnGraftSet::append_active_indices(perspective, ksq, pos, state, active);
-        NSTATV(GRAFT_REF_ROWS, active.ssize() - g0);
-    }
+    // (Le righe dei blocchi da innesto, PassedRel fuori dalla cache e PassedState dentro con la lista delle voci nella
+    // chiave, tolte il 10/10/2026: codice in _backup/Triumviratus_8.0_pre_rimozione_graft_2026-10-10 e nel repo del
+    // training, 04_consilium/graft_engine_storico.)
     const int nThreat = active.ssize();
     if (!pawnHit)
     {
         // Miss: si enumera come prima. Il hit salta anche QUESTO, non solo le somme.
         PawnFeatureSet::append_active_indices(perspective, pos, active);    // TRANN1 folded
-        if (!PawnGraftSet::v1_off())  // PassedState con la v1 a zero: righe nulle, non si sommano
-            PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
-        if (pstOn)  // O1: righe di PassedState nella somma della entry, lista nella chiave
-        {
-            constexpr IndexType base = PawnGraftSet::FoldOffset + PawnGraftSet::Offset[6];
-            for (int i = 0; i < pstN; ++i)
-                active.push_back(base + Features::PassedState::make_index(perspective, ksq, pstL[i]));
-            pe.pstN = std::uint8_t(pstN);
-            std::memcpy(pe.pst, pstL, usize(pstN) * sizeof(std::uint16_t));
-            NSTATV(GRAFT_REF_ROWS, pstN);
-        }
+        PassedFeatureSet::append_active_indices(perspective, pos, active);  // v3 folded
         pe.wp = wpBB, pe.bp = bpBB, pe.orient = orient, pe.epoch = nn_net_epoch;
         NSTATV(REF_PAWN_ROWS, active.ssize() - nThreat);
     }
@@ -1935,10 +1734,6 @@ void update_accumulator_refresh_cache(Color                     perspective,
     #if defined(TRIUMV_VG_VERIFY_ANY)
     vg_check_entry("refresh, entry", perspective, featureTransformer, entry, ksq, psqPhase);
     vg_check_acc("refresh", perspective, featureTransformer, pos, accumulator);
-    #endif
-    #ifdef TRIUMV_VERIFY_PST_PE
-    if (pstOn)
-        pe_verify_pst(perspective, featureTransformer, pos, pe.acc, pe.psqt, pawnHit);
     #endif
 
 #else

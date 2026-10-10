@@ -53,9 +53,6 @@ namespace TRIUMV_VNS {
 #include "../nnue/nnue/features/full_threats.cpp"
 #include "../nnue/nnue/features/pawn_pair.cpp"
 #include "../nnue/nnue/features/passed_pawns.cpp"
-#include "../nnue/nnue/features/passed_rel.cpp"
-#include "../nnue/nnue/features/pawn_grafts.cpp"
-#include "../nnue/nnue/features/passed_state.cpp"
 #include "../nnue/nnue/features/half_ka_v2_hm.cpp"
 #include "../syzygy.cpp"
 }  // namespace TRIUMV_VNS

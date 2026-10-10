@@ -31,8 +31,6 @@
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
 #include "features/passed_pawns.h"
-#include "features/passed_rel.h"
-#include "features/pawn_grafts.h"
 #include "features/pawn_pair.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
@@ -58,12 +56,9 @@ using ThreatFeatureSet = Features::FullThreats;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 using PawnFeatureSet   = Features::PawnPair;
 using PassedFeatureSet = Features::PassedPawns;  // v3 graft: 96 feature passed-pawn, folded dopo PawnPair
-// PassedPawns v2 (09/10/2026): i passati con le relazioni (imprendibile, collegato, strada libera), 768 feature in coda
-// dopo PassedPawns, da innestare. Opzionale: le reti senza il blocco lo caricano a zero e nn_graft_mask lo lascia spento.
-using PassedRelFeatureSet = Features::PassedRel;
-// 09/10/2026 sera: i blocchi da innesto (PassedRel, KingFiles, Space, LockedPawns) passano da un meccanismo comune,
-// 1632 righe in coda dopo PassedPawns; nn_graft_mask dice quali ha la rete caricata.
-using PawnGraftSet = Features::PawnGrafts;
+// (Blocchi da innesto opzionali in coda dopo PassedPawns, PassedRel e PassedState fra gli altri: provati il 09-10/10/2026,
+// nessuno entra nella 8.0, tolti il 10/10/2026. Codice in _backup/Triumviratus_8.0_pre_rimozione_graft_2026-10-10 e nel
+// repo del training, 04_consilium/graft_engine_storico.)
 // 8.0: il blocco Mobility ("threat su case vuote") e' stato TOLTO il 29/09/2026: costo misurato
 // -16,2% NPS (nps_pair, 480 campioni, IC95 [-17,05; -15,34]) sulla MoE-1024, troppo per una graft.
 // Codice in _archivio/mobility_2026-09-29 (motore e trainer).

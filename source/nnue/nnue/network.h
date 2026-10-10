@@ -63,9 +63,6 @@ class Network {
 
     void load(const std::string& rootDirectory, std::string evalfilePath);
     bool save(const std::optional<std::string>& filename) const;
-    // PassedState (10/10/2026, "exportpst <file>"): la rete caricata (senza blocchi da innesto) con PassedState di
-    // partenza: ogni stato = la riga v1, v1 a zero. Stessa valutazione (bench), lavora su una copia.
-    bool save_pst(const std::string& filename) const;
 
     usize get_content_hash() const;
 
@@ -124,12 +121,6 @@ class Network {
     // passed zero-fillato -> eval byte-identica al motore v2.
     static constexpr u32 hash_v2 =
       FeatureTransformer::get_hash_value_v2() ^ NetworkArchitecture::get_hash_value();
-    // Formati con i blocchi da innesto (09/10/2026): uno per ogni combinazione valida (mask 1..63, bit come nn_graft_mask, PawnGrafts::valid_mask),
-    // accettati in lettura; accendono nn_graft_mask.
-    // prelBased: PassedRel nel formato a base ("PRB1", _wip graft_passedrel2, GRAFT_PASSEDREL_COSTO2 §8).
-    static constexpr u32 hash_graft(unsigned mask, bool prelBased = false) {
-        return FeatureTransformer::get_hash_value_graft(mask, prelBased) ^ NetworkArchitecture::get_hash_value();
-    }
 
     friend struct AccumulatorCaches;
 };

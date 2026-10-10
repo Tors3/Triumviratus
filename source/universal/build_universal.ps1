@@ -36,7 +36,8 @@ param(
     [switch]$MultiTU,
     [switch]$Unity,
     # Rete per il TRAINING del profilo (10/10/2026, docs/audit_8.0/GRAFT_PASSEDREL_COSTO2.md §5). Vuota = la rete
-    # incorporata. Con una rete a blocchi da innesto il codice dei blocchi entra nel profilo; -PgoNetShare 50 allena
+    # incorporata. Con una rete a blocchi da innesto il codice dei blocchi entrava nel profilo (blocchi tolti dal motore
+    # il 10/10/2026: oggi serve solo per un'altra rete dello stesso formato); -PgoNetShare 50 allena
     # meta' dei worker con questa e meta' con la incorporata (binario che deve andare bene con entrambe). Il bench di
     # verifica resta quello della rete incorporata.
     [string]$PgoNet = "",

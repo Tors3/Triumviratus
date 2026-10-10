@@ -27,36 +27,14 @@ enum Key {
     HYB_OLD_ROWS,  // ibrido, entry vecchia (posizione precedente)
     HYB_NEW_ROWS,  // ibrido, entry nuova
     REF_ROWS,      // refresh, entry
-    // Blocchi da innesto (10/10/2026): contatori di GRAFT_PASSEDREL_COSTO2.md §6 e di GRAFT_KINGFILES_OTTIMIZZAZIONE.md.
-    GRAFT_ST,       // stati del recupero con una rete a blocchi (nn_dirty_catch_up, gm != 0)
-    GRAFT_PASS,     // ... di cui con passati prima o dopo la mossa (superano il primo filtro di nn_prel_step)
-    GRAFT_REBUILD,  // ... ricalcolo da capo con merge (cambia l'insieme dei passati)
-    GRAFT_RESTATE,  // ... ricalcolo dei bit 0 e 2 (re nemico che attraversa un quadrato, casa davanti toccata)
-    GRAFT_CHG,      // ... diff non vuota
-    GRAFT_ROWS,     // righe dei blocchi da innesto nelle liste incrementali e ibride (somma sulle prospettive)
-    GRAFT_REF_ROWS, // righe dei blocchi da innesto nei refresh pieni
-    // (GRAFT_STEP e GRAFT_KF_*: tolti il 10/10/2026 con KingFiles e il recupero generico nn_graft_step)
-    GRAFT_ROWS_INC,   // righe dei blocchi lette dagli aggiornamenti incrementali (per lato)
-    GRAFT_ROWS_HYB,   // righe dei blocchi lette dagli ibridi
-    GRAFT_ROWS_REF,   // righe dei blocchi lette dai refresh pieni
+    // (Contatori dei blocchi da innesto GRAFT_*, PREL_*, REF_PST_*: tolti il 10/10/2026 con i blocchi.)
     REF_PAWN_HIT,   // refresh con hit della cache "pe" (PawnPair, PassedPawns gratis)
     REF_PAWN_ROWS,  // refresh con miss: righe dei blocchi pedoni sommate (le quattro famiglie)
-    // _wip graft_passedrel3 (10/10/2026, GRAFT_PASSEDREL_COSTO3.md)
-    PREL_V1_SKIP,   // R1: aggiornamenti (incrementali e ibridi, una chiamata per percorso) con evento di pedone in cui
-                    // la v1 non ricalcola i passati (righe v1 dalla diff di PassedRel)
-    PREL_DELTA,     // R3: righe delta usate (ognuna sostituisce due righe di PassedRel), per prospettiva
-    // _wip pst_opt (10/10/2026, O1): con PassedState REF_PAWN_HIT conta gli hit con la lista uguale (righe del blocco
-    // gratis); questi i refresh con pedoni, orientazione ed epoca uguali ma lista diversa (miss per la sola lista).
-    REF_PST_LISTMISS,
-    REF_PST_VERIFIED_HIT,  // -DTRIUMV_VERIFY_PST_PE: hit della cache "pe" con PassedState controllati da zero
     NKEYS
 };
 inline const char* const kName[NKEYS] = {"EVAL", "INC", "INC_BOTH", "REFRESH", "HYBRID", "COMBINED", "PSQ_ROWS",
-                                         "THR_ROWS", "HYB_OLD_ROWS", "HYB_NEW_ROWS", "REF_ROWS", "GRAFT_ST",
-                                         "GRAFT_PASS", "GRAFT_REBUILD", "GRAFT_RESTATE", "GRAFT_CHG", "GRAFT_ROWS",
-                                         "GRAFT_REF_ROWS", "GRAFT_ROWS_INC", "GRAFT_ROWS_HYB", "GRAFT_ROWS_REF",
-                                         "REF_PAWN_HIT", "REF_PAWN_ROWS", "PREL_V1_SKIP", "PREL_DELTA",
-                                         "REF_PST_LISTMISS", "REF_PST_VERIFIED_HIT"};
+                                         "THR_ROWS", "HYB_OLD_ROWS", "HYB_NEW_ROWS", "REF_ROWS",
+                                         "REF_PAWN_HIT", "REF_PAWN_ROWS"};
 inline std::uint64_t c[NKEYS];
 inline void dump() {
     const char* f = std::getenv("NSTATS_FILE");

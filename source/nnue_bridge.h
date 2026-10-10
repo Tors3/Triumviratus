@@ -29,20 +29,6 @@ const char* nn_net_memory_status(void);
 // nn_pos_create() (the per-handle accumulator caches are built from the net).
 int nn_load_net(const char* net_path);
 
-// Blocchi da innesto (PassedRel, KingFiles, Space, LockedPawns; 09/10/2026): le voci (blocco << 12 | dati, crescenti)
-// dai dodici bitboard per pezzo del motore (P N B R Q K p n b r q k; servono pedoni, re e donne) e dall'occupazione,
-// per i blocchi di mask. Una sola definizione, quella della rete (nnue/nnue/features/pawn_grafts.cpp), usata anche da
-// nn_dirty_catch_up. out deve avere NN_GRAFT_MAX posti se mask & ~NN_GRAFT_LIST_MASK == 0 (solo PassedRel e
-// KingFiles: liste della pila), altrimenti NN_GRAFT_REF_MAX (_wip graft_space_locked).
-// Salva la rete caricata nel formato con i blocchi di mask (a zero quelli che la rete non ha). 1 = salvata.
-int nn_export_graft(unsigned mask, const char* path);
-// PassedState di partenza (10/10/2026, "exportpst <file>"): stati = riga v1, v1 a zero; solo da una rete senza blocchi.
-int nn_export_pst(const char* path);
-int nn_graft_entries(unsigned mask, const unsigned long long* bb12, unsigned long long occ, unsigned short* out);
-// Diagnosi (10/10/2026, "pstidx"): righe di PassedState (senza offset del blocco, crescenti) della posizione per la
-// prospettiva persp (0 bianco, 1 nero): il confronto con il riferimento del trainer (verify_passedstate.py).
-int nn_pst_indices(const unsigned long long* bb12, unsigned long long occ, int persp, unsigned* out);
-
 // Reload the network at runtime (UCI option "EvalFile"). Safe to call when no
 // search is running. Returns 1 on success, 0 if the path could not be loaded.
 int nn_reload_big(const char* net_path);

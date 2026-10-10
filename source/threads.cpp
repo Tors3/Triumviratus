@@ -11,7 +11,6 @@
 #include "threads.h"
 #include "sstats.h"   // contatori di diagnosi, solo con -DTRIUMV_SSTATS (03/10/2026)
 #include "cstats.h"   // precisione delle correzioni, solo con -DTRIUMV_CORRSTATS (06/10/2026)
-#include "nstats.h"   // lavoro della rete, solo con -DTRIUMV_NSTATS (qui: contatori GRAFT_* dei blocchi da innesto, 10/10/2026)
 #include "attacks.h"
 #include "chess960.h"
 #include "evaluation.h"

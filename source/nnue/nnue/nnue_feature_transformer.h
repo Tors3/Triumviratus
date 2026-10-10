@@ -99,25 +99,10 @@ class FeatureTransformer {
       ThreatInputDimensions + PawnInputDimensions + PassedInputDimensions;
     // Righe delle tabelle threat/psqt. Fino al 29/09/2026 c'erano in coda anche le 2048 righe
     // del blocco Mobility, tolto (vedi nnue_architecture.h e _archivio/mobility_2026-09-29).
-    // PassedPawns v2 (09/10/2026, blocco opzionale): 768 righe in coda dopo PassedPawns, FUORI dalla permutazione per
-    // localita' (permute_rows lavora solo sulle prime ThreatPlusPawnDimensions righe). Una rete senza il blocco le
-    // carica a zero.
-    // 09/10/2026 sera: le 768 righe di PassedRel diventano le prime 1632 dei blocchi da innesto (PassedRel, KingFiles,
-    // Space, LockedPawns: features/pawn_grafts.h), stesse righe per PassedRel. 10/10/2026: tolti tutti tranne
-    // PassedRel, di nuovo 768 righe; poi PassedState (PassedPawns v3, 9600 righe dopo PassedRel).
-    static constexpr IndexType GraftInputDimensions = PawnGraftSet::Dimensions;
-    static_assert(PawnGraftSet::FoldOffset == ThreatPlusPawnDimensions, "blocchi da innesto subito dopo PassedPawns");
-    // R3 (_wip graft_passedrel3, 10/10/2026, solo con -DTRIUMV_PREL_DELTA): 96 x 12 righe "delta" di PassedRel dopo i
-    // blocchi da innesto, costruite al caricamento (build_prel_delta), mai lette ne' scritte nel file .nnue. Senza la
-    // macro le tabelle restano quelle di prima (stesso layout dei pesi).
-#ifdef TRIUMV_PREL_DELTA
-    static constexpr IndexType PrelDeltaRows = 96 * 12;
-    static_assert(PawnGraftSet::PrelDeltaBase == ThreatPlusPawnDimensions + GraftInputDimensions,
-                  "R3: righe delta subito dopo i blocchi da innesto");
-#else
-    static constexpr IndexType PrelDeltaRows = 0;
-#endif
-    static constexpr IndexType ThreatRowsTotal = ThreatPlusPawnDimensions + GraftInputDimensions + PrelDeltaRows;
+    // Dal 09 al 10/10/2026 c'erano in coda anche le righe dei blocchi da innesto (PassedRel, PassedState, ...), fuori
+    // dalla permutazione per localita': tolti il 10/10/2026 (nessun blocco entra nella 8.0), codice in
+    // _backup/Triumviratus_8.0_pre_rimozione_graft_2026-10-10 e nel repo del training (04_consilium/graft_engine_storico).
+    static constexpr IndexType ThreatRowsTotal = ThreatPlusPawnDimensions;
     static constexpr IndexType InputDimensions = PSQFeatureSet::Dimensions + ThreatRowsTotal;
     static constexpr IndexType OutputDimensions = HalfDimensions;
 
@@ -164,23 +149,6 @@ class FeatureTransformer {
         return combine_hash({ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue,
                              PawnFeatureSet::HashValue, PassedFeatureSet::HashValue})
              ^ (OutputDimensions * 2);
-    }
-
-    // Formato con i blocchi da innesto in coda (09/10/2026): i blocchi presenti (mask, bit come nn_graft_mask)
-    // nell'ordine canonico della feature string del trainer (...+PassedPawns+PassedRel+KingFiles+Space+LockedPawns).
-    // mask 0 = get_hash_value().
-    // prelBased (_wip graft_passedrel2, GRAFT_PASSEDREL_COSTO2 §8): PassedRel nel formato a base, hash "PRB1" al posto
-    // di "PRV2" (stesse righe, tabella degli stati base in coda al blocco, riga v1 con lo stato base sommato).
-    static constexpr u32 get_hash_value_graft(unsigned mask, bool prelBased = false) {
-        u32 hash = combine_hash({ThreatFeatureSet::HashValue, PSQFeatureSet::HashValue, PawnFeatureSet::HashValue,
-                                 PassedFeatureSet::HashValue});
-        for (int b = 0; b < PawnGraftSet::Blocks; b++)
-            if (mask & (1u << b))
-            {
-                hash = (hash << 1) | (hash >> 31);
-                hash ^= (b == 0 && prelBased) ? PawnGraftSet::HashPrelBased : PawnGraftSet::Hash[b];
-            }
-        return hash ^ (OutputDimensions * 2);
     }
 
     // Hash del formato v2 (3 blocchi, senza PassedPawns): accettato in lettura
@@ -242,31 +210,7 @@ class FeatureTransformer {
     // (serialize.py write_feature_transformer). I segmenti pawn atterrano in
     // CODA agli array threat (folded); i psqt leb128 passano da un temp heap
     // (read_leb_128 vuole std::array interi) — solo a load-time.
-    // Un blocco da innesto: pesi int8 grezzi + PSQT leb128 (come PassedPawns), alla riga row delle tabelle threat.
-    template<usize Dim>
-    void read_graft_block(std::istream& stream, usize row) {
-        static_assert(Dim == 768 || Dim == 9600);  // PassedRel, PassedState (10/10/2026)
-        read_little_endian<ThreatWeightType>(stream, threatWeights.data() + row * HalfDimensions, Dim * HalfDimensions);
-        auto tmp = std::make_unique<std::array<PSQTWeightType, Dim * PSQTBuckets>>();
-        read_leb_128(stream, *tmp);
-        std::memcpy(threatPsqtWeights.data() + row * PSQTBuckets, tmp->data(), sizeof(*tmp));
-    }
-    template<usize Dim>
-    void write_graft_block(std::ostream& stream, usize row) const {
-        write_little_endian<ThreatWeightType>(stream, threatWeights.data() + row * HalfDimensions, Dim * HalfDimensions);
-        auto tmp = std::make_unique<std::array<PSQTWeightType, Dim * PSQTBuckets>>();
-        std::memcpy(tmp->data(), threatPsqtWeights.data() + row * PSQTBuckets, sizeof(*tmp));
-        write_leb_128<PSQTWeightType>(stream, *tmp);
-    }
-
-    // Tabella degli stati base di PassedRel letta dal file (formato a base), copiata nei globali Features::PrelBase /
-    // PrelBased da Network::read_parameters solo se il caricamento riesce. 8 = nessuna base.
-    std::uint8_t prelBaseLoaded[96];
-    bool         prelBasedLoaded = false;
-
-    bool read_parameters(std::istream& stream, bool v2Compat = false, unsigned graftMask = 0, bool prelBased = false) {
-        prelBasedLoaded = prelBased && (graftMask & 1u);
-        std::memset(prelBaseLoaded, 8, sizeof(prelBaseLoaded));
+    bool read_parameters(std::istream& stream, bool v2Compat = false) {
         read_leb_128(stream, biases);
 
         read_little_endian<ThreatWeightType>(stream, threatWeights.data(),
@@ -321,140 +265,9 @@ class FeatureTransformer {
                         0, PassedInputDimensions * PSQTBuckets * sizeof(PSQTWeightType));
         }
 
-        // Blocchi da innesto (09/10/2026): un segmento per ogni blocco della rete, nell'ordine canonico; i blocchi
-        // assenti restano a zero.
-        for (int b = 0; b < PawnGraftSet::Blocks; b++)
-        {
-            const usize row = usize(ThreatPlusPawnDimensions) + PawnGraftSet::Offset[b];
-            const usize dim = PawnGraftSet::Dim[b];
-            if (graftMask & (1u << b))
-            {
-                if (dim == 768)  // PassedRel; valid_mask rifiuta i blocchi tolti
-                    read_graft_block<768>(stream, row);
-                else if (dim == 9600)  // PassedState (10/10/2026)
-                    read_graft_block<9600>(stream, row);
-                else
-                    return false;
-                if (b == 0 && prelBasedLoaded)  // formato a base: 96 byte, uno stato base (0..8) per gruppo v1
-                {
-                    stream.read(reinterpret_cast<char*>(prelBaseLoaded), sizeof(prelBaseLoaded));
-                    for (std::uint8_t v : prelBaseLoaded)
-                        if (v > 8)
-                            return false;
-                }
-            }
-            else
-            {
-                std::memset(threatWeights.data() + row * HalfDimensions, 0,
-                            dim * HalfDimensions * sizeof(ThreatWeightType));
-                std::memset(threatPsqtWeights.data() + row * PSQTBuckets, 0, dim * PSQTBuckets * sizeof(PSQTWeightType));
-            }
-        }
-
         permute_weights();
 
         return !stream.fail();
-    }
-
-#ifdef TRIUMV_PREL_DELTA
-    // R3 (_wip graft_passedrel3): righe delta di PassedRel dalle righe caricate (dopo permute_weights: lo stesso ordine
-    // delle colonne per tutte le righe, la differenza elemento per elemento non ne dipende). Per gruppo g (indice v1:
-    // rel * 48 + casa orientata - 8) e spigolo (bit k, valore c degli altri due bit, stato basso L = c con uno 0 al posto
-    // k): D = W[L | 1 << k] - W[L], riga PrelDeltaBase + g * 12 + k * 4 + c. Uno spigolo e' usabile solo se ogni
-    // elemento della differenza sta in [-128, 127] (PSQT int32: differenza modulo 2^32, come le somme
-    // dell'accumulatore). on = false (rete senza PassedRel): nessuno spigolo usabile. Da chiamare a ogni rete letta.
-    void build_prel_delta(bool on) {
-        for (int g = 0; g < 96; g++)
-        {
-            std::uint16_t ok   = 0;
-            const usize   rel  = g >= 48 ? 384 : 0;
-            const usize   q    = usize(g % 48);
-            const usize   base = usize(ThreatPlusPawnDimensions);
-            for (unsigned k = 0; on && k < 3; k++)
-                for (unsigned c = 0; c < 4; c++)
-                {
-                    const unsigned lo  = (c & ((1u << k) - 1)) | ((c >> k) << (k + 1));
-                    const unsigned hi  = lo | (1u << k);
-                    const usize    rL  = base + rel + usize(lo) * 48 + q;
-                    const usize    rH  = base + rel + usize(hi) * 48 + q;
-                    const usize    rD  = usize(PawnGraftSet::PrelDeltaBase) + usize(g) * 12 + k * 4 + c;
-                    const auto*    wL  = threatWeights.data() + rL * HalfDimensions;
-                    const auto*    wH  = threatWeights.data() + rH * HalfDimensions;
-                    auto*          wD  = threatWeights.data() + rD * HalfDimensions;
-                    bool           fit = true;
-                    for (IndexType j = 0; j < HalfDimensions; ++j)
-                    {
-                        const int d = int(wH[j]) - int(wL[j]);
-                        fit &= d >= -128 && d <= 127;
-                        wD[j] = ThreatWeightType(fit ? d : 0);
-                    }
-                    for (usize b = 0; b < PSQTBuckets; ++b)
-                        threatPsqtWeights[rD * PSQTBuckets + b] =
-                          PSQTWeightType(std::uint32_t(threatPsqtWeights[rH * PSQTBuckets + b])
-                                         - std::uint32_t(threatPsqtWeights[rL * PSQTBuckets + b]));
-                    if (fit)
-                        ok |= std::uint16_t(1u << (k * 4 + c));
-                }
-            Features::PrelDeltaOk[g] = ok;
-        }
-    }
-#endif
-
-    // PassedState (PassedPawns v3, 10/10/2026). Le 96 righe v1 (dentro la permutazione per localita': feat_row) e le
-    // righe del blocco, stato * 96 + g dopo FoldOffset + Offset[6] (fuori dalla permutazione). Le righe sono tutte nello
-    // stesso ordine delle colonne (permute<8> su tutta la tabella): copiarle o confrontarle non ne dipende.
-    static usize pst_v1_row(int g) { return usize(Features::feat_row(Features::PassedPawns::FoldOffset + IndexType(g))); }
-    static usize pst_row(int st, int g) {
-        return usize(ThreatPlusPawnDimensions) + PawnGraftSet::Offset[6] + usize(st) * 96 + usize(g);
-    }
-    // v1 tutta a zero (pesi e PSQT): la condizione di V1Off.
-    bool pst_v1_zero() const {
-        for (int g = 0; g < 96; g++)
-        {
-            const usize r = pst_v1_row(g);
-            for (IndexType j = 0; j < HalfDimensions; ++j)
-                if (threatWeights[r * HalfDimensions + j])
-                    return false;
-            for (usize b = 0; b < PSQTBuckets; ++b)
-                if (threatPsqtWeights[r * PSQTBuckets + b])
-                    return false;
-        }
-        return true;
-    }
-    // Innesto di partenza (exportpst, e -DTRIUMV_GRAFT_RANDOM_V1OFF): ogni stato di ogni gruppo prende la riga v1
-    // (piu' quella gia' nel blocco, se fold), poi la v1 va a zero. Valutazione identica purche' le somme stiano in int8:
-    // false se un elemento esce da [-128, 127] (nulla cambia in quel caso).
-    bool pst_fold_v1(bool fold) {
-        for (int pass = 0; pass < 2; pass++)
-            for (int g = 0; g < 96; g++)
-            {
-                const usize v = pst_v1_row(g);
-                for (int st = 0; st < Features::PassedState::States; st++)
-                {
-                    const usize r = pst_row(st, g);
-                    for (IndexType j = 0; j < HalfDimensions; ++j)
-                    {
-                        const int s = int(threatWeights[v * HalfDimensions + j])
-                                    + (fold ? int(threatWeights[r * HalfDimensions + j]) : 0);
-                        if (s < -128 || s > 127)
-                            return false;
-                        if (pass)
-                            threatWeights[r * HalfDimensions + j] = ThreatWeightType(s);
-                    }
-                    if (pass)
-                        for (usize b = 0; b < PSQTBuckets; ++b)
-                            threatPsqtWeights[r * PSQTBuckets + b] =
-                              threatPsqtWeights[v * PSQTBuckets + b]
-                              + (fold ? threatPsqtWeights[r * PSQTBuckets + b] : 0);
-                }
-            }
-        for (int g = 0; g < 96; g++)
-        {
-            const usize v = pst_v1_row(g);
-            std::memset(threatWeights.data() + v * HalfDimensions, 0, HalfDimensions * sizeof(ThreatWeightType));
-            std::memset(threatPsqtWeights.data() + v * PSQTBuckets, 0, PSQTBuckets * sizeof(PSQTWeightType));
-        }
-        return true;
     }
 
     // Write network parameters
@@ -505,20 +318,6 @@ class FeatureTransformer {
                         sizeof(*tmp));
             write_leb_128<PSQTWeightType>(stream, *tmp);
         }
-
-        // Blocchi da innesto: un segmento per ogni blocco acceso (nn_graft_mask), ordine canonico (stesso formato in
-        // uscita della rete caricata, o della maschera scelta da exportgraft)
-        for (int b = 0; b < PawnGraftSet::Blocks; b++)
-            if (nn_graft_mask & (1u << b))
-            {
-                const usize row = usize(ThreatPlusPawnDimensions) + PawnGraftSet::Offset[b];
-                if (PawnGraftSet::Dim[b] == 9600)  // PassedState
-                    copy->template write_graft_block<9600>(stream, row);
-                else  // PassedRel
-                    copy->template write_graft_block<768>(stream, row);
-                if (b == 0 && Features::PrelBased)  // formato a base: la tabella segue il blocco (vedi read_parameters)
-                    stream.write(reinterpret_cast<const char*>(Features::PrelBase), sizeof(Features::PrelBase));
-            }
 
         return !stream.fail();
     }

@@ -19,7 +19,6 @@
 #include "network.h"
 
 #include <cstdlib>
-#include <cstring>  // memcpy/memset della tabella degli stati base (GRAFT_PASSEDREL_COSTO2 §8)
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -406,29 +405,15 @@ bool Network::write_header(std::ostream& stream, u32 hashValue, const std::strin
 }
 
 
-static_assert(FeatureTransformer::get_hash_value_graft(0) == FeatureTransformer::get_hash_value(),
-              "maschera 0 = formato senza blocchi da innesto");
-
 bool Network::read_parameters(std::istream& stream, std::string& netDescription) {
     u32 hashValue;
     if (!read_header(stream, &hashValue, &netDescription))
         return false;
     // v3: accetta anche il formato v2 (3 blocchi) -> il segmento PassedPawns
     // viene zero-fillato in FeatureTransformer::read_parameters (eval identica).
+    // (Le reti con i blocchi da innesto, provate il 09-10/10/2026, non si caricano piu' dal 10/10/2026: hash diverso.)
     const bool v2Compat = (hashValue == Network::hash_v2);
-    // Blocchi da innesto (09/10/2026): il formato dice quali ha la rete; gli altri restano a zero e spenti.
-    unsigned graftMask = 0;
-    bool     prelBased = false;  // PassedRel nel formato a base ("PRB1", GRAFT_PASSEDREL_COSTO2 §8)
-    for (unsigned m = 1; m <= PawnGraftSet::ALL; m++)
-    {
-        if (!PawnGraftSet::valid_mask(m))  // KingFiles con KingFilesQ, Space con Space24 (10/10/2026)
-            continue;
-        if (hashValue == Network::hash_graft(m))
-            graftMask = m, prelBased = false;
-        if ((m & 1u) && hashValue == Network::hash_graft(m, true))
-            graftMask = m, prelBased = true;
-    }
-    if (hashValue != Network::hash && !v2Compat && !graftMask)
+    if (hashValue != Network::hash && !v2Compat)
     {
         // Diagnostica: senza questi numeri un rifiuto di rete e' muto e si finisce a
         // indovinare quale pezzo non combacia (ordine dei blocchi, hash di una feature,
@@ -444,14 +429,14 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
         // Detail::read_parameters, che non puo' passare il flag).
         u32 header = read_little_endian<u32>(stream);
         const u32 expected = v2Compat ? FeatureTransformer::get_hash_value_v2()
-                                      : FeatureTransformer::get_hash_value_graft(graftMask, prelBased);
+                                      : FeatureTransformer::get_hash_value();
         if (!stream || header != expected)
         {
             std::cerr << "ERROR: feature-transformer hash mismatch. file=0x" << std::hex << header
                       << " engine=0x" << expected << std::dec << std::endl;
             return false;
         }
-        if (!featureTransformer.read_parameters(stream, v2Compat, graftMask, prelBased))
+        if (!featureTransformer.read_parameters(stream, v2Compat))
             return false;
     }
     for (usize i = 0; i < LayerStacks; ++i)
@@ -460,140 +445,16 @@ bool Network::read_parameters(std::istream& stream, std::string& netDescription)
             return false;
     }
     const bool ok = stream && stream.peek() == std::ios::traits_type::eof();
-#ifdef TRIUMV_NO_GRAFTS
-    if (graftMask)
-    {
-        std::cerr << "ERROR: rete con blocchi da innesto (maschera " << graftMask
-                  << "): questa build e' compilata senza (TRIUMV_NO_GRAFTS)" << std::endl;
-        return false;
-    }
-#endif
     if (ok)
-    {
-#ifndef TRIUMV_NO_GRAFTS
-        nn_graft_mask = graftMask;
-#endif
-        // Formato a base: tabella degli stati base (8 = nessuna base con gli altri formati, che non la hanno).
-        Features::PrelBased = featureTransformer.prelBasedLoaded;
-        std::memcpy(Features::PrelBase, featureTransformer.prelBaseLoaded, sizeof(Features::PrelBase));
-#ifdef TRIUMV_PREL_NOFILTER
-        // Solo verifica (§8.5): la rete a base senza il filtro somma anche le righe base, che sono zero: stesso bench.
-        // Non salvare reti con questa build (uscirebbero nel formato PRV2 con i pesi piegati).
-        Features::PrelBased = false;
-        // R1 (_wip graft_passedrel3): il percorso caldo filtra con "stato != PrelBase[g]" senza leggere PrelBased
-        // (invariante: senza formato a base la tabella e' tutta a 8, passed_rel.h).
-        std::memset(Features::PrelBase, 8, sizeof(Features::PrelBase));
-#endif
-    }
-#if defined(TRIUMV_GRAFT_RANDOM) && defined(TRIUMV_NO_GRAFTS)
-    #error "TRIUMV_GRAFT_RANDOM vuole i blocchi da innesto (senza TRIUMV_NO_GRAFTS)"
-#endif
-#ifdef TRIUMV_GRAFT_RANDOM
-    // Verifica dei blocchi da innesto (09/10/2026): pesi casuali piccoli e blocchi TRIUMV_GRAFT_RANDOM (maschera, es.
-    // 15 = tutti) accesi con qualsiasi rete, per confrontare con nnperft l'aggiornamento incrementale con il refresh
-    // completo. Solo build di diagnosi.
-    if (ok && !graftMask)
-    {
-        std::uint32_t x = 0x9E3779B9u;
-        auto*         w = featureTransformer.threatWeights.data()
-                  + usize(FeatureTransformer::ThreatPlusPawnDimensions) * FeatureTransformer::OutputDimensions;
-        for (usize i = 0; i < usize(FeatureTransformer::GraftInputDimensions) * FeatureTransformer::OutputDimensions; ++i)
-        {
-            x ^= x << 13, x ^= x >> 17, x ^= x << 5;
-            w[i] = ThreatWeightType(int(x % 15) - 7);
-        }
-        auto* p = featureTransformer.threatPsqtWeights.data()
-                  + usize(FeatureTransformer::ThreatPlusPawnDimensions) * PSQTBuckets;
-        for (usize i = 0; i < usize(FeatureTransformer::GraftInputDimensions) * PSQTBuckets; ++i)
-        {
-            x ^= x << 13, x ^= x >> 17, x ^= x << 5;
-            p[i] = PSQTWeightType(int(x % 201) - 100);
-        }
-        static_assert(PawnGraftSet::valid_mask(unsigned(TRIUMV_GRAFT_RANDOM)), "TRIUMV_GRAFT_RANDOM: maschera non valida");
-        nn_graft_mask = unsigned(TRIUMV_GRAFT_RANDOM);
-    #ifdef TRIUMV_GRAFT_RANDOM_BASED
-        // Formato a base con pesi casuali (GRAFT_PASSEDREL_COSTO2 §8.5): stato base casuale per gruppo (8 = nessuno) e
-        // riga dello stato base a zero, come dopo la conversione. Il refresh di confronto di nnperft (eval_full) passa
-        // dal riferimento non filtrato: incrementale filtrato e refresh devono coincidere.
-        if (nn_graft_mask & 1u)
-        {
-            for (int g = 0; g < 96; g++)
-            {
-                x ^= x << 13, x ^= x >> 17, x ^= x << 5;
-                const int st = int(x % 9);
-                Features::PrelBase[g] = std::uint8_t(st);
-                if (st == 8)
-                    continue;
-                const usize row = usize(FeatureTransformer::ThreatPlusPawnDimensions) + (g >= 48 ? 384 : 0)
-                                + usize(st) * 48 + usize(g % 48);
-                std::memset(featureTransformer.threatWeights.data() + row * FeatureTransformer::OutputDimensions, 0,
-                            FeatureTransformer::OutputDimensions * sizeof(ThreatWeightType));
-                std::memset(featureTransformer.threatPsqtWeights.data() + row * PSQTBuckets, 0,
-                            PSQTBuckets * sizeof(PSQTWeightType));
-            }
-            Features::PrelBased = true;
-        }
-    #endif
-    }
-#endif
-#if defined(TRIUMV_GRAFT_RANDOM) && defined(TRIUMV_GRAFT_RANDOM_V1OFF)
-    // PassedState con la v1 a zero (percorso V1Off) e pesi casuali nel blocco: solo nnperft (incrementale contro
-    // refresh), la valutazione non e' quella della rete.
-    if (ok && !graftMask && (nn_graft_mask & PawnGraftSet::PASSED_STATE))
-        for (int g = 0; g < 96; g++)
-        {
-            const usize v = FeatureTransformer::pst_v1_row(g);
-            std::memset(featureTransformer.threatWeights.data() + v * FeatureTransformer::OutputDimensions, 0,
-                        FeatureTransformer::OutputDimensions * sizeof(ThreatWeightType));
-            std::memset(featureTransformer.threatPsqtWeights.data() + v * PSQTBuckets, 0,
-                        PSQTBuckets * sizeof(PSQTWeightType));
-        }
-#endif
-    // PassedState (10/10/2026): la v1 si spegne solo se la rete la porta tutta a zero (righe nulle: esatto).
-    if (ok)
-        Features::V1Off = (nn_graft_mask & PawnGraftSet::PASSED_STATE) && featureTransformer.pst_v1_zero();
-#ifdef TRIUMV_PREL_DELTA
-    // R3 (_wip graft_passedrel3): righe delta di PassedRel dai pesi appena letti (anche quelli casuali di
-    // TRIUMV_GRAFT_RANDOM, qui sopra), a ogni rete letta.
-    if (ok)
-        featureTransformer.build_prel_delta((nn_graft_mask & PawnGraftSet::LISTS) == PawnGraftSet::PASSED_REL);
-#endif
-    if (ok)
-        ++nn_net_epoch;  // _wip graft_space_locked: invalida la cache "pe" dei blocchi pedoni di ogni thread
+        ++nn_net_epoch;  // invalida la cache "pe" dei blocchi pedoni di ogni thread (nn_dirty.h)
     return ok;
-}
-
-
-bool Network::save_pst(const std::string& filename) const {
-#ifdef TRIUMV_NO_GRAFTS
-    return false;
-#else
-    if (nn_graft_mask)  // solo da una rete senza blocchi: le righe del blocco partono da zero
-        return false;
-    auto copy = std::make_unique<Network>(*this);
-    if (!copy->featureTransformer.pst_fold_v1(false))
-        return false;
-    nn_graft_mask = PawnGraftSet::PASSED_STATE;
-    const bool ok = copy->save(std::optional<std::string>(filename));
-    nn_graft_mask = 0;
-    return ok;
-#endif
 }
 
 
 bool Network::write_parameters(std::ostream& stream, const std::string& netDescription) const {
-    // Con i blocchi da innesto accesi la rete esce nel formato con quei blocchi (hash e sezione FT propri).
-    const bool prelBased = Features::PrelBased && (nn_graft_mask & 1u);  // formato a base (GRAFT_PASSEDREL_COSTO2 §8)
-    if (!write_header(stream, nn_graft_mask ? Network::hash_graft(nn_graft_mask, prelBased) : Network::hash,
-                      netDescription))
+    if (!write_header(stream, Network::hash, netDescription))
         return false;
-    if (nn_graft_mask)
-    {
-        write_little_endian<u32>(stream, FeatureTransformer::get_hash_value_graft(nn_graft_mask, prelBased));
-        if (!featureTransformer.write_parameters(stream))
-            return false;
-    }
-    else if (!Detail::write_parameters(stream, featureTransformer))
+    if (!Detail::write_parameters(stream, featureTransformer))
         return false;
     for (usize i = 0; i < LayerStacks; ++i)
     {
