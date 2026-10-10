@@ -39,6 +39,8 @@
 [Universal executable](#35-one-executable-for-every-cpu-89-october-2026) ·
 [Speed measured again](#36-every-speed-decision-of-68-october-measured-again-9-october-2026) ·
 [Experimental grafts](#37-experimental-grafts-on-consilium-910-october-2026) ·
+[PR4, causal reduction, PassedState](#38-pr4-and-the-causal-reduction-baked-and-a-passed-pawn-block-that-replaces-passedpawns-910-october-2026) ·
+[Release candidate of 10 October](#39-the-release-candidate-of-10-october-2026) ·
 [All ideas tested](#appendix-every-search-idea-tested-since-the-restructured-search) · [7.0 log](archive/DEVELOPMENT_7.0.md)
 
 </div>
@@ -48,7 +50,7 @@
 > [!NOTE]
 > **Work in progress.** `source/` holds the 8.0 development code; the 7.0 release is the tag `v7.0`, and
 > the current 8.0 prerelease is the tag `v8.0`. The sections follow the order in which the work was done,
-> each step starting from what the previous one found. Current `bench`: **430151**.
+> each step starting from what the previous one found. Current `bench`: **222811**.
 
 ## The path so far
 
@@ -69,6 +71,8 @@ go, compared with Stockfish? Each step answered the question the previous one le
 | **Speed, one board, large pages** | 27–30 | patches that only remove work, the network reading the search's board, search state on large pages, fine-tunes of the network (no gain) | same tree; speed measured again in section 36 | 430151 |
 | **Clean-up and chess knowledge** | 31–34 | closed options retired, the points lost against Stockfish 19 located (defence with a short clock), new levers off, ordering terms moved to an SPSA | ordering terms flat at fixed values (+0.4 ± 5.4); SPSA PR4 running, first check +5.3 ± 8.0 | 430151 |
 | **One executable, speed measured again** | 35–36 | a universal executable for every CPU, every speed decision of 6–8 October measured again, an analysis mode at no cost in games | the universal build 0.5% faster than the separate one; two dropped patches recovered | 430151 |
+| **Grafts, PR4 and the causal reduction** | 37–38 | network blocks grafted on the frozen Consilium (none adopted), the SPSA PR4 vector and the causal reduction baked | PR4 +3.4 ± 3.9 (about 8,100 games), causal reduction +4.27 ± 4.13 (6,594) | 222811 |
+| **Release candidate** | 39 | graft code removed from the engine, a universal build of today's source | **+11.9 ± 7.2** against the public pre-release at 15+0.15 (2,866 games) | **222811** |
 
 The direction, in short: first make the same search faster, then give it a better network, then find why it needed
 more nodes than Stockfish and rebuild its structure, and now add small measured ideas on top of it. Every Elo figure
@@ -76,17 +80,18 @@ is an SPRT or a match against the step before, on the same machine, with its 95%
 October were measured again on 9 October with a corrected method (section 36); the sections of those days give only
 the confirmed values.
 
-## Where things stand (9 October 2026)
+## Where things stand (10 October 2026)
 
 - **Engine:** the restructured search with the RW1 parameters (section 17), the Consilium network, the ideas adopted
-  in sections 21–27 and 31, two speed patches recovered in section 36, and an analysis mode that leaves games
-  unchanged. Bench **430151**. The prerelease on the tag `v8.0` is the universal executable of 9 October morning
-  (section 35, one unit per variant); the next release uses the faster universal build and the SPSA PR4 vector.
+  in sections 21–27 and 31, two speed patches recovered in section 36, an analysis mode that leaves games unchanged,
+  and since 9–10 October the SPSA PR4 vector (the ordering terms of section 34 on) and the causal reduction
+  (section 38). The graft code was removed on 10 October. Bench **222811**.
+- **Release candidate (section 39):** the universal executable of 10 October scored **+11.9 ± 7.2 Elo over 2,866
+  games** against the previous pre-release (`Triumviratus_8.0_20261009_universal.exe`) at 15+0.15, and was published
+  on 10 October as the pre-release on the tag `v8.0`.
 - **Against Stockfish 19** at 133+1 (section 26): **+5 =310 −5 over 320, 50.0%**; at 30+0.3 on random openings
   −4.4 ± 7.1 over 395 (section 27). In blitz the remaining gap lies in defence with a short clock (section 32).
-- **Baked on 9–10 October (section 38):** the SPSA PR4 vector and the causal reduction; bench **222811**. The graft
-  blocks were tried and closed (section 38): none enters 8.0. Running: an A/B of today's universal build against the
-  public executable of 8 October at 15+0.15.
+- **Closed:** the graft blocks on Consilium (sections 37–38): none enters 8.0.
 - **Open:** the correction SPSA CORR1; the time levers of section 33 at 40+0.4; a short SPSA of the deep levers at
   40+0.4; the shape of the next network.
 - **Test rules,** as they evolved: one idea at a time on the same binary; at least 20,000 games or a clear verdict
@@ -1519,7 +1524,10 @@ PassedRel game test.
 checked in four SPRTs against the defaults (20+0.2 and 15+0.15 with hyperthreading, 15+0.15 and 10+0.1 on physical
 cores only, two opening orders): about 8,100 games together, **+3.4 ± 3.9 Elo**. The two sockets of the test machine
 disagreed in all four (+9.2 ± 5.3 on the first, −2.9 ± 5.7 on the second, about three standard errors), with the
-same depth and time on both; an A/A test was started to separate the machine from the engine. The mean of the last
+same depth and time on both; an A/A test (the same binary on both sides, 8+0.08, 1,618 games) came out neutral on
+both sockets (−4.3 ± 12.3 and +0.9 ± 12.5), so the setup itself does not favour either side. The second socket has
+two memory channels against four on the first, which matters for features that read more memory (see PassedRel
+below). The mean of the last
 300 iterations (5,703–6,002) was baked: the ordering terms of section 34 are now on (`KingShield` 5371,
 `OutpostOrder` 4179, `AttackOrder` 5807, `AttackOrderQ` 6371, `PassedPush` 3975, `PromoOrder` 2412,
 `BishopPairCapt` 601), and 39 pruning, extension and ordering levers moved by a few percent. Bench **269775**.
@@ -1580,6 +1588,36 @@ poor candidate for a release that runs on every kind of computer. The graft code
 10 October; it is kept, with the blocks removed earlier and the cost reports, in the training repository
 (`04_consilium/graft_engine_storico`), and the training material in `04_consilium/graft_passedstate`.
 
+## 39. The release candidate of 10 October 2026
+
+**Graft code removed.** With the graft chapter closed, its code left the engine: the PassedRel and PassedState
+feature files and the PawnGrafts loader, the graft lists and their catch-up in the incremental update, the graft
+rows of the threat table and the row differences of PassedRel, the export and index commands (`exportprel`,
+`exportpst`, `exportgraft`, `pstidx`) and their counters. The original PassedPawns rows and their per-move update stay.
+A network with graft blocks is now refused at load with the ordinary hash error. The evaluation does not change:
+bench **222811** as before, `nnperft` (every incremental update compared with a full refresh) with no difference on
+four positions, and a build with both accumulator checks (`TRIUMV_VERIFY_NNSYNC`, `TRIUMV_VERIFY_V1PASS`) runs the
+bench without a mismatch. The `TRIUMV_NO_GRAFTS` switch of section 38 is no longer needed.
+
+**The build.** The universal executable of section 35, built from this source: one unit per file, a profile from a
+deterministic training (fixed node counts, so every build of the same source gets the same profile), the network
+embedded. Bench 222811 on each variant the test machine can run (AVX2 without PEXT, AVX2, AVX-512); the executable
+imports only `KERNEL32.dll`. Besides the standard options it shows those of the analysis mode of section 36
+(`UCI_AnalyseMode`, `AnalyseOnInfinite` and eight components, `AnDeep` to `AnGold`), which change nothing in games.
+
+**Against the public pre-release.** The candidate, today's search in a universal build (the same search as this
+source, compiled with `TRIUMV_NO_GRAFTS` before the code was removed), played the public pre-release
+(`Triumviratus_8.0_20261009_universal.exe`, bench 430151) at 15+0.15, UHO 2024 (+0.85/+0.94), 128 MB hash, 34 games
+per socket with hyperthreading. Expected from the sections before: about +8. Result: **+11.9 ± 7.2 Elo over 2,866
+games** (pentanomial 24, 305, 688, 381, 35), +15.3 ± 9.9 on the first socket and +8.5 ± 10.4 on the second. The first 460 games stood at −11; that was noise. The test was stopped at this
+point: a regression was excluded with margin (the lower end of the interval is +4.7), and the usual SPRT [0, 3] had
+reached LLR 1.39 of 2.94. Two bursts of load on the machine (a build and its profile training) made both engines lose
+games on time, 78 the candidate and 85 the base; without the pairs that contain one the result is the same, +11.85 ±
+7.13 over 2,610 games.
+
+**Publication.** The executable was published on 10 October as the pre-release on the tag `v8.0`, replacing the one
+of 9 October.
+
 ## Appendix: every search idea tested since the restructured search
 
 One line per idea, in the order tested; details in the section given. Elo is the candidate against the defaults on
@@ -1637,3 +1675,4 @@ the same binary, with its 95% interval; "lean" means stopped early while positiv
 | SPSA PR4 vector, first check (iterations 2,517–2,816) | 34 | 20+0.2 UHO | 1,842 | +5.3 ± 8.0 | SPSA continues |
 | SPSA PR4 vector, final (four SPRTs together) | 38 | 10–20 s UHO | about 8,100 | +3.4 ± 3.9 | **baked** |
 | **Causal reduction** (author's idea), 512 | 38 | 25+0.25 UHO | 6,594 | **+4.27 ± 4.13** | **baked** |
+| **Today's build against the public pre-release** (PR4, causal reduction, faster build) | 39 | 15+0.15 UHO | 2,866 | **+11.9 ± 7.2** | release candidate |

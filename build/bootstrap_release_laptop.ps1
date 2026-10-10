@@ -10,7 +10,7 @@
 #  USO (PowerShell, NON serve amministratore se il toolchain c'e' gia'):
 #     Set-ExecutionPolicy -Scope Process Bypass -Force
 #     .\bootstrap_release_laptop.ps1                    # tutto, data di rilascio = oggi
-#     .\bootstrap_release_laptop.ps1 -Day 20261009      # data della riga id name
+#     .\bootstrap_release_laptop.ps1 -Day 20261010      # data della riga id name
 #     .\bootstrap_release_laptop.ps1 -NoBuild           # solo download e controlli
 #  Risultato: <Dest>\out\Triumviratus_8.0_<Day>_universal.exe, SHA256SUMS.txt, verifica.txt
 #
@@ -30,7 +30,7 @@ param(
   [int]$Workers    = [Environment]::ProcessorCount,
   [string]$NetUrl  = "https://github.com/Tors3/Triumviratus/releases/download/v8.0/nn-consilium.nnue",
   [string]$ExtraFlags = "",
-  [string]$ExpectedBench = "430151",
+  [string]$ExpectedBench = "222811",
   [switch]$NoBuild
 )
 $ErrorActionPreference = "Stop"
