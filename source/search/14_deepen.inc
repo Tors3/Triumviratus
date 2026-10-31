@@ -798,7 +798,12 @@ static void deepen(ThreadData &td) {
         total_time *= TmExpectScale / 1000.0;
       // Surprise (TmSurpriseScale): the opponent did not play the expected reply, more time for this move, but
       // only with the clock still above TmSurpriseClock % of the one at the start of the game.
-      if (g_clock.surprise && TmSurpriseScale > 1000 &&
+      // TmSurpriseBehind (30/10/2026, OFF): silent too while our clock is behind the opponent's by more than
+      // TmSurpriseBehind/1000 of theirs.
+      const double sur_mine = g_limits.time[td.root_side], sur_theirs = g_limits.time[td.root_side ^ 1];
+      const bool sur_behind = TmSurpriseBehind && sur_theirs > sur_mine &&
+                              (sur_theirs - sur_mine) > TmSurpriseBehind / 1000.0 * sur_theirs;
+      if (g_clock.surprise && TmSurpriseScale > 1000 && !sur_behind &&
           100.0 * g_limits.time[td.root_side] >= TmSurpriseClock * g_clock.start_clock) {
         // TmSurpriseGrade (0 = off, identical timing): weight of the extra time according to how much the reply changed
         // the score.
@@ -810,8 +815,22 @@ static void deepen(ThreadData &td) {
       }
       // TmDefendMul (08/10/2026, audit X3; BAKED at 500 on 11/10/2026): in defence (root between -TmDefendTo and -TmDefendFrom) more time; the
       // cap stays the move's maximum. Against a stronger reference engine in defence we erred 2-3 times more often.
-      if (TmDefendMul && best <= -TmDefendFrom && best > -TmDefendTo)
-        total_time *= 1 + TmDefendMul / 1000.0;
+      // TmDefendClock / TmDefendFade (30/10/2026, OFF): the extra time of defence shrinks with the clock. In the four
+      // losses of the CCRL Blitz gauntlet against SF19 (120+1 from the book exit, 30/10) three times our clock fell
+      // 30-40 s behind SF's while the root was at -0.7 to -1.5 (moves 15-30), and the slide to -2.5 came with less
+      // than 25 s on our clock (in the fourth the clock ran out only after the game was lost). On the whole match we
+      // kept more clock than SF. TmDefendClock: with less clock than the opponent the extra is scaled by
+      // 1 - TmDefendClock/1000 x relative deficit. TmDefendFade: below TmDefendFade/1000 of the starting clock the
+      // extra fades linearly to 0. Both 0: identical timing.
+      if (TmDefendMul && best <= -TmDefendFrom && best > -TmDefendTo) {
+        double extra = TmDefendMul / 1000.0;
+        const double mine = g_limits.time[td.root_side], theirs = g_limits.time[td.root_side ^ 1];
+        if (TmDefendClock && mine < theirs)
+          extra *= std::max(0.0, 1.0 - TmDefendClock / 1000.0 * (theirs - mine) / theirs);
+        if (TmDefendFade && g_clock.start_clock > 0)
+          extra *= std::min(1.0, mine / (TmDefendFade / 1000.0 * g_clock.start_clock));
+        total_time *= 1 + extra;
+      }
       // TmTrans (20/10/2026, ours, 0 = off): the captures in the first TmTransPlies moves of the principal variation
       // take the game into another expert of the network (another material band). Such trades are hard to undo, so
       // the move gets TmTransMul more time; the other moves give back TmTransRest, so that the average time per move

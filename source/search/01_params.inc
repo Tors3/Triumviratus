@@ -1,4 +1,12 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
+//
+// BAKE I (31/10/2026, author): the SPSA of block I (aspiration windows and optimism, 5 levers, 8+0.08 without HT), the
+// first run with the lab aligned with fishtest (stochastic rounding, lr 0.032), paused at iteration 616: AspGrowLo
+// 51->50, AspGrowHi 51->52, AspMeanSqDiv 10193->10050, OptStrength 182->183, OptDiv 288->284. SPRT against the previous
+// defaults, 8+0.08 without HT, UHO, [-1, 2], three parts pooled (PC reboot, a pause for another test): +1.83 +- 2.78
+// over 15,006 games (socket 0 +1.90, socket 1 +1.76; LLR +1.18 on [-1, 2], +2.32 on the non-regression bounds [-3, 1]),
+// stopped by the author at 15,000. A lean, to be reconfirmed at a long time control. Backup _pre_bake_i_2026-10-31.
+//
 // Part of threads.cpp: NOT a compilation unit of its own. Included only by threads.cpp.
 //
 // BLOCK 4 LADDER (19/10/2026 night, user: "fully our own"): the extra plies of the singular extension become a ladder,
@@ -226,18 +234,18 @@
      endgames 8+0.1 without adjudication (first run +2.55 / 829); in the SPSA RES1 1024 -> 997, zero gradient.        \
      Backup _pre_rimozione_blend_2026-10-11. RESIDUAL LINE CLOSED: constant terms, four learned corrections         \
      (KingPawn, Shelter, PassKing; Expert was already neutral) and two search levers, all neutral or negative.      */ \
-  P(OptStrength, 182, 0, 600)            /* optimism = strength * s / (|s| + div), in network units     */   \
-  P(OptDiv, 288, 1, 600)                                                                                  \
+  P(OptStrength, 183, 0, 600)            /* optimism = strength * s / (|s| + div), in network units     */   \
+  P(OptDiv, 284, 1, 600)                                                                                  \
   /* aspiration windows */                                                                                \
   P(AspBase, 6, 1, 40)                                                                                    \
-  P(AspMeanSqDiv, 10193, 1000, 40000)                                                                     \
+  P(AspMeanSqDiv, 10050, 1000, 40000)                                                                     \
   /* BLOCK 5 - aspiration windows (14_deepen.inc). Defaults give the old behaviour.                              */ \
   /*   AspGrowLo / AspGrowHi  growth of delta (/128) after a fail low / high (one AspGrow = 51 served both)     */ \
   /*   AspFhRed               plies off the search for each fail high in a row (was 1)                         */ \
   /*   AspLoKeep              ours, off: after a fail low beta keeps AspLoKeep/1024 of the window              */ \
   /* New levers: own SPRT at the end of the 8.1 queue, then SPSA (possibly per expert).                         */ \
-  P(AspGrowLo, 51, 10, 128)                                                                               \
-  P(AspGrowHi, 51, 10, 128)                                                                               \
+  P(AspGrowLo, 50, 10, 128)                                                                               \
+  P(AspGrowHi, 52, 10, 128)                                                                               \
   P(AspFhRed, 1, 0, 3)                                                                                    \
   P(AspLoKeep, 0, 0, 1024)                                                                                \
   /* BLOCK 5 - threads, lazy SMP (15_threads.inc, 14_deepen.inc). Defaults give the old behaviour.              */ \
@@ -753,6 +761,11 @@
   P(TmDefendMul, 500, 0, 1000)           /* BAKE 11/10/2026 (was 0, see the header): /1000, time x (1+Mul) in defence */ \
   P(TmDefendFrom, 178, 0, 2000)          /* root <= -From (178 ~ half a pawn)                              */ \
   P(TmDefendTo, 1424, 200, 4000)         /* ...and > -To (beyond it is lost: normal time)                  */ \
+  /* TmDefendClock: adopted at 1000 on 30/10/2026 evening, back to 0 the same night (author: "facciamo solo           \
+     TmSurpriseBehind"). Dev-build gauntlets against SF19, 30+0.3 equal clocks, new - old: with TmSurpriseBehind       \
+     -19.9 +- 25.7 / ~330 per build, alone -12.7 +- 40.9 / ~135; release gauntlet at 15+0.15 HT +4.6 +- 11.3 / ~1,975.  */ \
+  P(TmDefendClock, 0, 0, 1000)           /* 30/10/2026, OFF: /1000, defence extra x (1 - k x relative clock deficit) */ \
+  P(TmDefendFade, 0, 0, 1000)            /* 30/10/2026, OFF: /1000 of the start clock below which the extra fades to 0 */ \
   P(TmEarlySave, 200, 0, 500)            /* BAKE 11/10/2026 (was 0): /1000, optimum share x (1-Save) with >= 24 pieces */ \
   /* Idea F (13/10/2026, user): time per network expert. Optimum share x (1 + TmExpK/1000) according to the expert   \
      of the root (net_phase: <=9, 10-15, 16-23, >=24 pieces), after TmEarlySave. 0 = unchanged. To be tried as a     \
@@ -1310,6 +1323,18 @@
      20+0.2: -10.1 +- 7.5 over 1,998 games, closed: the time taken in the middlegame costs more than it returns.       \
      0 = always. */                                                                                                   \
   P(TmSurpriseClock, 0, 0, 100)          /* % of the starting clock below which the surprise is silent */  \
+  /* TmSurpriseBehind (30/10/2026, author: "se siamo sopra pensa di piu' in caso di sorpresa, se siamo sotto la       \
+     disattiva"): the surprise is silent while our clock is behind the opponent's by more than this share of theirs  \
+     (/1000); 1 = any deficit above 0.1%. Replay of 8 losses against SF19 on the Zen 4 (573 moves,                    \
+     match_moe/rigioca_tempo.py): in defence the surprise fired on 32% of the moves, which cost 3.1x the target       \
+     against 1.6x for the others and took 40% of the defence time. Adopted at 1 the same evening, then back to 0      \
+     (author: "scegli una da tenere"): together with TmDefendClock 1000, self-play 30+0.3 HT -2.0 +- 7.0 / 2,114, and  \
+     the dev-build gauntlet against SF19 (equal clocks, ~0.83 of SF's nps) -19.9 +- 25.7 / ~330 per build. ALONE:    \
+     dev-build gauntlet against SF19 -8.3 +- 20.0 / 586 per build; self-play 25+0.25 HT on avt-fringe-2026-eq         \
+     +0.94 +- 5.30 / 2,578 (socket 0 -5.9, socket 1 +7.8). ADOPTED AT 1 on 30/10/2026 21:11 by the author ("sappiamo  \
+     che non perde, ma almeno risolviamo un po' quel problema"): neutral, and it removes part of the clock spent while  \
+     behind. 0 = the old rule (surprise whatever the clock).                                                          */ \
+  P(TmSurpriseBehind, 1, 0, 1000)        /* /1000: relative clock deficit beyond which the surprise is silent */ \
   /* Graded surprise (09/10/2026, proposal 5 of the novelties register, user: "develop it and keep it off"). The     \
      surprise rule is yes/no; here the extra time depends on how much the unexpected reply changed the game: d =     \
      score expected at the end of the previous search (same perspective, two plies later) minus the root score at    \
