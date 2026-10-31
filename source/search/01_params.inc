@@ -82,8 +82,7 @@
 // Fixed-depth tree -2/-6% (84 positions, D10-D20). Bench 221809 (before 325747).
 // BAKE TIME IN DEFENCE (11/10/2026 evening, user: "I think it is acceptable now"): TmDefendMul 0 -> 500 (time of the
 // move x1.5 with the root between -TmDefendTo and -TmDefendFrom, i.e. defending but not lost) and TmEarlySave 0 -> 200
-// (target share -20% with >= 24 pieces), the two levers of audit X3 (defence with a short clock = 34% of the loss
-// against the reference engine), together. SPRT UHO 40+0.4, tm30 (bench 325747), TmFenPly=1 on both sides: +7.27 +- 7.08 Elo over
+// (target share -20% with >= 24 pieces), the two levers of audit X3 (defence with a short clock), together. SPRT UHO 40+0.4, tm30 (bench 325747), TmFenPly=1 on both sides: +7.27 +- 7.08 Elo over
 // 2,150 games (LLR +0.73, zero excluded; socket 0 +5.17, socket 1 +9.38). Bench unchanged (time management). To be
 // split later (which of the two gains) and reviewed at a longer TC: the slower socket gained more.
 // BAKE NEGEXTMAX (11/10/2026 morning, user): a cap of ONE extension from a negative reduction per line (13_search.inc,
@@ -754,7 +753,7 @@
   P(PromoOrder, 2412, 0, 40000)             /* queen promotion, added to the score of the tactical moves       */ \
   P(BishopPairCapt, 601, 0, 4000)          /* capture of a bishop when the opponent has the pair              */ \
   /* Audit X3 (08/10/2026, docs/audit_8.0/X3_DOVE_PERDIAMO.md), OFF by default: at 0 tree and timing identical.      \
-     Against the reference engine we lose points in defence with little clock, above all between 10 and 23 pieces. ProgressFade:      \
+     ProgressFade:                                                                                                    \
      extra damping with the fifty-move counter beyond ProgressFrom (12_quiesce.inc). TmDefendMul: more time           \
      when the root is defending. TmEarlySave: optimum share reduced with >= 24 pieces (14_deepen.inc). */             \
   /* ProgressFade/ProgressFrom: closed neutral and REMOVED in the cleanup of the evening of 11/10/2026 (see below, CLEANUP). */ \
@@ -762,15 +761,13 @@
   P(TmDefendFrom, 178, 0, 2000)          /* root <= -From (178 ~ half a pawn)                              */ \
   P(TmDefendTo, 1424, 200, 4000)         /* ...and > -To (beyond it is lost: normal time)                  */ \
   /* TmDefendClock: adopted at 1000 on 30/10/2026 evening, back to 0 the same night (author: "facciamo solo           \
-     TmSurpriseBehind"). Dev-build gauntlets against SF19, 30+0.3 equal clocks, new - old: with TmSurpriseBehind       \
-     -19.9 +- 25.7 / ~330 per build, alone -12.7 +- 40.9 / ~135; release gauntlet at 15+0.15 HT +4.6 +- 11.3 / ~1,975.  */ \
+     TmSurpriseBehind"). Self-play 30+0.3 HT together with TmSurpriseBehind: -2.0 +- 7.0 / 2,114.                    */ \
   P(TmDefendClock, 0, 0, 1000)           /* 30/10/2026, OFF: /1000, defence extra x (1 - k x relative clock deficit) */ \
   P(TmDefendFade, 0, 0, 1000)            /* 30/10/2026, OFF: /1000 of the start clock below which the extra fades to 0 */ \
   P(TmEarlySave, 200, 0, 500)            /* BAKE 11/10/2026 (was 0): /1000, optimum share x (1-Save) with >= 24 pieces */ \
   /* Idea F (13/10/2026, user): time per network expert. Optimum share x (1 + TmExpK/1000) according to the expert   \
      of the root (net_phase: <=9, 10-15, 16-23, >=24 pieces), after TmEarlySave. 0 = unchanged. To be tried as a     \
-     REDISTRIBUTION (more time in endgames, less in the opening): in self-play the side that spends more wins.        \
-     X5: the errors against the reference are in endgames with <= 9 pieces; X3: in defence with 10-23 pieces. */               \
+     REDISTRIBUTION (more time in endgames, less in the opening): in self-play the side that spends more wins. */      \
   P(TmExp0, 0, -500, 1000)               /* 20/10: TMLOG data show the verdict stops a little early in endgames  */ \
                                          /* (move changes later 4.9% vs 3.2-4.1%, least time). 300 on the endgame */ \
                                          /* book, no draw adj, 10+0.1 noHT: +0.66 +- 2.16 over 5,226 (first 1,372 */ \
@@ -1325,12 +1322,10 @@
   P(TmSurpriseClock, 0, 0, 100)          /* % of the starting clock below which the surprise is silent */  \
   /* TmSurpriseBehind (30/10/2026, author: "se siamo sopra pensa di piu' in caso di sorpresa, se siamo sotto la       \
      disattiva"): the surprise is silent while our clock is behind the opponent's by more than this share of theirs  \
-     (/1000); 1 = any deficit above 0.1%. Replay of 8 losses against SF19 on the Zen 4 (573 moves,                    \
-     match_moe/rigioca_tempo.py): in defence the surprise fired on 32% of the moves, which cost 3.1x the target       \
-     against 1.6x for the others and took 40% of the defence time. Adopted at 1 the same evening, then back to 0      \
-     (author: "scegli una da tenere"): together with TmDefendClock 1000, self-play 30+0.3 HT -2.0 +- 7.0 / 2,114, and  \
-     the dev-build gauntlet against SF19 (equal clocks, ~0.83 of SF's nps) -19.9 +- 25.7 / ~330 per build. ALONE:    \
-     dev-build gauntlet against SF19 -8.3 +- 20.0 / 586 per build; self-play 25+0.25 HT on avt-fringe-2026-eq         \
+     (/1000); 1 = any deficit above 0.1%. Replay of 8 lost games (573 moves, match_moe/rigioca_tempo.py): in defence  \
+     the surprise fired on 32% of the moves, which cost 3.1x the target against 1.6x for the others and took 40% of   \
+     the defence time. Adopted at 1 the same evening, then back to 0 (author: "scegli una da tenere"): together with  \
+     TmDefendClock 1000, self-play 30+0.3 HT -2.0 +- 7.0 / 2,114. ALONE: self-play 25+0.25 HT on avt-fringe-2026-eq   \
      +0.94 +- 5.30 / 2,578 (socket 0 -5.9, socket 1 +7.8). ADOPTED AT 1 on 30/10/2026 21:11 by the author ("sappiamo  \
      che non perde, ma almeno risolviamo un po' quel problema"): neutral, and it removes part of the clock spent while  \
      behind. 0 = the old rule (surprise whatever the clock).                                                          */ \

@@ -814,12 +814,10 @@ static void deepen(ThreadData &td) {
           total_time *= TmSurpriseScale / 1000.0;
       }
       // TmDefendMul (08/10/2026, audit X3; BAKED at 500 on 11/10/2026): in defence (root between -TmDefendTo and -TmDefendFrom) more time; the
-      // cap stays the move's maximum. Against a stronger reference engine in defence we erred 2-3 times more often.
-      // TmDefendClock / TmDefendFade (30/10/2026, OFF): the extra time of defence shrinks with the clock. In the four
-      // losses of the CCRL Blitz gauntlet against SF19 (120+1 from the book exit, 30/10) three times our clock fell
-      // 30-40 s behind SF's while the root was at -0.7 to -1.5 (moves 15-30), and the slide to -2.5 came with less
-      // than 25 s on our clock (in the fourth the clock ran out only after the game was lost). On the whole match we
-      // kept more clock than SF. TmDefendClock: with less clock than the opponent the extra is scaled by
+      // cap stays the move's maximum.
+      // TmDefendClock / TmDefendFade (30/10/2026, OFF): the extra time of defence shrinks with the clock, so that a
+      // long defence does not leave the engine short of time later. TmDefendClock: with less clock than the opponent
+      // the extra is scaled by
       // 1 - TmDefendClock/1000 x relative deficit. TmDefendFade: below TmDefendFade/1000 of the starting clock the
       // extra fades linearly to 0. Both 0: identical timing.
       if (TmDefendMul && best <= -TmDefendFrom && best > -TmDefendTo) {
