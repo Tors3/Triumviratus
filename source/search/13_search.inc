@@ -167,20 +167,16 @@ static constexpr auto make_all_node_recip = [](int base) {
   }
   return r;
 };
-// History divisor per depth in our form (27/10/2026, docs/audit_8.1/R9): the inherited table HistDiv1-16 times
-// (1024 + HistDivScale + HistDivTilt * (d - 8)) / 1024, one level for the whole table and one slope across depth, so
-// that the SPSA moves two levers instead of sixteen. Clamped to [256, 8192] (up to 8192 the 40-bit reciprocal stays
-// exact for |hist| < 2^27). Both at 0: the table itself (x * 1024 / 1024 = x).
-// HistDivForm 1 (30/10/2026, OFF): the inherited table is replaced by a parabola of ours across depth,
-// HistDivMid + HistDivCurve * (d - 8)^2 / 64 + HistDivSlope * (d - 8) / 8. Fitted to the 16 inherited values it explains
-// little of them (they zigzag by +-8% around 3083, tuning noise of another search): rms 227 against 253, so the form
-// changes the tree and has its own SPRT. Defaults = the fit (vertex near d = 8 at 2960, 3233 at d = 1, 3332 at d = 16).
-static constexpr auto make_hist_div = [](const std::array<int, 16> &div, int scale, int tilt, int form, int mid,
-                                         int curve, int slope) {
+// History divisor per depth, a parabola of ours across depth (30/10/2026, adopted with the P2 bake of 01/11/2026):
+// HistDivMid + HistDivCurve * (d - 8)^2 / 64 + HistDivSlope * (d - 8) / 8, times (1024 + HistDivScale + HistDivTilt *
+// (d - 8)) / 1024, clamped to [256, 8192] (up to 8192 the 40-bit reciprocal stays exact for |hist| < 2^27). It replaced
+// an inherited 16-entry table that zigzagged by +-8% around 3083 (the parabola fitted it with rms 227 against a spread
+// of 253); the table was removed on 01/11/2026, source in _backup/Triumviratus_8.1_pre_rimozione_histdiv_2026-11-01.
+static constexpr auto make_hist_div = [](int scale, int tilt, int mid, int curve, int slope) {
   std::array<int, 16> r{};
   for (int i = 0; i < 16; i++) {
     const long long d = i + 1, k = 1024LL + scale + (long long)tilt * (d - 8);
-    const long long base = form ? mid + curve * (d - 8) * (d - 8) / 64 + slope * (d - 8) / 8 : div[i];
+    const long long base = mid + curve * (d - 8) * (d - 8) / 64 + slope * (d - 8) / 8;
     r[i] = (int)std::clamp(base * k / 1024, 256LL, 8192LL);
   }
   return r;
@@ -350,9 +346,7 @@ static inline int c2_imbalance(const ThreadData &td, int static_eval) {
   return 0;
 }
 
-#define HIST_DIV_LIST {HistDiv1, HistDiv2, HistDiv3, HistDiv4, HistDiv5, HistDiv6, HistDiv7, HistDiv8, HistDiv9, \
-                       HistDiv10, HistDiv11, HistDiv12, HistDiv13, HistDiv14, HistDiv15, HistDiv16}
-#define HIST_DIV_ARGS HIST_DIV_LIST, HistDivScale, HistDivTilt, HistDivForm, HistDivMid, HistDivCurve, HistDivSlope
+#define HIST_DIV_ARGS HistDivScale, HistDivTilt, HistDivMid, HistDivCurve, HistDivSlope
 #ifdef TRIUMV_RELEASE
 static constexpr std::array<int, 16> hist_div = make_hist_div(HIST_DIV_ARGS);
 static constexpr auto all_node_recip = make_all_node_recip(LmrAllDivBase);
@@ -370,7 +364,6 @@ static void param_tables_refresh() {
 }
 static const bool param_tables_ready = (param_tables_refresh(), true);
 #endif
-#undef HIST_DIV_LIST
 #undef HIST_DIV_ARGS
 // W1 (08/10/2026): reciprocals of depth + 1 (mean of the cutoff value in node_close), same truncation.
 static constexpr auto succ_recip = [] {
@@ -1074,8 +1067,8 @@ static int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
 // --------------------------------------------------------------------------
 
 // Quiet gate: a quiet move with a very bad continuation history is skipped; otherwise the history corrects its depth
-// (divided by a divisor per depth, HistDiv1-16 with the level HistDivScale and the slope HistDivTilt of our form, see
-// make_hist_div; as a multiplication by the reciprocal: exact for these sizes), and
+// (divided by a divisor per depth, our parabola HistDivMid/Curve/Slope with the level HistDivScale and the slope
+// HistDivTilt, see make_hist_div; as a multiplication by the reciprocal: exact for these sizes), and
 // the move is skipped when the evaluation plus a margin on that depth stays at or below alpha (futility, which also
 // raises the node's best value to the margin), or when the exchange test fails by more than a margin quadratic in
 // the corrected depth.

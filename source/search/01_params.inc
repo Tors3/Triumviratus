@@ -1,5 +1,17 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
 //
+// BAKE P2 (01/11/2026, author): the history divisor in our form replaces the inherited 16-entry table (HistDivForm
+// 0->1; table and switch removed the same day, bench same) and the SPSA of block P2 (pruning of single moves, 22
+// levers, 15+0.15 without HT, lab aligned with fishtest) stopped at iteration 1229, tail mean of the trend:
+// QuietFutBase 160->162, QuietFutQuad 0->1, QuietFutDepth 96->92, QuietFutAlpha 90->94, QuietHistPrune 4045->3860,
+// QuietHistBase 0->-277, QuietMainHistMul 69->68, QuietSeeLin 0->4, CaptFutBase 190->182, CaptFutDepth 281->284,
+// CaptFutHist 134->135, CaptFutVictim 1024->1047, CaptSeeDepth 179->176, CaptSeeHist 34->35, CaptSeeQuad 0->-1, LmpLin
+// 0->-3, LmpNotImp 512->482, HistDivMid 2960->3113, HistDivCurve 364->355, HistDivSlope 0->22. SPRT of the vector
+// against the previous values, both sides with the form, UHO, [-1, 2], three parts pooled (15+0.15, 8+0.08, 15+0.15):
+// +1.71 +- 3.78 / 7,734 (socket 0 -1.80 +- 5.33, socket 1 +5.21 +- 5.37), LLR +0.58. Adopted to remove the inherited
+// constants with no loss shown; the package against the previous code (table and old values) was stopped by the
+// author at 422 games (-0.82 +- 15.06): the form had been chosen to depart from the table. Backup _pre_bake_p2_2026-11-01.
+//
 // BAKE I (31/10/2026, author): the SPSA of block I (aspiration windows and optimism, 5 levers, 8+0.08 without HT), the
 // first run with the lab aligned with fishtest (stochastic rounding, lr 0.032), paused at iteration 616: AspGrowLo
 // 51->50, AspGrowHi 51->52, AspMeanSqDiv 10193->10050, OptStrength 182->183, OptDiv 288->284. SPRT against the previous
@@ -434,9 +446,9 @@
   /* times LmpNotImp/1024 when the node is not improving. At 0/16/512 it is the old (LmpBase + d^2) halved when not   */ \
   /* improving (bench unchanged); the SPSA moves the three levers.                                                  */ \
   P(LmpBase, 3, 0, 12)                                                                                    \
-  P(LmpLin, 0, -32, 64)                                                                                   \
+  P(LmpLin, -3, -32, 64)                                                                                   \
   P(LmpQuad, 16, 4, 48)                                                                                   \
-  P(LmpNotImp, 512, 256, 1024)                                                                            \
+  P(LmpNotImp, 482, 256, 1024)                                                                            \
   P(CaptFutMaxDepth, 8, 2, 16)           /* capture futility below this corrected depth                    */ \
   P(QuietFutMaxDepth, 12, 4, 20)         /* quiet futility below this corrected depth                      */ \
   P(RazorMul, 452, 100, 1200)                                                                             \
@@ -486,11 +498,11 @@
   P(ProbCutImproving, 64, 0, 200)                                                                         \
   P(ProbCutTTMargin, 415, 150, 900)                                                                       \
   /* pruning in the move loop */                                                                          \
-  P(CaptFutBase, 190, 50, 600)                                                                            \
-  P(CaptFutDepth, 281, 80, 500)                                                                           \
-  P(CaptFutHist, 134, 0, 400)            /* /1024 */                                                      \
-  P(CaptSeeDepth, 179, 50, 400)                                                                           \
-  P(CaptSeeHist, 34, 0, 120)             /* /1024 */                                                      \
+  P(CaptFutBase, 182, 50, 600)                                                                            \
+  P(CaptFutDepth, 284, 80, 500)                                                                           \
+  P(CaptFutHist, 135, 0, 400)            /* /1024 */                                                      \
+  P(CaptSeeDepth, 176, 50, 400)                                                                           \
+  P(CaptSeeHist, 35, 0, 120)             /* /1024 */                                                      \
   /* Block 3, levers per expert (20/10/2026, ours, off): the prunelog data (tools/prunelog_analyze.py) show the     */ \
   /* endgame expert losing 2-7 times more good moves to the move rules (capture futility 4.5% vs 1.3%, move count */ \
   /* 2.2% vs 0.3%, capture exchange 2.0% vs 0.6%). LmpExp in 1/1024 of the move-count threshold; CaptFutExp and   */ \
@@ -507,11 +519,11 @@
   /* Opposite package, prune more in experts 2-3 (LmpExp2/3=-256, CaptFutExp2/3=-104, UHO): 10+0.1 noHT +1.30 +-  */ \
   /* 3.75 (8,016), socket 1 at 12+0.12 noHT -15.90 +- 13.81 (634), all +0.04 +- 3.62 (8,650); clear minus on the  */ \
   /* Zen 4 laptop at 12+0.12. DISCARDED 20/10/2026.                                                                */ \
-  P(QuietHistPrune, 4045, 1000, 10000)                                                                    \
-  P(QuietMainHistMul, 69, 0, 200)        /* /32 */                                                        \
-  P(QuietFutDepth, 96, 40, 300)                                                                          \
-  P(QuietFutAlpha, 90, 0, 300)                                                                            \
-  P(QuietFutBase, 160, 0, 400)                                                                            \
+  P(QuietHistPrune, 3860, 1000, 10000)                                                                    \
+  P(QuietMainHistMul, 68, 0, 200)        /* /32 */                                                        \
+  P(QuietFutDepth, 92, 40, 300)                                                                          \
+  P(QuietFutAlpha, 94, 0, 300)                                                                            \
+  P(QuietFutBase, 162, 0, 400)                                                                            \
   P(QuietSeeMul, 24, 5, 80)                                                                               \
   /* Block 3 forms of ours (27/10/2026, docs/audit_8.1/R9): one term per rule that the inherited form lacks, at its */ \
   /* neutral value (bench unchanged); with the coefficients above they form the rule our way once the SPSA (or the */ \
@@ -525,11 +537,11 @@
   /*  QuietSeeLin    quiet exchange margin QuietSeeMul*rd^2 + QuietSeeLin*rd                                         */ \
   P(RazorLin, 0, -400, 400)                                                                               \
   P(ProbCutDepth, 0, -160, 320)                                                                           \
-  P(CaptFutVictim, 1024, 512, 1536)                                                                       \
-  P(CaptSeeQuad, 0, -64, 128)                                                                             \
-  P(QuietHistBase, 0, -4000, 8000)                                                                        \
-  P(QuietFutQuad, 0, -64, 128)                                                                            \
-  P(QuietSeeLin, 0, -60, 120)                                                                             \
+  P(CaptFutVictim, 1047, 512, 1536)                                                                       \
+  P(CaptSeeQuad, -1, -64, 128)                                                                             \
+  P(QuietHistBase, -277, -4000, 8000)                                                                        \
+  P(QuietFutQuad, 1, -64, 128)                                                                            \
+  P(QuietSeeLin, 4, -60, 120)                                                                             \
   /* estensioni */                                                                                        \
   P(SingMarginBase, 76, 20, 150)                                                                          \
   P(SingMarginTtPv, 70, 0, 200)                                                                           \
@@ -1056,34 +1068,15 @@
   P(PrGain0, 1024, 256, 2048) P(PrGain1, 1024, 256, 2048) P(PrGain2, 1024, 256, 2048) P(PrGain3, 1024, 256, 2048) \
   P(PrCapt0, 892, 0, 3000) P(PrCapt1, 892, 0, 3000) P(PrCapt2, 892, 0, 3000) P(PrCapt3, 892, 0, 3000)             \
   P(CorrLearnW, 1061, 0, 3000)           /* /1024: weight of the correction update at the end of the node  */ \
-  /* quiet-history pruning: divisor per depth 1..16 (13_search.inc, prune_quiet)                         */      \
-  P(HistDiv1, 3637, 500, 8000)                                                                             \
-  P(HistDiv2, 2787, 500, 8000)                                                                             \
-  P(HistDiv3, 2761, 500, 8000)                                                                             \
-  P(HistDiv4, 2939, 500, 8000)                                                                             \
-  P(HistDiv5, 3171, 500, 8000)                                                                             \
-  P(HistDiv6, 3347, 500, 8000)                                                                             \
-  P(HistDiv7, 3147, 500, 8000)                                                                             \
-  P(HistDiv8, 2762, 500, 8000)                                                                             \
-  P(HistDiv9, 2772, 500, 8000)                                                                             \
-  P(HistDiv10, 3106, 500, 8000)                                                                            \
-  P(HistDiv11, 3107, 500, 8000)                                                                            \
-  P(HistDiv12, 3060, 500, 8000)                                                                            \
-  P(HistDiv13, 3112, 500, 8000)                                                                            \
-  P(HistDiv14, 2991, 500, 8000)                                                                            \
-  P(HistDiv15, 3090, 500, 8000)                                                                            \
-  P(HistDiv16, 3542, 500, 8000)                                                                            \
-  /* History divisor in our form (27/10/2026, docs/audit_8.1/R9; 13_search.inc make_hist_div): the divisor at depth */ \
-  /* d is HistDiv<d> * (1024 + HistDivScale + HistDivTilt*(d - 8)) / 1024, clamped to [256, 8192]: one level and one */ \
-  /* slope over the inherited table, which the SPSA keeps locked (block P2). Neutral 0/0 = the table (bench same).  */ \
+  /* Quiet-history pruning, divisor per depth 1..16 (13_search.inc make_hist_div, prune_quiet): our parabola       */ \
+  /*  HistDivMid + HistDivCurve*(d-8)^2/64 + HistDivSlope*(d-8)/8, times (1024 + HistDivScale + HistDivTilt*(d-8))   */ \
+  /*  /1024, clamped to [256, 8192]. Adopted with the P2 bake of 01/11/2026 (HistDivForm 1); the inherited 16-entry  */ \
+  /*  table HistDiv1-16 and the HistDivForm switch were removed the same day (source in _pre_rimozione_histdiv).     */ \
   P(HistDivScale, 0, -512, 1024)                                                                           \
   P(HistDivTilt, 0, -64, 64)                                                                               \
-  /* HistDivForm (30/10/2026, OFF, own SPRT): 1 = a parabola of ours instead of the inherited table, divisor =       */ \
-  /*  HistDivMid + HistDivCurve*(d-8)^2/64 + HistDivSlope*(d-8)/8 (then the level and slope above), make_hist_div.   */ \
-  P(HistDivForm, 0, 0, 1)                                                                                  \
-  P(HistDivMid, 2960, 1500, 6000)                                                                          \
-  P(HistDivCurve, 364, -1000, 2000)                                                                        \
-  P(HistDivSlope, 0, -800, 800)                                                                            \
+  P(HistDivMid, 3113, 1500, 6000)                                                                          \
+  P(HistDivCurve, 355, -1000, 2000)                                                                        \
+  P(HistDivSlope, 22, -800, 800)                                                                            \
   /* Quiescence (12_quiesce.inc): a value above beta is pulled toward it, (Mix*best + (1024-Mix)*beta)/1024.   */ \
   /*  QsFhMix when the stand alone already fails high; QsStandMix for the value the node returns at the end.    */ \
   P(QsFhMix, 441, 0, 1024)                                                                                 \
