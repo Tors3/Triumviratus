@@ -88,6 +88,9 @@ struct alignas(64) Net {
 // Reads a .nnue file (or an image of one in memory) into `net`. On failure returns false with a reason in `err`.
 bool load_file(const char* path, Net* net, std::string* err);
 bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::string* err);
+// The process-wide state a loaded network sets (the router copy read by the make, the pawn-king signals). load_memory
+// calls it; a process that maps a copy loaded by another process (the Linux file alias of shared_net.h) must call it.
+void adopt(const Net& net);
 
 // PassedScale (26/10/2026): percent applied at load time to the PassedPawns rows (weights and PSQT); 100 = the file
 // as it is. Read by the next load_*: the bridge reloads the network when the option changes.

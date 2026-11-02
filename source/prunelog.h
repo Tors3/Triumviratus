@@ -48,6 +48,12 @@ struct PruneNodeRec {
   // perspective (-1 in a Consilium build).
   int32_t razor, rfp, nmp_floor;
   int8_t c2_us, c2_them;
+  // 02/11/2026: the correction tables as corr_signal reads them (09_history.inc), before their weights, so that the
+  // weights can be measured by regression on the probe (pawn, minor, non-pawn of White and of Black, continuation at
+  // -2 plus -4, at -6, at -3; corr_flags 1 = no previous move, the fixed CorrNoMoveW term instead of the
+  // continuations; 2 = White to move, for the own/opponent split of CorrNpSideW), the band that picks CorrGain, and the experimental term that enters the evaluation only.
+  int32_t corr_pawn, corr_minor, corr_npw, corr_npb, corr_c24, corr_c6, corr_c3, signal_x;
+  int8_t corr_band, corr_flags;
 };
 struct PruneMoveRec {
   int16_t depth, expert, ply, move_no;

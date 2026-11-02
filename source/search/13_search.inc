@@ -616,6 +616,7 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
   f[-1].reduction = 0;
   f->stat_score = 0;
   f[2].cutoff_cnt = 0;
+  f[1].null_cuts = 0;   // NmpSibCut: the children of this node count their null-move cuts afresh
   n.signal = corr_signal(td, f);
   n.signal_x = corr_signal_extra(td);
   // per-band tables: piece band of Consilium, or with C2Cells the slot of the node's cell (01_params.inc)
@@ -877,7 +878,9 @@ static int eval_gates(ThreadData &td, NodeFrame *f, NodeState &n) {
                       cell_off(C2C_RAZ, n) + (AN ? td.gd_razor : 0);
     PL_SET(pl_razor, razor);
     held = reverse_futility<AN>(td, f, n);
-    razor_on = held == NO_VALUE && !n.pv && n.eval < n.alpha - razor;
+    // RazorAllOnly (02/11/2026, ours, OFF; idea retried from the C20 list): razoring only where a fail low is
+    // expected anyway, the ALL nodes.
+    razor_on = held == NO_VALUE && !n.pv && (!RazorAllOnly || n.all) && n.eval < n.alpha - razor;
   }
   on_eval_change(td, f, n);
   if (held != NO_VALUE)
@@ -958,6 +961,11 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   // passing is rarely wrong, so the floor is lower.
   if (C2ImbAheadNmp && n.c2_imb > 0)
     floor -= C2ImbAheadNmp;
+  // NmpSibCut (02/11/2026, ours, OFF; idea retried from the C20 list): every earlier sibling that was cut by its own
+  // null move says the parent's move left the opponent little to do, so passing is less risky here too: the floor
+  // drops by NmpSibCut per such sibling, at most NmpSibCap of them.
+  if (NmpSibCut)
+    floor -= NmpSibCut * std::min<int>(f->null_cuts, NmpSibCap);
   PL_SET(pl_nmp_floor, floor - n.beta);
   if (!n.cut || f->static_eval < floor || n.excluded || !pieces || td.ply < td.nmp_min_ply || n.beta < -NmpBetaFloor ||
       (AN && gd_skip_null(td, n)) ||
@@ -989,6 +997,7 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
     return NO_VALUE;
   if (td.nmp_min_ply || n.depth < e_nmp_verify_depth(td)) {
     PL_RULE(3);
+    f->null_cuts += f->null_cuts < 255;
     return nv;
   }
   td.nmp_min_ply = td.ply + NmpVerifyNum * (n.depth - r) / 4;
@@ -997,6 +1006,7 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   if (v < n.beta)
     return NO_VALUE;
   PL_RULE(4);
+  f->null_cuts += f->null_cuts < 255;
   return nv;
 }
 
@@ -1289,10 +1299,35 @@ static void prunelog_move(ThreadData &td, NodeFrame *f, NodeState &n, int m, boo
   prunelog_write(td.thread_id, "prunemove", 1, rec);
 }
 
+// Correction tables of the node before their weights (02/11/2026, measurement of the Corr*W weights): the same reads
+// as corr_signal (09_history.inc), term by term.
+static void pl_corr_parts(const ThreadData &td, const NodeFrame *f, const NodeState &n, PruneNodeRec &rec) {
+  const int us = td.side;
+  const U64 phk = corr_phase_key(td);
+  const U64 fk = corr_fifty_key(td);
+  rec.corr_pawn = corr_slot(td.pawn_key ^ phk ^ fk, us).pawn;
+  rec.corr_minor = corr_slot(td.mm_key[0] ^ phk, us).minor;
+  rec.corr_npw = corr_slot(td.np_key[white] ^ fk, us).np_white;
+  rec.corr_npb = corr_slot(td.np_key[black] ^ fk, us).np_black;
+  const int prev = f[-1].move;
+  if (move_ok(prev)) {
+    const int to = move_to(prev), pc = td.piece_on[to];
+    rec.corr_c24 = (*f[-2].cont_corr)[pc][to] + (*f[-4].cont_corr)[pc][to];
+    rec.corr_c6 = (*f[-6].cont_corr)[pc][to];
+    rec.corr_c3 = (*f[-3].cont_corr)[pc][to];
+  } else
+    rec.corr_flags |= 1;
+  if (us == white)
+    rec.corr_flags |= 2;
+  rec.corr_band = (int8_t)search_band(td);
+  rec.signal_x = n.signal_x;
+}
+
 // Block 3 data (prunelog.h): a node before the node pruning, searched first with a wide window at its own depth.
 template <bool AN>
 static int prunelog_node(ThreadData &td, NodeFrame *f, NodeState &n) {
   PruneNodeRec rec{};
+  pl_corr_parts(td, f, n, rec);
   rec.depth = (int16_t)n.depth;
   rec.expert = (int16_t)n.expert;
   rec.ply = (int16_t)f->ply;

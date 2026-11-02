@@ -114,7 +114,7 @@ INCBIN(EmbeddedNNUE, CN_DEFAULT_NET_FILE);
     #define TRIUMV_EMBED_INCBIN
 #endif
 
-#if defined(_WIN32) && !defined(TRIUMV_NO_SHARED_NET) && !defined(TRIUMV_SHARED_NET)
+#if (defined(_WIN32) || defined(__linux__)) && !defined(TRIUMV_NO_SHARED_NET) && !defined(TRIUMV_SHARED_NET)
     #define TRIUMV_SHARED_NET
 #endif
 #ifdef TRIUMV_SHARED_NET
@@ -139,6 +139,32 @@ static int load_net_impl(const char* path) {
 #ifdef TRIUMV_EMBED_RESOURCE
     embed_init_from_resource();
 #endif
+    extern bool g_startup_quiet;
+#if defined(TRIUMV_SHARED_NET) && defined(__linux__)
+    // Linux (01/11/2026): the shared weights of this file, when another process already made them, are mapped
+    // without loading the file (shared_net.h, attach_by_file): no private copy at the start of each engine.
+    {
+        std::string st;
+        const void* sh = TriumvShm::attach_by_file(path, std::uint64_t(cn::passed_scale()), sizeof(cn::Net), st);
+        if (sh) {
+            cn::adopt(*static_cast<const cn::Net*>(sh));   // the router copy and the pawn-king signals, as a load sets them
+            cn::Net* old = g_cn;
+            g_cn      = nullptr;
+            g_cn_view = static_cast<const cn::Net*>(sh);
+            g_net_path = path;
+            g_net_mem_status = st;
+            if (!g_startup_quiet) {
+                std::printf("info string NNUE evaluation using %s (Consilium, module cn)\n", path);
+                std::printf("info string NNUE weights: %s\n", st.c_str());
+                std::fflush(stdout);
+            }
+            if (old)
+                large_pages_free(old);
+            ++g_net_gen;
+            return 1;
+        }
+    }
+#endif
     cn::Net* net = static_cast<cn::Net*>(large_pages_alloc(sizeof(cn::Net)));
     if (!net)
         return 0;
@@ -162,7 +188,6 @@ static int load_net_impl(const char* path) {
 #endif
         }
     }
-    extern bool g_startup_quiet;
     if (!ok) {
         large_pages_free(net);
         std::printf("info string ERROR: network %s not loaded (%s)\n", path, err.c_str());
@@ -180,7 +205,12 @@ static int load_net_impl(const char* path) {
 #ifdef TRIUMV_SHARED_NET
     {
         std::string st;
+#ifdef __linux__   // with the file alias for the next processes (attach_by_file above)
+        const void* sh = TriumvShm::attach(g_cn, sizeof(cn::Net), g_cn->contentHash ^ std::uint64_t(sizeof(cn::Net)), st,
+                                           path, std::uint64_t(cn::passed_scale()));
+#else
         const void* sh = TriumvShm::attach(g_cn, sizeof(cn::Net), g_cn->contentHash ^ std::uint64_t(sizeof(cn::Net)), st);
+#endif
         if (sh) {
             g_cn_view = static_cast<const cn::Net*>(sh);
             large_pages_free(g_cn);

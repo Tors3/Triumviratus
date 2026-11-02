@@ -63,6 +63,7 @@ struct NodeFrame {
     unsigned char settle;         // C2SettleHorizon: the move searched from this frame got the settling ply
     unsigned char settle_path;    // C2SettleHorizon: settling plies along the line up to this node
     unsigned char nn_hold;        // C2HoldDepth / C2HoldQs: the children of this node keep its experts (06_nndirty.inc)
+    unsigned char null_cuts;      // NmpSibCut: null-move cuts so far among the nodes of this frame, the children of one parent
 };
 
 // A root move with its line and the statistics collected on it.

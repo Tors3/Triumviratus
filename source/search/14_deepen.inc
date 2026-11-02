@@ -677,7 +677,9 @@ static void deepen(ThreadData &td) {
         if (best <= alpha) {
           beta = alpha + (int)((long long)(beta - alpha) * AspLoKeep / 1024);
           alpha = std::max(best - delta, -infinity);
-          failed_high = 0;
+          // AspFhStep (02/11/2026, ours, OFF; idea retried from the C20 list): after a fail low the plies taken off by
+          // the fail highs come back AspFhStep at a time instead of all at once (0 = all at once, the old rule).
+          failed_high = AspFhStep ? std::max(failed_high - AspFhStep, 0) : 0;
           grow = AspGrowLo;
           if (main)
             g_stop_at_ponderhit.store(false, std::memory_order_relaxed);

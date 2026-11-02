@@ -1874,8 +1874,7 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
         for (int o = 0; o < L2; o++)
             for (int k = 0; k < 4; k++) net->pkW2g[g][o][k] = net->pkW2[o][4 * g + k];
     if (r.p != size) return fail("trailing bytes");
-    std::memcpy(g_router, net->router, sizeof(g_router));   // the make and Persp read this copy
-    pk_measure(*net);                                        // C2 signals (agent B): ranks and medians of pk outputs
+    adopt(*net);
     // Name of the shared-memory copy: FNV-1a over 8-byte words (it only has to tell networks apart), plus the tail.
     std::uint64_t h = 1469598103934665603ULL ^ std::uint64_t(size);
     std::size_t   i = 0;
@@ -1902,6 +1901,12 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
         h ^= 0x5053'0000'0000'0000ULL ^ (std::uint64_t(g_passed_scale) << 32);
     net->contentHash = h | 1;   // never 0: 0 marks an empty cache in the handle
     return true;
+}
+
+// 01/11/2026: split out of load_memory, so that a process which maps a copy loaded elsewhere sets the same state.
+void adopt(const Net& net) {
+    std::memcpy(g_router, net.router, sizeof(g_router));   // the make and Persp read this copy
+    pk_measure(net);                                        // C2 signals (agent B): ranks and medians of pk outputs
 }
 
 bool load_file(const char* path, Net* net, std::string* err) {

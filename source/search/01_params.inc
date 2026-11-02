@@ -1,5 +1,13 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
 //
+// BAKE CORR6 (02/11/2026, author): the correction weights rebalanced around a third continuation pair, our move six
+// plies back with the opponent's last move: CorrCont6W 0->5776, CorrCont6Upd 38->35, CorrNoMoveW 64049->80695, and the
+// other weights to ~0.9 so that the total correction keeps its size (CorrPawnW 17291->15562, CorrMinorW 10827->9744,
+// CorrNonPawnW 11613->10452, CorrContW 8022->7220). The term alone at 4011 without the rebalance was -0.80 +- 5.56 /
+// 3,894 (06/10). SPRT of the rebalanced set against the previous values at 10+0.1, one thread, on the rented 2-socket
+// machine, UHO, [-1, 2]: +1.13 +- 2.67 / 16,586 (socket 0 +0.76 +- 3.75, socket 1 +1.51 +- 3.80), LLR +0.72, stopped
+// by the author. Bench 155864 -> 131701.
+//
 // BAKE P2 (01/11/2026, author): the history divisor in our form replaces the inherited 16-entry table (HistDivForm
 // 0->1; table and switch removed the same day, bench same) and the SPSA of block P2 (pruning of single moves, 22
 // levers, 15+0.15 without HT, lab aligned with fishtest) stopped at iteration 1229, tail mean of the trend:
@@ -259,6 +267,7 @@
   P(AspGrowHi, 52, 10, 128)                                                                               \
   P(AspFhRed, 1, 0, 3)                                                                                    \
   P(AspLoKeep, 0, 0, 1024)                                                                                \
+  P(AspFhStep, 0, 0, 3)                  /* 02/11, ours, off: plies given back per fail low (0 = all)       */ \
   /* BLOCK 5 - threads, lazy SMP (15_threads.inc, 14_deepen.inc). Defaults give the old behaviour.              */ \
   /*   SmpVoteBase, SmpVoteScore  share of a thread in the final vote: (score - lowest + base) x weight / 1024   */ \
   /*   SmpVoteDepth               ours, off: support added per completed ply                                     */ \
@@ -452,6 +461,7 @@
   P(CaptFutMaxDepth, 8, 2, 16)           /* capture futility below this corrected depth                    */ \
   P(QuietFutMaxDepth, 12, 4, 20)         /* quiet futility below this corrected depth                      */ \
   P(RazorMul, 452, 100, 1200)                                                                             \
+  P(RazorAllOnly, 0, 0, 1)               /* 02/11, ours, off: razoring only in ALL nodes                    */ \
   P(RfpMaxDepth, 19, 4, 30)                                                                               \
   P(RfpMultBase, 50, 10, 120)                                                                             \
   P(RfpMultDepth, 4, 0, 16)                                                                               \
@@ -474,6 +484,8 @@
   P(NmpDepthMul, 15, 0, 40)                                                                               \
   P(NmpImproving, 47, 0, 150)                                                                             \
   P(NmpBase, 302, 0, 800)                                                                                 \
+  P(NmpSibCut, 0, 0, 200)                /* 02/11, ours, off: null floor - this per sibling cut by its null */ \
+  P(NmpSibCap, 4, 1, 16)                 /* at most this many such siblings                                 */ \
   P(NmpRedBase, 7, 3, 12)                                                                                 \
   P(NmpEvalDiv, 223, 64, 1024)                                                                            \
   /* Null-move reduction in our form (27/10/2026, docs/audit_8.1/R9; 13_search.inc null_probe): R = NmpRedBase +    */ \
@@ -688,21 +700,20 @@
   P(QsMatMode, 0, 0, 1)                                                                                   \
   P(QsSeeFutW, 1024, 512, 1536)                                                                           \
   /* correction history */                                                                                \
-  P(CorrPawnW, 17291, 0, 40000)                                                                           \
-  P(CorrMinorW, 10827, 0, 40000)                                                                          \
-  P(CorrNonPawnW, 11613, 0, 40000)                                                                        \
+  P(CorrPawnW, 15562, 0, 40000)                                                                           \
+  P(CorrMinorW, 9744, 0, 40000)                                                                           \
+  P(CorrNonPawnW, 10452, 0, 40000)                                                                        \
   /* Correction combination in our form (27/10/2026, docs/audit_8.1/R9; 09_history.inc corr_signal): the non-pawn  */ \
   /* tables of the two colours weigh CorrNonPawnW * (own + opp) + CorrNpSideW * (own - opp), own = side to move.    */ \
   /* Neutral 0 = one weight for both (the old sum, bench unchanged); the SPSA (block Q) moves it.                   */ \
   P(CorrNpSideW, 0, -10000, 10000)                                                                        \
-  P(CorrContW, 8022, 0, 30000)                                                                            \
+  P(CorrContW, 7220, 0, 30000)                                                                            \
   P(CorrMinorUpd, 150, 0, 400)           /* /128 */                                                       \
   P(CorrNonPawnUpd, 186, 0, 400)                                                                          \
   /* Corrections, proposals of the report docs/audit_8.0/N_CORREZIONI.md (06/10/2026); off = tree unchanged */ \
-  P(CorrCont6W, 0, 0, 30000)             /* continuation also with our move at -6 (0 = off) */            \
-                                         /* 06/10: =4011 at 15+0.15 -0.80 +- 5.56 / 3,894 (sockets disagree, */ \
-                                         /* stopped; NPS cost -0.1%): off, to be re-evaluated                */ \
-  P(CorrCont6Upd, 38, 0, 256)            /* step of the continuation at -6, /128 */                       \
+  P(CorrCont6W, 5776, 0, 30000)          /* continuation also with our move at -6 (0 = off)               */ \
+                                         /* 02/11: on with the other weights rebalanced (BAKE CORR6)      */ \
+  P(CorrCont6Upd, 35, 0, 256)            /* step of the continuation at -6, /128 */                       \
   P(CorrContOppW, 0, 0, 30000)           /* user's idea (06/10): continuation with the opponent's PLAN, the */ \
                                          /* pair (their move at -3, their move at -1); 0 = off           */ \
                                          /* =4011 at 12+0.12 -5.15 +- 12.68 / 742; =8000 at 8+0.08 -4.81 +- 8.67 */ \
@@ -732,7 +743,7 @@
      SPSA CORR1: adding CorrCont6W the total correction grows (here it also enters RFP, LMR and the singular      \
      margins), so the weights must be rebalanced together and not one at a time as in the trial of 06/10.         \
      The SPSA searches the values together. */              \
-  P(CorrNoMoveW, 64049, 0, 200000)       /* continuation term after the null move */                      \
+  P(CorrNoMoveW, 80695, 0, 200000)       /* continuation term after the null move */                      \
   /* our techniques on top of the new search (04/10/2026), off = tree unchanged */                        \
   /* LEAN (28/10/2026 night, SPRT lean vs base 6+0.06 noHT [-1, 2]: +4.21 +- 2.79 over 15,194 games, H1, both     \
      sockets positive; the terms never passed an SPRT alone: KingShield -1.57, OutpostOrder +0.21, trio +0.39 on    \
