@@ -348,10 +348,19 @@ inline int threat_index(int p, int o, int apc, int tpc, int fe, int te) {
 // 285 KB (g_tb, g_to, g_lt) that were read at every tuple, beyond L1: threat_row was 140 cycles per node; with these
 // -0.53% cycles per node in the middlegame and in endgames (Xeon, deterministic PGO, xperf, 4 rounds, every round
 // below), instructions +0.17%. Checked against threat_index on every combination at startup.
-std::uint8_t g_same[12][12];
-std::uint8_t g_x[2][12];        // [persp][attacker]: attacker kind ac * 5 + at (0 for a king: never valid)
-std::int32_t g_ts[2][12][12];   // [persp][attacker][target]: slot offset g_thrS, -1 = no feature
-std::uint8_t g_oo[2][2];        // [persp][mirror]: 56 ^ orient
+// Threat groups (02/11/2026, speed, same accumulators): the rows of one (attacker kind x, target slot s, oriented
+// from-square) are contiguous in the specification (one per attacked square, at most 27). The stored row of a tuple
+// is g_thrG[x * 10 + s][from'] + g_thrL[x][from'][to'], where g_thrG holds the stored start of each group: the groups
+// can then be laid out in any order (the most read first, cn_thrgroup.inc) at no cost per tuple, the start of the
+// group taking the place of g_thrA + the slot offset. Without the table the order is the specification's (the same
+// rows as before). g_thrStore maps a specification row to its stored row (loading and the startup check only).
+std::uint8_t  g_same[12][12];
+std::uint8_t  g_x[2][12];        // [persp][attacker]: attacker kind ac * 5 + at (0 for a king: never valid)
+std::int8_t   g_tk[2][12][12];   // [persp][attacker][target]: group kind x * 10 + slot, -1 = no feature
+std::uint8_t  g_oo[2][2];        // [persp][mirror]: 56 ^ orient
+alignas(64) std::uint16_t g_thrG[128][64];   // [kind][from']: stored start of the group (kind 127: never valid)
+std::uint16_t g_thrStore[ROWS_THR];          // specification row -> stored row
+std::uint8_t  g_thrLen[128][64];             // rows of each group (attacked squares on an empty board)
 
 void build_fast_threats() {
     for (int a = 0; a < 12; a++)
@@ -366,64 +375,111 @@ void build_fast_threats() {
             g_x[p][a] = std::uint8_t(at == KING ? 0 : ac * 5 + at);
             for (int d = 0; d < 12; d++) {
                 const int dt = d % 6, dc = (d >= 6) ^ p;
-                g_ts[p][a][d] = at == KING ? -1 : g_thrS[ac * 5 + at][dc][dt];
+                const int x = ac * 5 + at, slot = at == KING ? -1 : THREAT_SLOT[at][dt];
+                g_tk[p][a][d] = std::int8_t(slot < 0 ? -1 : x * 10 + dc * (NUM_VALID[at] / 2) + slot);
             }
         }
     }
 }
 
-// -DCN_ROWSTATS: how many times each threat row is read (incremental updates and refreshes), written to
-// cn_rowstats.bin (ROWS_THR little-endian uint64) at exit. Input of b6_consilium/make_thrperm.py.
+// -DCN_ROWSTATS: how many times each threat row and each pawn-pair row is read (incremental updates and refreshes),
+// written at exit: cn_rowstats.bin (ROWS_THR uint64, by stored row), cn_groupstats.bin (reads per threat group, input
+// of tools/make_thrgroups.py), cn_ppstats.bin (ROWS_PP uint64 by stored row, input of tools/make_pporder.py). The two
+// orders are generated from a build with -DCN_NO_THRGROUP_TABLE -DCN_NO_PPORDER_TABLE (stored rows = the
+// specification's), on positions other than the speed measurements' (universal/pgo_positions.epd).
 #ifdef CN_ROWSTATS
 struct RowStats {
     std::uint64_t n[ROWS_THR] = {};
+    std::uint64_t pp[ROWS_PP] = {};
     ~RowStats() {
         if (std::FILE* f = std::fopen("cn_rowstats.bin", "wb")) {
             std::fwrite(n, sizeof(n), 1, f);
+            std::fclose(f);
+        }
+        if (std::FILE* f = std::fopen("cn_groupstats.bin", "wb")) {
+            static std::uint64_t g[100 * 64];
+            for (int k = 0; k < 100; k++)
+                for (int s = 0; s < 64; s++)
+                    for (int j = 0; j < g_thrLen[k][s]; j++) g[k * 64 + s] += n[g_thrG[k][s] + j];
+            std::fwrite(g, sizeof(g), 1, f);
+            std::fclose(f);
+        }
+        if (std::FILE* f = std::fopen("cn_ppstats.bin", "wb")) {
+            std::fwrite(pp, sizeof(pp), 1, f);
             std::fclose(f);
         }
     }
 };
 RowStats g_rowStats;
     #define CN_ROWHIT(r, valid) (g_rowStats.n[r] += std::uint64_t(valid))
+    #define CN_PPHIT(r) (g_rowStats.pp[r] += 1)
 #else
     #define CN_ROWHIT(r, valid) ((void)0)
+    #define CN_PPHIT(r) ((void)0)
 #endif
 
-// -DCN_THRPERM: threat rows stored by frequency of use (table from make_thrperm.py): the rows a search reads most
-// sit together at the start of the block, 90% of the reads in 12 MB instead of 65 MB spread over the whole table.
-// Only the layout changes: g_thrSlot[spec row] = stored row. OFF by default: on the Xeon (18/10/2026, PGO, cycles per
-// node) it cost 0.8 points with large pages and 0.85 without them in the middlegame (the table lookup per tuple
-// outweighs the locality). Kept to be measured on other CPUs.
-#ifdef CN_THRPERM
-    #include "cn_thrperm.inc"   // THR_HOT[]: spec rows, most used first
-std::uint16_t g_thrSlot[ROWS_THR];
-void build_thr_slots() {
-    static_assert(ROWS_THR <= 65536, "g_thrSlot holds 16-bit rows");
-    std::vector<char> placed(ROWS_THR, 0);
-    int               n = 0;
-    for (int r : THR_HOT)
-        if (r >= 0 && r < ROWS_THR && !placed[r]) {
-            placed[r]     = 1;
-            g_thrSlot[r] = std::uint16_t(n++);
-        }
-    for (int r = 0; r < ROWS_THR; r++)
-        if (!placed[r]) g_thrSlot[r] = std::uint16_t(n++);
-}
-inline int thr_slot(int r) { return g_thrSlot[r]; }
-#else
-void build_thr_slots() {}
-inline int thr_slot(int r) { return r; }
+// (CN_THRPERM, 18/10/2026, removed 02/11/2026: the rows stored one by one by frequency of use, 90% of the reads in
+// 12 MB instead of 65 MB, cost 0.8 points on the Xeon for the table lookup per tuple. The groups do it per group with
+// no lookup.)
+// The group layout (see g_thrG above). CN_THRGROUP_TABLE (on by default, -DCN_NO_THRGROUP_TABLE: the specification's
+// order): the order of cn_thrgroup.inc (group ids kind * 64 + from', most read first, from tools/make_thrgroups.py on
+// the 200 PGO positions: 4,715 of the 6,400 groups read, 90% of the reads in the first 1,042, about 14 MB); the groups
+// it does not name follow in the specification's order. xperf (deterministic PGO, avx512, cycles per node against the
+// release): on the Xeon (large pages, 27 MB of L3 per socket) -0.06% mg / +0.22% eg, nothing to gain; on the Zen 4
+// laptop (Ryzen 7 8845HS, no large pages, 16 MB of L3) -1.63% / -1.43% / -0.94% (median per round) mg in three runs,
+// eg mixed within the noise: on 4 KB pages the hot groups take far fewer pages.
+#if !defined(CN_NO_THRGROUP_TABLE) && !defined(CN_THRGROUP_TABLE)
+    #define CN_THRGROUP_TABLE 1
 #endif
+#ifdef CN_THRGROUP_TABLE
+    #include "cn_thrgroup.inc"   // THR_GROUP_ORDER[], THR_GROUP_ID
+#endif
+void build_thr_slots() {
+    static_assert(ROWS_THR <= 65536, "stored threat rows are 16-bit");
+    std::int32_t start[128][64] = {};   // specification row of the first row of each group
+    std::uint8_t len[128][64]   = {};
+    for (int x = 0; x < 10; x++) {
+        const int c = x / 5, pt = x % 5;
+        int       tot = 0;
+        u64       att[64];
+        for (int f = 0; f < 64; f++) {
+            att[f] = pt == PAWN ? ((f >= 8 && f <= 55) ? t_pawn_attacks(f, c) : 0) : t_empty_attacks(pt, f);
+            tot += CN_POPCNT(att[f]);
+        }
+        for (int s = 0; s < NUM_VALID[pt]; s++)
+            for (int f = 0; f < 64; f++) {
+                start[x * 10 + s][f] = g_thrA[x][f] + s * tot;
+                len[x * 10 + s][f]   = std::uint8_t(CN_POPCNT(att[f]));
+            }
+    }
+    std::vector<char> placed(128 * 64, 0);
+    int               n     = 0;
+    auto              place = [&](int gid) {
+        const int k = gid >> 6, f = gid & 63;
+        if (gid < 0 || gid >= 100 * 64 || placed[gid]) return;
+        placed[gid]  = 1;
+        g_thrG[k][f] = std::uint16_t(n);
+        for (int j = 0; j < len[k][f]; j++) g_thrStore[start[k][f] + j] = std::uint16_t(n + j);
+        n += len[k][f];
+    };
+#ifdef CN_THRGROUP_TABLE
+    for (int gid : THR_GROUP_ORDER) place(gid);
+#endif
+    for (int gid = 0; gid < 100 * 64; gid++) place(gid);
+    std::memcpy(g_thrLen, len, sizeof(len));
+    if (n != ROWS_THR) std::fprintf(stderr, "cn: threat groups hold %d rows, not %d\n", n, ROWS_THR);
+}
+inline int thr_slot(int r) { return g_thrStore[r]; }
 
 // The row of a threat tuple without a branch, for the update loops: the row (0 when the tuple has no feature) and
 // valid = 0/1. Whether a tuple has a feature depends on the pieces and squares of each move, so a branch here was
 // mispredicted often.
+// The stored row (threat groups above).
 inline int threat_row(int p, int m, int apc, int tpc, int f, int t, int& valid) {
     const int o = g_oo[p][m], fo = f ^ o, to = t ^ o, x = g_x[p][apc];
-    const int ts = g_ts[p][apc][tpc];
-    valid        = int(ts >= 0) & (1 ^ int(g_same[apc][tpc] & int(fo < to)));
-    return (g_thrA[x][fo] + ts + g_thrL[x][fo][to]) & -valid;
+    const int k = g_tk[p][apc][tpc];
+    valid       = int(k >= 0) & (1 ^ int(g_same[apc][tpc] & int(fo < to)));
+    return (g_thrG[k & 127][fo] + g_thrL[x][fo][to]) & -valid;
 }
 
 bool check_fast_threats() {
@@ -433,18 +489,53 @@ bool check_fast_threats() {
                 for (int d = 0; d < 12; d++)
                     for (int f = 0; f < 64; f++)
                         for (int t = 0; t < 64; t++) {
+                            // Only the tuples that can occur: the target on a square the attacker reaches from its
+                            // square on an empty board (the stored rows cover the groups, not the impossible pairs).
+                            const int x = g_x[p][a], fo = f ^ g_oo[p][m], to = t ^ g_oo[p][m];
+                            const int c = x / 5, pt = x % 5;
+                            const u64 att = pt == PAWN ? ((fo >= 8 && fo <= 55) ? t_pawn_attacks(fo, c) : 0)
+                                                       : t_empty_attacks(pt, fo);
+                            if (a % 6 == KING || !((att >> to) & 1)) continue;
                             int       valid;
                             const int r   = threat_row(p, m, a, d, f, t, valid);
                             const int ref = threat_index(p, orient(p, m), a, d, f, t);
-                            if (ref < 0 ? valid != 0 : (valid != 1 || r != ref)) return false;
+                            if (ref < 0 ? valid != 0 : (valid != 1 || r != g_thrStore[ref])) return false;
                         }
     return true;
 }
 
-inline int pair_index(int a, int b) {
+// Pawn-pair rows (02/11/2026, speed, same accumulators): the stored row of the pair of pawn ids (a, b), symmetric, from
+// one table instead of the triangular index. The rows can then be laid out in any order: CN_PPORDER_TABLE puts them by
+// reads (cn_pporder.inc from tools/make_pporder.py, most read first: only pawns on the same or adjacent files pair, and
+// some pairs are far more common: 1,471 of the 4,560 rows read on the 200 PGO positions, 90% of the reads in the first
+// 425, about 460 KB); without it (-DCN_NO_PPORDER_TABLE), the specification's order. g_ppStore maps a specification row
+// to its stored row (loading only). xperf against the release: Xeon -1.01% / +0.07% mg, -0.42% eg; Zen 4 +0.33% mg,
+// -0.09% eg: within the noise alone, kept with the other two layouts of the block (all three: see PawnCacheEntry).
+#if !defined(CN_NO_PPORDER_TABLE) && !defined(CN_PPORDER_TABLE)
+    #define CN_PPORDER_TABLE 1
+#endif
+#ifdef CN_PPORDER_TABLE
+    #include "cn_pporder.inc"   // PP_ORDER[] (specification rows), PP_ORDER_ID
+#endif
+std::uint16_t g_ppRow[96][96];
+std::uint16_t g_ppStore[ROWS_PP];
+inline int pair_spec(int a, int b) {
     const int hi = a > b ? a : b, lo = a > b ? b : a;
     return hi * (hi - 1) / 2 + lo;
 }
+void build_pp_rows() {
+    std::vector<char> placed(ROWS_PP, 0);
+    int               n = 0;
+#ifdef CN_PPORDER_TABLE
+    for (int r : PP_ORDER)
+        if (r >= 0 && r < ROWS_PP && !placed[r]) placed[r] = 1, g_ppStore[r] = std::uint16_t(n++);
+#endif
+    for (int r = 0; r < ROWS_PP; r++)
+        if (!placed[r]) g_ppStore[r] = std::uint16_t(n++);
+    for (int a = 0; a < 96; a++)
+        for (int b = 0; b < 96; b++) g_ppRow[a][b] = a == b ? 0 : g_ppStore[pair_spec(a, b)];
+}
+inline int pair_index(int a, int b) { return g_ppRow[a][b]; }
 
 u64 passers(int c, u64 own, u64 opp) {
     u64 out = 0;
@@ -505,7 +596,7 @@ struct RowList {
     // A threat row only if valid (threat_row), still without a branch: no counter moves when valid = 0.
     void pushT(int r, int valid, int add) {
         CN_ROWHIT(r, valid);
-        const std::int8_t* w = net->wThr[thr_slot(r)];
+        const std::int8_t* w = net->wThr[r];   // r is the stored row (threat groups)
         CN_PREFETCH(w);
         CN_PREFETCH_HALF(w);
         CN_PREFETCH(w + L1);
@@ -515,7 +606,7 @@ struct RowList {
         n8s += (1 - add) & valid;
     }
     void pushH(int r, int sign) { push8(net->wHka[r], sign > 0); }
-    void pushP(int r, int sign) { push8(net->wPP[r], sign > 0); }
+    void pushP(int r, int sign) { CN_PPHIT(r); push8(net->wPP[r], sign > 0); }
     void pushS(int r, int sign) { push8(net->wPas[r], sign > 0); }
 };
 
@@ -836,8 +927,26 @@ void slider_att_fill(const Board& b, SliderAtt& sa) {
     sa.ready = true;
 }
 
-// Active features of one perspective (spec 3): the threat, pawn-pair and passed-pawn blocks (part O).
-void active_other(const Board& b, const Persp& P, RowList& L, SliderAtt& sa) {
+// The pawn-pair and passed-pawn rows of the board for one perspective.
+void active_pawns(const Board& b, const Persp& P, RowList& L) {
+    const u64 wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
+    const u64 pawns = wp | bp;
+    for (u64 x = pawns; x; x &= x - 1) {
+        const int s = CN_LSB(x);
+        const int cs = (bp >> s) & 1;
+        for (u64 t = g_ppMask[s] & pawns & ((1ULL << s) - 1); t; t &= t - 1) {   // each pair once
+            const int to = CN_LSB(t);
+            L.pushP(pair_index(P.pid(cs, s), P.pid((bp >> to) & 1, to)), 1);
+        }
+    }
+    const u64 pw = passers(0, wp, bp), pb = passers(1, bp, wp);
+    for (u64 x = pw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), 1);
+    for (u64 x = pb; x; x &= x - 1) L.pushS(P.pid(1, CN_LSB(x)), 1);
+}
+
+// Active features of one perspective (spec 3): the threat, pawn-pair and passed-pawn blocks (part O). withPawns =
+// false: the threat rows only (the refresh takes the pawn rows from the pawn cache).
+void active_other(const Board& b, const Persp& P, RowList& L, SliderAtt& sa, bool withPawns = true) {
     if (!sa.ready) slider_att_fill(b, sa);
     const u64 occ = b.occ[2];
     const u64 kings = b.bb[KING] | b.bb[KING + 6];
@@ -876,18 +985,7 @@ void active_other(const Board& b, const Persp& P, RowList& L, SliderAtt& sa) {
             }
     }
 
-    const u64 wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
-    for (u64 x = pawns; x; x &= x - 1) {
-        const int s = CN_LSB(x);
-        const int cs = (bp >> s) & 1;
-        for (u64 t = g_ppMask[s] & pawns & ((1ULL << s) - 1); t; t &= t - 1) {   // each pair once
-            const int to = CN_LSB(t);
-            L.pushP(pair_index(P.pid(cs, s), P.pid((bp >> to) & 1, to)), 1);
-        }
-    }
-    const u64 pw = passers(0, wp, bp), pb = passers(1, bp, wp);
-    for (u64 x = pw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), 1);
-    for (u64 x = pb; x; x &= x - 1) L.pushS(P.pid(1, CN_LSB(x)), 1);
+    if (withPawns) active_pawns(b, P, L);
 }
 
 
@@ -917,6 +1015,28 @@ void kcache_init(const Net& net, Handle& h) {
                 std::memset(e.bb, 0, sizeof(e.bb));
             }
     h.cacheNet = net.contentHash;
+}
+
+// The pawn vector of the board for perspective P (pawn-pair + passed-pawn rows summed from zero, PSQT included): from
+// the pawn cache, or computed and stored there. Direct mapped on a hash of the pawns, exact key. The rows depend only
+// on the pawns, the perspective and its orientation (never on the king bucket or the expert).
+const Acc& pawn_vec(const Net& net, Handle& h, const Board& b, const Persp& P, RowList& L) {
+    if (h.pawnNet != net.contentHash) {
+        for (PawnCacheEntry& e : h.pawnc) e.pm = 0;
+        h.pawnNet = net.contentHash;
+    }
+    const u64           wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
+    const std::uint32_t pm = std::uint32_t(P.p | 2 * P.mo) + 1;
+    std::uint64_t       k  = wp * 0x9E3779B97F4A7C15ULL ^ (bp + 0x632BE59BD9B4E019ULL) * 0xC2B2AE3D27D4EB4FULL ^ pm;
+    k ^= k >> 29;
+    k *= 0xBF58476D1CE4E5B9ULL;
+    PawnCacheEntry& e = h.pawnc[k >> (64 - CN_PAWN_CACHE_LOG2)];
+    if (e.pm == pm && e.wp == wp && e.bp == bp) return e.acc;
+    alignas(64) static const Acc zero{};
+    active_pawns(b, P, L);
+    apply(L, zero, e.acc);
+    e.wp = wp, e.bp = bp, e.pm = pm;
+    return e.acc;
 }
 
 // The rows that bring the cache entry of this king square and phase to the board: only the pieces that differ from
@@ -1764,6 +1884,7 @@ void init() {
     build_tables();
     build_fast_threats();
     build_thr_slots();
+    build_pp_rows();
     if (!check_fast_threats()) std::fprintf(stderr, "cn: fast threat tables differ from the specification\n");
 }
 
@@ -1842,7 +1963,8 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
     auto same = [](int row) { return row; };
     using HkaFile = std::int8_t;   // Consilium Plebis: HalfKA exported in int8 (raw), like the threat rows
     ok = ok && block(std::int8_t{}, net->wThr, ROWS_THR, [](int row) { return thr_slot(row); })
-            && block(HkaFile{}, net->wHka, ROWS_HKA, same) && block(std::int8_t{}, net->wPP, ROWS_PP, same)
+            && block(HkaFile{}, net->wHka, ROWS_HKA, same)
+            && block(std::int8_t{}, net->wPP, ROWS_PP, [](int row) { return int(g_ppStore[row]); })
             && block(std::int8_t{}, net->wPas, ROWS_PAS, same, g_passed_scale);
     if (!ok) return fail("feature transformer tensors");
     for (int b = 0; b < NBUCKETS; b++) {
@@ -1894,8 +2016,11 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 #ifdef CN_W2
     h ^= 0x0032'5732'0000'0000ULL;   // and their low bytes stored + 128 (CN_W2)
 #endif
-#ifdef CN_THRPERM
-    h ^= THR_PERM_ID;   // and so does the order of the threat rows
+#ifdef CN_THRGROUP_TABLE
+    h ^= THR_GROUP_ID;   // and so does the order of the threat groups
+#endif
+#ifdef CN_PPORDER_TABLE
+    h ^= PP_ORDER_ID;   // and the order of the pawn-pair rows
 #endif
     if (g_passed_scale != 100)   // other weights from the same file: the caches of the handles must not match
         h ^= 0x5053'0000'0000'0000ULL ^ (std::uint64_t(g_passed_scale) << 32);
@@ -1992,8 +2117,10 @@ inline __m256i psqt_of(const void* row, std::size_t bytes) {
     return _mm256_load_si256(reinterpret_cast<const __m256i*>(static_cast<const char*>(row) + bytes));
 }
 
+// pv (the pawn cache, 02/11/2026): the pawn vector of the board added with the board's rows; null when LO holds the
+// pawn rows itself.
 template <bool WithPsqt>
-inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t) {
+inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 16, W = 32;
     __m512i       r[R];
     __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)entry.psqt) : _mm256_setzero_si256();
@@ -2011,15 +2138,20 @@ inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& 
     for (int k = 0; k < R; k++) _mm512_storeu_si512(entry.v + t + k * W, r[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
     rows8_512<R, WithPsqt>(LO, r, ps, t);   // added rows only (the board's): the removed list is empty
+    if (pv) {
+        for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(pv->v + t + k * W));
+        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)pv->psqt));
+    }
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, r[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
-void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst) {
+void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     CN_TIME(1);
-    refresh_tile<true>(LH, LO, entry, dst, 0);
-    refresh_tile<false>(LH, LO, entry, dst, L1 / 2);
+    refresh_tile<true>(LH, LO, entry, dst, 0, pv);
+    refresh_tile<false>(LH, LO, entry, dst, L1 / 2, pv);
 }
+#define CN_PAWN_CACHE 1   // the refresh above takes the pawn vector (AVX-512 only for now)
 #elif defined(USE_AVX2) && defined(CN_AVX2_FUSED)
 // -DCN_AVX2_FUSED (21/10/2026; OFF by default): the single-pass refresh and king step in the AVX2 builds as well
 // (Intel hybrid processors with AVX-VNNI, Zen 3, Zen 1/2), eight tiles of 8 registers. Without it a refresh is two
@@ -2274,8 +2406,16 @@ Out evaluate(const Net& net, Handle& h, const Board& b) {
                 RowList*    LH = new (&lists[0]) RowList(&net);
                 RowList*    LO = new (&lists[1]) RowList(&net);
                 KingCacheEntry& e  = kcache_rows(net, h, b, P, *LH);
+#if defined(CN_PAWN_CACHE) && !defined(CN_NO_PAWN_CACHE)
+                // Pawn cache (02/11/2026): the pawn-pair and passed-pawn rows of the board as one stored vector
+                // (lists[2] is free until the chain below).
+                const Acc& pv = pawn_vec(net, h, b, P, *new (&lists[2]) RowList(&net));
+                active_other(b, P, *LO, sa, false);
+                apply_refresh(*LH, *LO, e.acc, h.acc[top][p], &pv);
+#else
                 active_other(b, P, *LO, sa);
                 apply_refresh(*LH, *LO, e.acc, h.acc[top][p]);
+#endif
                 // Back down the chain to the state of the refresh (after the king move or phase change, or the
                 // root), taking each move back: the nearby branches then start from a computed state.
                 for (int i = top; i > from[p]; i--) {

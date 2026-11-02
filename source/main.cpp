@@ -196,7 +196,7 @@ int main()
         return 1;
     }
     if (!g_startup_quiet) {
-        printf("info string Net: %s (%s; Consilium = TRANN3, mixture of 4 phase experts, threat + HalfKA + PawnPair + PassedPawns inputs)\n",
+        printf("info string Net: %s (%s; Consilium = TRANN3, mixture of 8 phase experts, threat + HalfKA + PawnPair + PassedPawns inputs)\n",
                netName, netPath.empty() ? "embedded" : netPath.c_str());
 #ifdef TRIUMV_VID
         // Universal binary: the variant chosen for this CPU (terminal only; the id name does not change).

@@ -129,11 +129,35 @@ struct alignas(64) PkEntry {
     std::int32_t  out[L2];
 };
 
+// Pawn cache entry (02/11/2026, speed, same accumulators): the sum of the pawn-pair and passed-pawn rows of one pawn
+// structure for one perspective and orientation, and its exact key (pawns of both colours; pm = perspective | 2 *
+// orientation + 1, 0 = empty). A refresh adds this vector instead of the rows (about ten per refresh). 512 entries
+// per thread (1.1 MB): the smaller caches beat the larger ones in cycles, an int16 entry being twice the bytes of an
+// int8 row. Only at the refresh: on the pawn moves the few pawn-pair rows in use stay hot and beat the entries (the
+// cache on the moves cost +5.5% / +3.5% cycles on the Xeon). xperf against the release (deterministic PGO, avx512):
+// instructions -1.9% mg / -2.8% eg; cycles on the Xeon -1.04% / -0.48% mg, -1.04% eg; on the Zen 4 laptop (no large
+// pages) within the noise (+0.57% / -0.42%).
+// The three layouts of 02/11/2026 together (this cache, the threat groups and the pawn-pair order, cn.cpp): Xeon
+// instructions -2.2% mg / -3.1% eg, cycles +0.12% / -0.86% mg and -1.21% / -0.58% eg in two runs; Zen 4 -0.49% / +0.35%
+// mg and -0.26% / -1.38% eg in two runs, and in the final run of 8 rounds (low noise, median of the per-round ratios)
+// 0.00% mg / +0.20% eg: level on the laptop, fewer instructions everywhere.
+#ifndef CN_PAWN_CACHE_LOG2
+    #define CN_PAWN_CACHE_LOG2 9
+#endif
+constexpr int PAWN_CACHE = 1 << CN_PAWN_CACHE_LOG2;
+struct alignas(64) PawnCacheEntry {
+    Acc           acc;
+    std::uint64_t wp, bp;
+    std::uint32_t pm;
+};
+
 struct alignas(64) Handle {
     NnStack       stack;
     Acc           acc[NN_STACK_SIZE][2];
     std::uint64_t cacheNet;           // contentHash of the network the cache was built from (0 = empty)
     KingCacheEntry    kcache[2][64][NEXPERTS];
+    std::uint64_t pawnNet;            // contentHash of the network the pawn cache was built from
+    PawnCacheEntry pawnc[PAWN_CACHE];
     std::uint64_t pkNet;              // contentHash of the network the pawn-king cache was built from
     PkEntry       pkc[PK_CACHE];
     // C2PkStale (27/10/2026): the cache entry of the last pawn-king lookup of this thread, and the flag the search
