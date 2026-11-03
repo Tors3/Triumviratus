@@ -185,7 +185,6 @@ static void reset_root_lines(ThreadData &td, const int *list, int n) {
 // runs on node id % nodes, its network handle is moved to that node once, and it reads the network copy of the node.
 // The threads keep their node from one search to the next; nothing is done with one node.
 static void numa_bind_thread(int id) {
-#if defined(_WIN32)
   const int nodes = numa_search_nodes();
   if (nodes < 2) {
     nn_bind_node_net(-1);   // the copy of the load (the option was switched off)
@@ -195,9 +194,7 @@ static void numa_bind_thread(int id) {
   ThreadData &td = thread_data[id];
   const int node = id % nodes;
   if (bound != node) {
-    GROUP_AFFINITY ga{};
-    if (GetNumaNodeProcessorMaskEx((USHORT)node, &ga))
-      SetThreadGroupAffinity(GetCurrentThread(), &ga, nullptr);
+    numa_bind_cpu(node);
     bound = node;
   }
   if (td.nn_home != node) {
@@ -206,9 +203,6 @@ static void numa_bind_thread(int id) {
     td.nn_home = node;
   }
   nn_bind_node_net(node);
-#else
-  (void)id;
-#endif
 }
 
 static void thread_main(int id) {

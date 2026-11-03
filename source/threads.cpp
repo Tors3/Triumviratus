@@ -28,6 +28,12 @@
 #include <thread>
 #include <type_traits>
 #include <cmath>
+#if defined(__linux__)
+#include <sched.h>    // NumaSpread on Linux: sched_getaffinity / sched_setaffinity (search/03_tables.inc)
+#include <unistd.h>
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <iostream>

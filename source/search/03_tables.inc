@@ -88,7 +88,8 @@ static SharedStats g_stats;
 // tree with any number of threads. Xeon (2 x 20 cores), 5 positions x 10 s, against the same build without it: nps
 // +13.4% at 8 threads, +22.6% at 16, +41.6% at 32, +53.1% at 40; one thread level (xperf instructions per node
 // -0.01% / +0.07%, middlegame / endgames). Self-play on against off, one game at a time with Threads=40 on that Xeon,
-// 2+0.02: +40.5 +- 18.8 over 250 games. Windows only for now.
+// 2+0.02: +40.5 +- 18.8 over 250 games. Windows and Linux (Linux since 03/11/2026: sysfs for the nodes,
+// sched_setaffinity, mbind for the handle; not yet measured on a multi-node Linux machine).
 // ============================================================================
 static inline U64 pawn_rows_node() { return (g_stats.pawn_mask + 1) >> g_stats.node_bits; }
 // The continuation rows of thread td (its node's block).
@@ -99,6 +100,39 @@ static inline PieceToRow (*follow_of(const ThreadData &td))[2][NO_PC + 1][64] {
 // The NUMA nodes the search spreads its threads over: 1 with the option off, on one node, off Windows, or when the
 // process was started on a subset of the processors (an affinity set by the user or by the tester is kept). The
 // machine is read once, at the first allocation of the tables, before any thread is bound.
+#if defined(__linux__)
+// Linux (03/11/2026): the nodes and their processors from sysfs ("0-1", "0-19,40-59"), no libnuma.
+static bool numa_read_list(const char *path, cpu_set_t *set, int *highest) {
+  FILE *f = std::fopen(path, "r");
+  if (!f)
+    return false;
+  char buf[4096];
+  const bool ok = std::fgets(buf, sizeof buf, f) != nullptr;
+  std::fclose(f);
+  if (!ok)
+    return false;
+  if (set)
+    CPU_ZERO(set);
+  for (char *s = buf; *s && *s != '\n';) {
+    char *e;
+    const long a = std::strtol(s, &e, 10);
+    long b = a;
+    if (e == s)
+      return false;
+    if (*e == '-')
+      b = std::strtol(e + 1, &e, 10);
+    for (long i = a; i <= b; i++) {
+      if (set && i < CPU_SETSIZE)
+        CPU_SET(int(i), set);
+      if (highest)
+        *highest = std::max(*highest, int(i));
+    }
+    s = *e == ',' ? e + 1 : e;
+  }
+  return true;
+}
+#endif
+
 static int numa_search_nodes() {
   static const int machine_nodes = [] {
     int n = 1;
@@ -107,10 +141,33 @@ static int numa_search_nodes() {
     DWORD_PTR pm = 0, sm = 0;
     if (GetNumaHighestNodeNumber(&hi) && GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm) && pm == sm)
       n = std::min(int(hi) + 1, 64);
+#elif defined(__linux__)
+    int       hi = 0;
+    cpu_set_t mine;
+    if (numa_read_list("/sys/devices/system/node/online", nullptr, &hi) &&
+        sched_getaffinity(0, sizeof mine, &mine) == 0 && CPU_COUNT(&mine) == int(sysconf(_SC_NPROCESSORS_ONLN)))
+      n = std::min(hi + 1, 64);
 #endif
     return n;
   }();
   return g_numa_spread ? machine_nodes : 1;
+}
+
+// The calling thread runs only on the processors of `node` from now on.
+static void numa_bind_cpu(int node) {
+#if defined(_WIN32)
+  GROUP_AFFINITY ga{};
+  if (GetNumaNodeProcessorMaskEx((USHORT)node, &ga))
+    SetThreadGroupAffinity(GetCurrentThread(), &ga, nullptr);
+#elif defined(__linux__)
+  char      path[96];
+  cpu_set_t set;
+  std::snprintf(path, sizeof path, "/sys/devices/system/node/node%d/cpulist", node);
+  if (numa_read_list(path, &set, nullptr) && CPU_COUNT(&set) > 0)
+    sched_setaffinity(0, sizeof set, &set);   // 0 = the calling thread
+#else
+  (void)node;
+#endif
 }
 
 // Pawn rows per slot: 1 << PawnHistLog (29/10/2026, an option for the SPRT of a smaller pawn history; 13 = the 8192

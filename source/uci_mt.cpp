@@ -299,8 +299,15 @@ void uci_loop()
     int max_hash = 65536;
     int mb = 64;
     
-    // Detect available threads
+    // Detect available threads: every logical processor of the machine (03/11/2026). On Windows hardware_concurrency
+    // counts only the processor group of the process (40 of the 80 on a two-socket Xeon), so the count is taken over
+    // all groups; the threads reach the other groups through NumaSpread (search/15_threads.inc). On Linux
+    // hardware_concurrency is already the whole machine.
+#if defined(_WIN32)
+    int max_threads = int(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+#else
     int max_threads = std::thread::hardware_concurrency();
+#endif
     if (max_threads < 1) max_threads = 1;
     if (max_threads > MAX_THREADS) max_threads = MAX_THREADS;
     

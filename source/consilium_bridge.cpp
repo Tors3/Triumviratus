@@ -64,6 +64,10 @@ static void embed_init_from_resource() {
 
 #include "large_pages.h"   // the network and the per-thread handles live on large pages when possible
 #include <mutex>
+#if defined(__linux__)
+#include <sys/syscall.h>   // NumaSpread: mbind of a thread's handle (nn_pos_rehome)
+#include <unistd.h>
+#endif
 
 // The few types and values the rest of the bridge uses, in a namespace of their own.
 namespace cnb {
@@ -274,10 +278,11 @@ struct NnLast {
 };
 
 // Optimism: the search's bias towards its own side, written per side at the root of each iteration (by every
-// thread for itself with OptPerThread, always on since the search rewrite of 04/10/2026). g_eval_optimism = 0 drops it.
-int              g_eval_optimism  = 1;
+// thread for itself with OptPerThread, always on since the search rewrite of 04/10/2026). The two switches are no
+// longer set anywhere (03/11/2026): constants, so the compiler drops their tests.
+constexpr int    g_eval_optimism  = 1;
 std::atomic<int> g_optimism[2]    = {0, 0};   // relaxed: written by the main thread, read by the evaluations
-int              g_opt_per_thread = 1;
+constexpr int    g_opt_per_thread = 1;
 
 // Constants of steps 1-3 (UCI options, table g_eval_consts below). All tuned by our SPSA runs; the old values are in
 // parentheses. EvalPsqtW is left untuned on purpose: with EvalPosW it spans the "scale everything" direction that
@@ -303,7 +308,9 @@ constexpr int EVAL_BOUND = 31506;   // |static eval| <= 31506: below every table
 // Release builds (TRIUMV_FROZEN) compile the tuned values as literals: the divisions of steps 1-3 then become
 // multiply-and-shift with identical integer results (as variables they were hardware divisions, one of them 64-bit:
 // 57 cycles per node on 09/09/2026). The variables still exist for the UCI table; nn_frozen_check reports a change
-// that such a build ignores.
+// that such a build ignores. Since 03/11/2026 the fifty-move form (EvalFiftyMix/Keep) and the switches no tester uses
+// (optimism, incremental, g_c2_want_effect) are constants too: xperf -0.17% / -0.59% cycles per node (middlegame /
+// endgames, Xeon, same tree).
 #ifdef TRIUMV_FROZEN
 #define g_ev_psqt_w 125
 #define g_ev_pos_w 131
@@ -313,6 +320,8 @@ constexpr int EVAL_BOUND = 31506;   // |static eval| <= 31506: below every table
 #define g_ev_mat_base 102051
 #define g_ev_opt_cplx 432
 #define g_ev_opt_base 5831
+#define g_ev_fifty_mix 0
+#define g_ev_fifty_keep 20
 #endif
 
 // Step 4 (fifty-move counter), shared by nn_scale and nn_finalize.
@@ -409,8 +418,13 @@ void nn_set_finny(int) {}
 void nn_acc_stats(void) {}
 
 // Incremental evaluation is the default (identical to a full refresh at every node); "incremental off" refreshes every
-// evaluation, as a diagnostic. nnueverify compares the two at every evaluation.
+// evaluation, as a diagnostic. nnueverify compares the two at every evaluation. Release builds (TRIUMV_FROZEN, 03/11/2026)
+// keep it on as a constant: "incremental off" is a development diagnostic, and the test leaves every evaluation.
+#ifdef TRIUMV_FROZEN
+static constexpr bool g_incremental = true;
+#else
 static bool g_incremental = true;
+#endif
 static bool g_verify      = false;
 static unsigned long long g_verify_count = 0, g_verify_bad = 0;   // evaluations compared / different
 
@@ -419,7 +433,11 @@ static unsigned long long g_verify_count = 0, g_verify_bad = 0;   // evaluations
 // It was the third test of that family (a small second network -17 Elo, a lazy evaluation with the parent's
 // positional part): the search is fitted to the full evaluation, and a rough substitute grows the tree more than the
 // skipped forward pass saves.
+#ifdef TRIUMV_FROZEN
+void        nn_set_incremental(int on) { (void)on; }
+#else
 void        nn_set_incremental(int on) { g_incremental = on != 0; }
+#endif
 void        nn_set_verify(int on) { g_verify = on != 0; }
 void nn_set_eval_scale(int pct) {   // EvalScale: all eight buckets
     g_eval_scale_pct = pct < 1 ? 1 : pct;
@@ -444,6 +462,8 @@ int nn_get_eval_scale_bucket(int b) { return (b >= 0 && b < 8) ? g_eval_scale_b[
 #undef g_ev_mat_base
 #undef g_ev_opt_cplx
 #undef g_ev_opt_base
+#undef g_ev_fifty_mix
+#undef g_ev_fifty_keep
 #endif
 namespace {
 struct EvalConst { const char* name; int* var; int lo; int hi; };
@@ -471,6 +491,7 @@ void nn_frozen_check() {
         {&g_ev_pos_w_end, 131, "EvalPosWEnd"},     {&g_ev_cplx_div, 18198, "EvalComplexDiv"},
         {&g_ev_pawn_mat, 680, "EvalPawnMat"},      {&g_ev_mat_base, 102051, "EvalMatBase"},
         {&g_ev_opt_cplx, 432, "EvalOptComplexDiv"}, {&g_ev_opt_base, 5831, "EvalOptMatBase"},
+        {&g_ev_fifty_mix, 0, "EvalFiftyMix"},      {&g_ev_fifty_keep, 20, "EvalFiftyKeep"},
     };
     static bool reported[sizeof(fz) / sizeof(fz[0])] = {false};
     for (std::size_t j = 0; j < sizeof(fz) / sizeof(fz[0]); j++) {
@@ -491,6 +512,8 @@ void nn_frozen_check() {
 #define g_ev_mat_base 102051
 #define g_ev_opt_cplx 432
 #define g_ev_opt_base 5831
+#define g_ev_fifty_mix 0
+#define g_ev_fifty_keep 20
 #endif
 int         nn_eval_const_count(void) { return int(sizeof(g_eval_consts) / sizeof(g_eval_consts[0])); }
 const char* nn_eval_const_name(int i) { return g_eval_consts[i].name; }
@@ -532,7 +555,13 @@ int  g_c2_conv[3] = {0, 0, 400};   // C2ConvW (/1024), C2ConvFrom, C2ConvCap (po
 int  g_c2_exp[8]  = {0, 0, 0, 0, 0, 0, 0, 0};
 bool g_c2_exp_on  = false;
 bool g_c2_on      = false;         // any of the terms on
-bool g_c2_want_effect = false;     // nn_want_pk_effect: keep cn::pk_effect per evaluation for the search
+// nn_want_pk_effect: keep cn::pk_effect per evaluation for the search. Nothing calls it any more (03/11/2026): in the
+// release builds a constant, so the evaluation does not test it.
+#ifdef TRIUMV_FROZEN
+constexpr bool g_c2_want_effect = false;
+#else
+bool g_c2_want_effect = false;
+#endif
 
 // pk_effect = what the pawn-king subnetwork adds to the positional output (cn::pk_effect), read only with C2ConvW on.
 inline void c2_adjust(const NnBoard& board, int pk_effect, int& psqt, int& positional) {
@@ -690,7 +719,11 @@ long long nn_pk_signature(void* handle, const unsigned long long* bb, int side_w
     const cn::Board b{reinterpret_cast<const std::uint64_t*>(bb), nullptr, nullptr, side_white ? 0 : 1};
     return cn::pk_signature(NET_REF, *static_cast<CnPos*>(handle)->h, b, bits, compute != 0);
 }
+#ifdef TRIUMV_FROZEN
+void nn_want_pk_effect(int on) { (void)on; }
+#else
 void nn_want_pk_effect(int on) { g_c2_want_effect = on != 0; }
+#endif
 int  nn_last_pk_effect(void* handle) { return static_cast<CnPos*>(handle)->pk_effect; }
 
 // --- Conversion push, search version with the exact pawn-king effect (C2ConvPkSrc 1; 21/10/2026) ---
@@ -753,11 +786,13 @@ void nn_prefetch_move(const unsigned long long* bb, int phase, int pc, int from,
 
 // NumaSpread (03/11/2026): the thread's handle (accumulators, king, pawn and pawn-king caches) moved to the memory of
 // `node`, the node the calling thread now runs on; the same contents, so the same values. The one pointer into the
-// handle (pkLast) is moved with it.
+// handle (pkLast) is moved with it. Windows asks for memory of the node; Linux places a page on the node of the thread
+// that first writes it, so the calling thread (already bound to `node`) allocates and copies.
 void nn_pos_rehome(void* handle, int node) {
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__linux__)
     CnPos*            p   = static_cast<CnPos*>(handle);
     const std::size_t sz  = sizeof(cn::Handle);
+#if defined(_WIN32)
     void*             mem = with_lock_memory_privilege(
       [&](std::size_t lp) -> void* {
           return VirtualAllocExNuma(GetCurrentProcess(), nullptr, (sz + lp - 1) / lp * lp,
@@ -765,6 +800,17 @@ void nn_pos_rehome(void* handle, int node) {
       },
       []() -> void* { return nullptr; });
     if (!mem) mem = VirtualAllocExNuma(GetCurrentProcess(), nullptr, sz, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, DWORD(node));
+#else
+    // The allocator can hand back memory another thread has touched (already placed elsewhere): mbind with
+    // MPOL_MF_MOVE prefers `node` for the range and moves the pages already there (raw syscall, no libnuma; if it is
+    // refused, the first write below still places the untouched pages).
+    void* mem = large_pages_alloc(sz);
+    if (mem && node >= 0 && node < 64) {
+        constexpr std::size_t HP = 2 * 1024 * 1024;   // large_pages_alloc aligns and rounds to this
+        unsigned long         mask = 1ul << node;
+        syscall(SYS_mbind, mem, (sz + HP - 1) / HP * HP, 1 /* MPOL_PREFERRED */, &mask, 64, 2 /* MPOL_MF_MOVE */);
+    }
+#endif
     if (!mem) return;
     cn::Handle* old = p->h;
     cn::Handle* h   = static_cast<cn::Handle*>(mem);
@@ -780,9 +826,9 @@ void nn_pos_rehome(void* handle, int node) {
 }
 
 // NumaSpread (03/11/2026): the copy of the network on `node` for the calling thread, which runs on that node; made once
-// per node and network (TriumvShm::attach with extra = true: the area of the node, created from the loaded copy).
+// per node and network (TriumvShm::attach_extra: the area of the node, created from the loaded copy).
 void nn_bind_node_net(int node) {
-#if defined(_WIN32) && defined(TRIUMV_SHARED_NET)
+#if defined(TRIUMV_SHARED_NET) && (defined(_WIN32) || defined(__linux__))
     static const cn::Net* per_node[64];
     static int            per_gen[64];
     static std::mutex     mx;
@@ -794,8 +840,8 @@ void nn_bind_node_net(int node) {
     std::lock_guard<std::mutex> lk(mx);
     if (per_gen[node] != gen) {
         std::string st;
-        const void* sh = TriumvShm::attach(g_cn_view, sizeof(cn::Net), g_cn_view->contentHash ^ std::uint64_t(sizeof(cn::Net)),
-                                           st, true);
+        const void* sh = TriumvShm::attach_extra(g_cn_view, sizeof(cn::Net),
+                                                 g_cn_view->contentHash ^ std::uint64_t(sizeof(cn::Net)), st);
         per_node[node] = sh ? static_cast<const cn::Net*>(sh) : g_cn_view;
         per_gen[node]  = gen;
         std::printf("info string NUMA node %d network: %s\n", node, st.c_str());

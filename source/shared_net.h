@@ -169,6 +169,10 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
     if (result && !extra) current() = v;
     return result;
 }
+// NumaSpread: the area of the calling thread's node, kept open beside the current view.
+inline const void* attach_extra(const void* src, std::size_t size, std::uint64_t hash, std::string& status) {
+    return attach(src, size, hash, status, true);
+}
 
 }  // namespace TriumvShm
 
@@ -287,9 +291,10 @@ inline const void* attach_by_file(const char* netpath, std::uint64_t param, std:
 
 // Returns a pointer to the shared object, or nullptr: then the caller keeps its local copy. `status` describes the
 // outcome for the info string. With netpath, the file also gets its alias (file_alias) for the next processes.
+// extra (NumaSpread, 03/11/2026): one more mapping for another node, kept open; the current view is not touched.
 inline const void* attach(const void* src, std::size_t size, std::uint64_t hash, std::string& status,
-                          const char* netpath = nullptr, std::uint64_t param = 0) {
-    release();
+                          const char* netpath = nullptr, std::uint64_t param = 0, bool extra = false) {
+    if (!extra) release();
     const int         node  = numa_node();
     const std::size_t total = HeaderBytes + size;
     const char*       env   = std::getenv("TRIUMV_SHM_DIR");
@@ -305,7 +310,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
             const std::string alias = netpath ? file_alias(dir, netpath, param, size, node) : "";
             if (!alias.empty())
                 link(path.c_str(), alias.c_str());
-            current() = v;
+            if (!extra) current() = v;
             status    = "shared (opened " + path + ")";
             return result;
         }
@@ -349,13 +354,18 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
         flock(lk, LOCK_UN);
         close(lk);
         if (result) {
-            current() = v;
+            if (!extra) current() = v;
             status    = std::string(created ? "shared (created " : "shared (opened ") + path + ")";
             return result;
         }
     }
     status = "local (no shared file)";
     return nullptr;
+}
+// NumaSpread: the file of the calling thread's node (its pages are touched by that thread: local), kept open beside
+// the current view.
+inline const void* attach_extra(const void* src, std::size_t size, std::uint64_t hash, std::string& status) {
+    return attach(src, size, hash, status, nullptr, 0, true);
 }
 
 }  // namespace TriumvShm
