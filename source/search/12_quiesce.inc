@@ -503,7 +503,8 @@ static inline int qs_pull(int value, int beta, int mix) { return (mix * value + 
 static inline bool qs_worth(ThreadData &td, const QsWalk &w, int m, bool gives, int seen, int alpha, int &best) {
   if (val_lost(best))
     return true;
-  // R19 B3 (off at 0): both exchange tests below move by `ease`: the capture's history (QsSeeHist: a capture
+  // R19 B3 (QsSeeHist off at 0, QsSeeCorr on since 03/11/2026): both exchange tests below move by `ease`: the
+  // capture's history (QsSeeHist: a capture
   // that has often worked may lose a little material) and the node's |correction|, by at most 256 (QsSeeCorr: where the
   // network misjudges the position, a capture that looks a little unsound is still tried). Elsewhere the gap, the
   // history and the correction make one threshold; here the gap has its own test, so the shift applies to both. Our

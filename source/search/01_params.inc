@@ -1,5 +1,10 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
 //
+// BAKE QSSEECORR (03/11/2026, author): R19 B3.b on, both exchange tests of the quiescence drop by |correction| x
+// QsSeeCorr / 1024, at most 256 (a pawn): where the network misjudges the position, a capture that looks a little
+// unsound is still tried. QsSeeCorr 0->2048. SPRT against off, one thread, UHO, [-1, 2]: +1.74 +- 2.35 / 20,544,
+// LLR +1.55, accepted by the author at 20,000 games. Bench 213656 -> 179025.
+//
 // BAKE IMPSLOPELMP (03/11/2026, author): R19 S3.3 on, the move count follows the continuous improvement (static -
 // static two plies back, clamped to +-ImpAdjCap) instead of only the yes/no LmpNotImp: ImpSlopeLmp 0->192, ImpAdjCap
 // 200->160 (the cap is read only by the ImpSlope* levers). SPRT against off, one
@@ -1668,7 +1673,7 @@
   P(CaptWinGood, 0, 0, 1024)             /* a capture with SEE >= this (> 0) is a good capture whatever its history */ \
   /* -- quiescence (B3) --                                                                                           */ \
   P(QsSeeHist, 0, -4096, 4096)           /* quiescence exchange threshold moves by capture history * this / 65536 */ \
-  P(QsSeeCorr, 0, 0, 32768)              /* and drops by |correction| * this / 1024, at most 256 (our corrections are small) */ \
+  P(QsSeeCorr, 2048, 0, 32768)           /* and drops by |correction| * this / 1024, at most 256 (baked 03/11) */ \
   P(QsFhCapt, 0, 0, 2048)                /* a capture that fails high in quiescence earns this in its capture history */ \
   /* -- single rules (B4-B15, 33) --                                                                                 */ \
   P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus (Viridithas) */ \
