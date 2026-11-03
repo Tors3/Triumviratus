@@ -26,11 +26,25 @@ function Find-Toolchain([switch]$NeedPgo) {
     if (-not (Test-Path $vswhere)) { Fail "vswhere not found: Visual Studio 2022 is missing (see build\setup_toolchain.ps1)" }
     $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
     if (-not $vs) { Fail "Visual Studio without the 'C++ Clang Compiler for Windows' component (see build\setup_toolchain.ps1)" }
-    $L = "$vs\VC\Tools\Llvm\x64\bin"
-    $t = @{ CXX = "$L\clang-cl.exe"; LNK = "$L\lld-link.exe"; RC = "$L\llvm-rc.exe"; PD = "$L\llvm-profdata.exe" }
-    foreach ($k in 'CXX', 'LNK', 'RC', 'PD') { if (-not (Test-Path $t[$k])) { Fail "missing $($t[$k])" } }
-    $t.rt = Get-ChildItem "$vs\VC\Tools\Llvm\x64\lib\clang\*\lib\windows\clang_rt.profile-x86_64.lib" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
+    # The compiler (03/11/2026): the newest complete LLVM among $env:TRIUMV_LLVM, a standalone install
+    # (%ProgramFiles%\LLVM: winget LLVM.LLVM, see build\setup_toolchain.ps1) and the one inside Visual Studio. clang 23
+    # (LLVM 23.1.4) against the clang 19.1.5 of Visual Studio 17.14, same source and PGO, xperf 02/11/2026: cycles per
+    # node -0.65% middlegame / -1.31% endgames on a Xeon (Skylake-SP), level on a Zen 4 laptop. Visual Studio still
+    # provides the MSVC headers and libraries; $env:TRIUMV_LLVM points to another LLVM folder.
+    $t = $null; $best = [version]'0.0'
+    foreach ($root in @($env:TRIUMV_LLVM, "$env:ProgramFiles\LLVM", "$vs\VC\Tools\Llvm\x64")) {
+        if (-not $root) { continue }
+        $L = "$root\bin"
+        $c = @{ CXX = "$L\clang-cl.exe"; LNK = "$L\lld-link.exe"; RC = "$L\llvm-rc.exe"; PD = "$L\llvm-profdata.exe" }
+        if (@('CXX', 'LNK', 'RC', 'PD' | Where-Object { -not (Test-Path $c[$_]) }).Count) { continue }
+        $c.rt = Get-ChildItem "$root\lib\clang\*\lib\windows\clang_rt.profile-x86_64.lib" -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        if (-not $c.rt -and $NeedPgo) { continue }
+        $m = [regex]::Match("$((& $c.CXX --version)[0])", 'version (\d+\.\d+\.\d+)')
+        $v = if ($m.Success) { [version]$m.Groups[1].Value } else { [version]'0.0' }
+        if ($v -gt $best) { $best = $v; $t = $c }
+    }
+    if (-not $t) { Fail "no complete LLVM (clang-cl, lld-link, llvm-rc, llvm-profdata, clang_rt.profile) in TRIUMV_LLVM, $env:ProgramFiles\LLVM or Visual Studio (see build\setup_toolchain.ps1)" }
     if (-not $t.rt -and $NeedPgo) { Fail "missing clang_rt.profile-x86_64.lib (needed by PGO)" }
     $t.msvc = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
     $kits = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue).KitsRoot10

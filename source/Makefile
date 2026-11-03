@@ -22,8 +22,19 @@
 #     accanto al binario (come su Windows). resolve_net_path le trova via
 #     /proc/self/exe.
 # =============================================================================
-CXX ?= g++
-CC  ?= gcc
+# Compiler (03/11/2026): the newest clang++ of version 19 or later when one is installed (the engine needs 19:
+# static_assert), g++ otherwise; CXX=... / CC=... on the command line or in the environment choose another. The Windows
+# releases are built with clang 23 (source/universal/ubuild_lib.ps1); GCC 13 and 16 with PGO gave this engine 14-22%
+# more cycles per node than clang with PGO (Windows, 02/11/2026).
+CLANGXX := $(shell for c in clang++-25 clang++-24 clang++-23 clang++-22 clang++-21 clang++-20 clang++-19 clang++; do \
+             command -v $$c >/dev/null 2>&1 && [ "$$($$c -dumpversion 2>/dev/null | cut -d. -f1)" -ge 19 ] 2>/dev/null \
+             && { echo $$c; break; }; done 2>/dev/null)
+ifeq ($(origin CXX),default)
+  CXX := $(if $(CLANGXX),$(CLANGXX),g++)
+endif
+ifeq ($(origin CC),default)
+  CC := $(if $(findstring clang++,$(CXX)),$(subst clang++,clang,$(CXX)),gcc)
+endif
 EXE ?= triumviratus
 
 # Sources: every .cpp of the root (engine, sliders.cpp, large_pages.cpp, consilium_bridge.cpp) plus the network module

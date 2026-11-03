@@ -9,6 +9,7 @@
 #    - Visual Studio 2022 Community + workload C++ desktop
 #    - C++ Clang Compiler for Windows      -> clang-cl, llvm-profdata, clang_rt.profile
 #    - MSBuild support for LLVM (clang-cl) -> PlatformToolset=ClangCL richiesto dal vcxproj
+#    - LLVM 23 (clang-cl 23.1.4): il compilatore delle release, piu' veloce della clang di VS (vedi 4b)
 #    - Python 3.11  (pgo_train.py usa SOLO la stdlib: nessun pacchetto pip)
 #    - Git
 #
@@ -60,6 +61,15 @@ winget install --id Python.Python.3.11 --accept-package-agreements --accept-sour
 Step "Git"
 winget install --id Git.Git --accept-package-agreements --accept-source-agreements
 
+# --- 4b. LLVM 23 --------------------------------------------------------------
+# The release compiler (03/11/2026): clang 23 (LLVM 23.1.4) against the clang 19.1.5 of Visual Studio 17.14, same
+# source and PGO, xperf 02/11/2026: cycles per node -0.65% middlegame / -1.31% endgames on a Xeon, level on a Zen 4.
+# source\universal\ubuild_lib.ps1 (Find-Toolchain) takes the newest complete LLVM among %ProgramFiles%\LLVM and
+# Visual Studio; without this step the builds use the Visual Studio one. If winget does not offer 23.1.4, the latest.
+Step "LLVM 23 (clang-cl, lld-link, llvm-profdata)"
+winget install --id LLVM.LLVM --version 23.1.4 --accept-package-agreements --accept-source-agreements
+if ($LASTEXITCODE -ne 0) { winget install --id LLVM.LLVM --accept-package-agreements --accept-source-agreements }
+
 # --- 5. verifica ------------------------------------------------------------
 # Non basta che l'installazione "sia andata": si controlla che i quattro binari su cui
 # poggia la pipeline esistano davvero e che clang sia >= 19.
@@ -90,6 +100,16 @@ if ($vsRoot) {
     } else { Check "clang-cl >= 19" $false "non trovato" }
 
     Check "clang_rt.profile" ([bool]$rtlib) $(if ($rtlib) { $rtlib.Path } else { "assente: la PGO non linka" })
+}
+
+# LLVM standalone (4b): not required (the Visual Studio clang is the fallback), but the release compiler.
+$llvmCl = "$env:ProgramFiles\LLVM\bin\clang-cl.exe"
+if (Test-Path $llvmCl) {
+    $lv = (& $llvmCl --version | Select-String -Pattern '(\d+)\.\d+\.\d+').Matches.Groups[1].Value
+    if ([int]$lv -ge 23) { Write-Host ("  [ok]      {0,-22} {1}" -f "LLVM >= 23", "versione $lv  ($llvmCl)") -ForegroundColor Green }
+    else { Write-Host ("  [vecchia] {0,-22} {1}" -f "LLVM >= 23", "versione ${lv}: le build useranno la clang piu' recente") -ForegroundColor Yellow }
+} else {
+    Write-Host ("  [assente] {0,-22} {1}" -f "LLVM >= 23", "le build useranno la clang di Visual Studio (piu' lenta)") -ForegroundColor Yellow
 }
 
 # I comandi appena installati non sono nel PATH di QUESTA sessione: si cercano su disco.
