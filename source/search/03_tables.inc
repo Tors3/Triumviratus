@@ -80,14 +80,15 @@ struct SharedStats {
 };
 static SharedStats g_stats;
 // ============================================================================
-// NumaSpread (03/11/2026, UCI option, off by default): on a machine with several NUMA nodes (multi-socket servers)
+// NumaSpread (03/11/2026, UCI option, on by default): on a machine with several NUMA nodes (multi-socket servers)
 // the helper threads are spread over the nodes (15_threads.inc), each node reads its own copy of the network and each
 // thread's network handle lives on its node. The shared histories are split in one copy per node, shared by the
 // threads of that node as before; the copy of another socket is never written, so no cache line moves between
 // sockets. With one node, with the option off or with one thread nothing changes: the tables of before and the same
 // tree with any number of threads. Xeon (2 x 20 cores), 5 positions x 10 s, against the same build without it: nps
 // +13.4% at 8 threads, +22.6% at 16, +41.6% at 32, +53.1% at 40; one thread level (xperf instructions per node
-// -0.01% / +0.07%, middlegame / endgames). Windows only for now.
+// -0.01% / +0.07%, middlegame / endgames). Self-play on against off, one game at a time with Threads=40 on that Xeon,
+// 2+0.02: +40.5 +- 18.8 over 250 games. Windows only for now.
 // ============================================================================
 static inline U64 pawn_rows_node() { return (g_stats.pawn_mask + 1) >> g_stats.node_bits; }
 // The continuation rows of thread td (its node's block).

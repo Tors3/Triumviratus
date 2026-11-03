@@ -6,7 +6,7 @@ ThreadDataVec            thread_data;   // su large pages (V1, threads.h)
 std::atomic<bool>        stop_threads(false);
 std::mutex               output_mutex;
 int                      num_threads = 1;
-bool                     g_numa_spread = false;
+bool                     g_numa_spread = true;   // NumaSpread (03_tables.inc), on by default since 03/11/2026
 SearchLimits             g_limits;
 
 // Search of draws/wins only: values and thresholds. Mates lie in (mate_score, mate_value], tablebase wins
