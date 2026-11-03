@@ -73,6 +73,7 @@ struct MoveQueue {
   int           depth;
   int           cut_threshold;   // QK_CUTS: SEE threshold
   bool          quiets_off;      // move-count pruning: no more quiet moves
+  bool          count_keep;      // LmpChecks / LmpKeepScore (R19): past the count some quiet moves still come out
 #ifdef TRIUMV_PRUNELOG
   bool          pl_count_off;    // data build: move-count pruning applied move by move in skip_move (prunelog.h)
 #endif
@@ -373,6 +374,7 @@ static void queue_start(MoveQueue &q, ThreadData &td, NodeFrame *f, int hash_mov
   q.kind = kind;
   q.depth = depth;
   q.quiets_off = false;
+  q.count_keep = kind == QK_MAIN && (LmpChecks || LmpKeepScore);
 #ifdef TRIUMV_PRUNELOG
   q.pl_count_off = false;
 #endif
@@ -651,7 +653,7 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
     passed_to = rows & ~(front | span);
   }
 
-  // Attacks from a safe square (08/10/2026; the idea is in Reckless, the rule is ours): for each piece type, the squares
+  // Attacks from a safe square (08/10/2026; the rule is ours): for each piece type, the squares
   // not attacked by the opponent from which that piece would attack a target. Targets: enemy pieces (not pawns, not
   // the king) of a higher class (pawn < knight = bishop < rook < queen), or of the same or lower class but undefended.
   // The squares are found backwards, from the target's attacks (pawn: those of an enemy pawn).
@@ -1132,6 +1134,19 @@ static inline void queue_prefetch(const MoveQueue &q, int m) {
     td_prefetch_child(*q.td, td_child_key_guess(*q.td, m));
 }
 
+// R19 S3.1 / S3.2 (03/11/2026, off at 0): once the move count has stopped the quiet moves, a quiet move still comes out
+// when it gives a direct check and loses no material (LmpChecks; Integral, Viridithas), or when its ordering
+// score is at least LmpKeepScore (the move's own history moves the cut; Stormphrax, PlentyChess). The check
+// squares are those of the ordering (q.checks, ready once fill_quiets has run).
+static inline bool queue_keeps_after_count(const MoveQueue &q, const ScoredMove &sm) {
+  if (LmpKeepScore && sm.score >= LmpKeepScore)
+    return true;
+  if (!LmpChecks || !q.checks || !q.checks->ready)
+    return false;
+  const int m = sm.move, kind = kPieceKind[move_piece(m)];
+  return (q.checks->chk[kind] >> move_to(m) & 1) && see_holds(*q.td, m, 0);
+}
+
 // Next pseudo-legal move, 0 when the queue is empty. The hash move is handed out once.
 static int queue_next(MoveQueue &q) {
   ThreadData &td = *q.td;
@@ -1153,7 +1168,9 @@ static int queue_next(MoveQueue &q) {
       while (q.cur < q.n_tact) {
         const ScoredMove sm = q.list[q.cur++];
         // D. Good capture: SEE >= -score x StGood / (19 x 1024); StGood = 1024 is the old -score/19, same truncation.
-        if (see_holds(td, sm.move, (int)(-(long long)sm.score * q.good_capt / 19456))) {
+        // CaptWinGood (R19 B10; off at 0): a capture that wins at least CaptWinGood is good whatever its history.
+        if (see_holds(td, sm.move, (int)(-(long long)sm.score * q.good_capt / 19456)) ||
+            (CaptWinGood && see_holds(td, sm.move, CaptWinGood))) {
           if (q.cur < q.n_tact)
             queue_prefetch(q, q.list[q.cur].move);
           return sm.move;
@@ -1164,24 +1181,28 @@ static int queue_next(MoveQueue &q) {
       break;
 
     case QS_QUIET_FILL:
-      if (!q.quiets_off)
+      if (!q.quiets_off || q.count_keep)   // count_keep (R19): the kept moves are among the quiet ones
         fill_quiets(q);
       q.step = QS_QUIET_HIGH;
       break;
 
+    // Past the move count (quiets_off) the quiet stages stop, or with count_keep hand out only the moves that
+    // queue_keeps_after_count lets through. Without count_keep the loops end exactly where the old ones did.
     case QS_QUIET_HIGH:
       if (q.quiet_split >= 0) {   // the good moves are the prefix [n_tact, quiet_split)
-        if (!q.quiets_off && q.cur < q.quiet_split) {
+        while ((!q.quiets_off || q.count_keep) && q.cur < q.quiet_split) {
           const ScoredMove sm = q.list[q.cur++];
+          if (q.quiets_off && !queue_keeps_after_count(q, sm))
+            continue;
           if (q.cur < q.n_all)
             queue_prefetch(q, q.list[q.cur].move);
           q.rank_ok = true, q.last_score = sm.score;
           return sm.move;
         }
       } else
-        while (!q.quiets_off && q.cur < q.n_all) {
+        while ((!q.quiets_off || q.count_keep) && q.cur < q.n_all) {
           const ScoredMove sm = q.list[q.cur++];
-          if (sm.score > q.good_quiet) {
+          if (sm.score > q.good_quiet && (!q.quiets_off || queue_keeps_after_count(q, sm))) {
             q.rank_ok = true, q.last_score = sm.score;
             return sm.move;
           }
@@ -1202,17 +1223,19 @@ static int queue_next(MoveQueue &q) {
 
     case QS_QUIET_LOW:
       if (q.quiet_split >= 0) {   // the bad moves are the rest [quiet_split, n_all), already in order
-        if (!q.quiets_off && q.cur < q.n_all) {
+        while ((!q.quiets_off || q.count_keep) && q.cur < q.n_all) {
           const ScoredMove sm = q.list[q.cur++];
+          if (q.quiets_off && !queue_keeps_after_count(q, sm))
+            continue;
           if (q.cur < q.n_all)
             queue_prefetch(q, q.list[q.cur].move);
           q.rank_ok = true, q.last_score = sm.score;
           return sm.move;
         }
       } else
-        while (!q.quiets_off && q.cur < q.n_all) {
+        while ((!q.quiets_off || q.count_keep) && q.cur < q.n_all) {
           const ScoredMove sm = q.list[q.cur++];
-          if (sm.score <= q.good_quiet) {
+          if (sm.score <= q.good_quiet && (!q.quiets_off || queue_keeps_after_count(q, sm))) {
             q.rank_ok = true, q.last_score = sm.score;
             return sm.move;
           }

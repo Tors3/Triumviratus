@@ -92,10 +92,18 @@ struct Learner {
     PROF_GUARD(prof_corr);
     const int us = td.side, g = corr_grav(ex);
     const U64 phk = corr_phase_key(td), fk = corr_fifty_key(td);
-    hist_learn(corr_slot(td, td.pawn_key ^ phk ^ fk, us).pawn, amount * CorrPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, td.mm_key[0] ^ phk, us).minor, amount * CorrMinorUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, td.np_key[white] ^ fk, us).np_white, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, td.np_key[black] ^ fk, us).np_black, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    const U64 kp = td.pawn_key ^ phk ^ fk, km = td.mm_key[0] ^ phk, kw = td.np_key[white] ^ fk, kb = td.np_key[black] ^ fk;
+    // CorrSignKey (09_history.inc): the entry learns the amount times its key sign, as corr_signal reads it.
+    hist_learn(corr_slot(td, kp, us).pawn, corr_key_sign(kp) * amount * CorrPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, km, us).minor, corr_key_sign(km) * amount * CorrMinorUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, kw, us).np_white, corr_key_sign(kw) * amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, kb, us).np_black, corr_key_sign(kb) * amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    U64 k1, k2;
+    if (CorrPairCont && corr_pair_keys(td, k1, k2)) {   // CorrPairCont: the two position pairs, in corr_x
+      auto *cx = static_cast<int16_t (*)[2]>(td.st_corr_x);
+      hist_learn(cx[k1 & td.st_corr_mask][us], amount * CorrCont2Upd / 128, LIM_CORR, g);
+      hist_learn(cx[k2 & td.st_corr_mask][us], amount * CorrCont2Upd / 128, LIM_CORR, g);
+    }
     if (move_ok(f[-1].move)) {
       const int to = move_to(f[-1].move), pc = td.piece_on[to];
       hist_learn((*f[-2].cont_corr)[pc][to], amount * CorrCont2Upd / 128, LIM_CORR, g);
@@ -224,8 +232,12 @@ static void on_node_outcome(ThreadData &td, NodeFrame *f, const NodeState &n) {
   }
   if (n.prev_to < 0)
     return;
-  if (!n.prior_capture)
+  // PriorCutPvOnly (R19 B2.a; off at 0): an ALL node failing low was expected, so it says little about the
+  // opponent's move; only a cut or PV node that fails low rewards it.
+  if (!n.prior_capture && (!PriorCutPvOnly || n.cut || n.pv))
     on_prior_refuted(L, n);
+  else if (!n.prior_capture)
+    return;
   else
     hist_learn(td.capt_hist[td.piece_on[n.prev_to]][n.prev_to][f[-1].captured % 6],
                by_exp4(n.expert, PrCapt0, PrCapt1, PrCapt2, PrCapt3), LIM_CAPT, hist_cgrav(n.expert));
@@ -236,7 +248,9 @@ static void on_node_outcome(ThreadData &td, NodeFrame *f, const NodeState &n) {
 static void on_hash_cut(ThreadData &td, NodeFrame *f, const NodeState &n) {
   const Learner L(td, f, n.expert);
   const int hm = n.h.move;
-  if (!n.tact_hash)
+  // HashCutEarlyParent (R19 B2.c; 0 = always): the quiet hash move is rewarded only when the parent's move
+  // came early in its list, where a cutoff below it was expected and the reward is not a fluke of a late move.
+  if (!n.tact_hash && (!HashCutEarlyParent || f[-1].move_count < HashCutEarlyParent))
     L.quiet(hm, hist_amount(n.expert, n.depth, HashCutQuietMul, 0, HashCutQuietMax), quiet_ctx_slow(td, hm));
   if (n.prev_to >= 0 && f[-1].move_count < HashPrevLate && !n.prior_capture)
     L.followups(f - 1, td.piece_on[n.prev_to], n.prev_to, -HashCutPrevMalus);
@@ -247,6 +261,9 @@ static void on_hash_cut(ThreadData &td, NodeFrame *f, const NodeState &n) {
 // EvPen scales the penalties (negative change) apart from the rewards.
 static void on_eval_change(ThreadData &td, NodeFrame *f, const NodeState &n) {
   if (!move_ok(f[-1].move) || f[-1].in_check || n.prior_capture)
+    return;
+  // EvalDiffShallow (R19 B2.b; 0 = always): deep nodes with a hash entry learn it only below that depth.
+  if (EvalDiffShallow && n.depth >= EvalDiffShallow && n.h.hit)
     return;
   const Learner L(td, f, n.expert);
   const int change = std::clamp(-(f[-1].static_eval + f->static_eval), -EvalDiffLo, EvalDiffHi) + EvalDiffOfs;
@@ -288,4 +305,14 @@ static void on_eval_error(ThreadData &td, NodeFrame *f, const NodeState &n) {
       (int)std::clamp((long long)(n.best - f->static_eval) * dq * (n.best_move ? CorrBonusHi : CorrBonusLo) / 8192,
                       (long long)-CorrBonusMaxLo, (long long)CorrBonusMaxHi);
   Learner(td, f, n.expert).corrections(CorrLearnW * amount / 1024);
+}
+
+// The correction tables learn the gap to a value the node did not search but knows (R19, CorrRepLearn: the draw of a
+// reachable repetition), with the same depth term and the fail-low scale of on_eval_error, weighted by w / 1024.
+static void on_eval_toward(ThreadData &td, NodeFrame *f, const NodeState &n, int target, int w) {
+  const long long dq =
+      64LL * n.depth + (long long)by_exp4(n.expert, CorrDepthQ0, CorrDepthQ1, CorrDepthQ2, CorrDepthQ3) * n.depth * n.depth;
+  const int amount = (int)std::clamp((long long)(target - f->static_eval) * dq * CorrBonusLo / 8192,
+                                     (long long)-CorrBonusMaxLo, (long long)CorrBonusMaxHi);
+  Learner(td, f, n.expert).corrections((int)((long long)CorrLearnW * amount / 1024 * w / 1024));
 }

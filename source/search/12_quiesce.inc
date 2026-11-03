@@ -100,12 +100,17 @@ static inline int node_eval(ThreadData &td, const HashView &h, int &raw) {
 // rating lists (CCRL: ~90% draws), not self-play. 0 = off, the old draw values.
 static inline int contempt(const ThreadData &td) {
   // DrawDefend (13/10/2026): when behind, a draw is worth +draw_defend for the root side (see 01_params.inc).
-  const int c = Contempt - (DrawDefend ? td.draw_defend : 0);
+  // ContemptAhead (R19 §5, 03/11/2026, off at 0): the twin of DrawDefend, when ahead a draw is worth -contempt_ahead for
+  // the root side (14_deepen.inc sets it from the score the previous move closed with).
+  const int c = Contempt - (DrawDefend ? td.draw_defend : 0) + (ContemptAhead ? td.contempt_ahead : 0);
   return c ? (td.side == td.root_side ? -c : c) : 0;
 }
 
-// A draw with a value close to zero: +-1 depending on the node count, so that draws are not all identical.
-static inline int draw_score(const ThreadData &td) { return -1 + (int)(td.nodes & 2) + contempt(td); }
+// A draw with a value close to zero: +-1 depending on the node count, so that draws are not all identical. DrawSpread
+// (R19 B9, Alexandria; off at 0): five values, -2..+2, so that a line of draws is less often scored as one.
+static inline int draw_score(const ThreadData &td) {
+  return (DrawSpread ? (int)(td.nodes % 5) - 2 : -1 + (int)(td.nodes & 2)) + contempt(td);
+}
 
 // ============================================================================
 // LEGALITY AND CHECK BEFORE MOVING
@@ -270,7 +275,7 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
   f->hctx = 0;   // ThreatHist: the search's move loop rewrites it for its quiet moves
   f->captured = u.captured_piece;
   f->cont_hist = &follow_of(td)[f->in_check][is_tactical(m)][move_piece(m)][move_to(m)];
-  f->cont_corr = &td.cont_corr[move_piece(m)][move_to(m)];
+  f->cont_corr = &cont_corr_of(td)[move_piece(m)][move_to(m)];
   // (14/10/2026, speed at an identical tree) Prefetch of the continuation-correction cells the child reads first in
   // corr_signal (~-0.3% cycles). In the child f[-1] is this frame, so the rows are those of f[-1] and f[-3] here
   // (CorrContW, the child at -2 and -4) and of f[-2] (CorrContOppW, the child at -3); the cell is (arrived piece,
@@ -316,7 +321,7 @@ static inline void step_in_null(ThreadData &td, NodeFrame *f, NullUndo &u) {
   f->hctx = 0;
   f->captured = -1;
   f->cont_hist = &follow_of(td)[0][0][NO_PC][0];
-  f->cont_corr = &td.cont_corr[NO_PC][0];
+  f->cont_corr = &cont_corr_of(td)[NO_PC][0];
 }
 
 static inline void step_out_null(ThreadData &td, NullUndo &u) {
@@ -373,7 +378,7 @@ static inline bool drawn_here(ThreadData &td, bool in_check) {
 // most one minor it is a draw (KvK, KNvK, KBvK); with one minor each it is a draw if no king is in a corner (with a
 // king in a corner mates exist, though not forced); with two minors on one side it is a draw only for two bishops on
 // the same colour (KNNvK and KBBvK on different colours are not, KBNvK wins). The idea of closing the node this way
-// comes from Reckless and is common to several engines; our code counts the minors per side. The network gives these
+// is common to several engines; our code counts the minors per side. The network gives these
 // positions 3-15 cp: the rule closes the node with an exact draw.
 static inline bool insufficient_material(const ThreadData &td) {
   if (td.bitboards[P] | td.bitboards[p] | td.bitboards[R] | td.bitboards[r] | td.bitboards[Q] | td.bitboards[q])
@@ -442,6 +447,7 @@ struct QsWalk {
   int fut_base;   // stand + futility margin of the expert; -infinity in check (nothing is pruned on value)
   int prev_to;    // target square of the previous move: a recapture there is never pruned on value
   C2Mat cm;       // C2SwitchQs: material and experts of the node (written only when the lever is on)
+  int corr_abs = 0;   // QsSeeCorr (R19): |correction| of the node in evaluation units, 0 in check
 };
 
 // Material balance for the side to move, with the search's piece values scaled to evaluation units (QsMatStand).
@@ -497,6 +503,17 @@ static inline int qs_pull(int value, int beta, int mix) { return (mix * value + 
 static inline bool qs_worth(ThreadData &td, const QsWalk &w, int m, bool gives, int seen, int alpha, int &best) {
   if (val_lost(best))
     return true;
+  // R19 B3 (off at 0): both exchange tests below move by `ease`: the capture's history (QsSeeHist: a capture
+  // that has often worked may lose a little material) and the node's |correction|, by at most 256 (QsSeeCorr: where the
+  // network misjudges the position, a capture that looks a little unsound is still tried). Elsewhere the gap, the
+  // history and the correction make one threshold; here the gap has its own test, so the shift applies to both. Our
+  // corrections are a few evaluation units against exchange steps of hundreds (the first step below -74 is a pawn,
+  // about -208), so QsSeeCorr goes well above 1024 (03/11/2026: on the last test only, x16 left the bench unchanged).
+  int ease = 0;
+  if (QsSeeHist && is_tactical(m))
+    ease += td.capt_hist[move_piece(m)][move_to(m)][victim_kind(td, m)] * QsSeeHist / 65536;
+  if (QsSeeCorr)
+    ease += std::min(w.corr_abs * QsSeeCorr / 1024, 256);
   // A plain capture: no check, no promotion, not a recapture, and a futility base that is a real value.
   const bool plain = !gives && move_to(m) != w.prev_to && !get_move_promoted(m) && !val_lost(w.fut_base);
   if (plain) {
@@ -514,14 +531,14 @@ static inline bool qs_worth(ThreadData &td, const QsWalk &w, int m, bool gives, 
       best = std::max(best, fut);
       return false;
     }
-    if (!see_holds(td, m, (alpha - w.fut_base) * QsSeeFutW / 1024)) {   // the exchange cannot close the gap
+    if (!see_holds(td, m, (alpha - w.fut_base) * QsSeeFutW / 1024 - ease)) {   // the exchange cannot close the gap
       best = std::max(best, std::min(alpha, w.fut_base));
       return false;
     }
   }
   if (!is_tactical(m))   // quiet evasions are searched only while being mated (above)
     return false;
-  return see_holds(td, m, -by_exp4(w.ex, QsSee0, QsSee1, QsSee2, QsSee3));
+  return see_holds(td, m, -by_exp4(w.ex, QsSee0, QsSee1, QsSee2, QsSee3) - ease);
 }
 
 // QCHK (AnQsChecks, analysis mode, 09/10/2026, our idea): at the first quiescence ply called by the main search, quiet
@@ -599,6 +616,8 @@ static int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
     }
     alpha = std::max(alpha, best);
     w.fut_base = f->static_eval + by_exp4(w.ex, QsFut0, QsFut1, QsFut2, QsFut3);
+    if (QsSeeCorr)
+      w.corr_abs = std::abs(signal + corr_signal_extra(td)) / CorrEvalDiv;
     if (C2SwitchQs)
       c2_mat_init(td, w.cm);
   }
@@ -635,8 +654,13 @@ static int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
     best_move = m;
     if (pv)
       pv_extend(td, m);
-    if (value >= beta)
+    if (value >= beta) {
+      // QsFhCapt (R19 B3.c; off at 0): the quiescence learns too, a capture that fails high earns a fixed
+      // amount in its capture history.
+      if (QsFhCapt && is_tactical(m) && !get_move_promoted(m))
+        hist_learn(td.capt_hist[move_piece(m)][move_to(m)][victim_kind(td, m)], QsFhCapt, LIM_CAPT, hist_cgrav(w.ex));
       break;
+    }
     alpha = value;
   }
   int count = seen;

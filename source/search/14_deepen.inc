@@ -374,7 +374,7 @@ static void prepare_frames(ThreadData &td) {
   for (int i = 0; i < (int)(sizeof(td.frames) / sizeof(td.frames[0])); i++) {
     NodeFrame &fr = td.frames[i];
     fr.cont_hist = &follow_of(td)[0][0][NO_PC][0];
-    fr.cont_corr = &td.cont_corr[NO_PC][0];
+    fr.cont_corr = &cont_corr_of(td)[NO_PC][0];
     fr.captured = -1;
     fr.static_eval = VAL_NONE;
     fr.ply = i - FRAME_OFFSET;
@@ -503,6 +503,11 @@ static void deepen(ThreadData &td) {
     td.draw_defend = (int)((long long)DrawDefend *
                            std::min<long long>(1024, (long long)(-g_clock.prev_best - DrawDefendFrom) * 1024 / DrawDefendSpan) /
                            1024);
+  // ContemptAhead (R19 §5): the same rule on the other side, from the same score, with the full value past the threshold.
+  td.contempt_ahead = 0;
+  if (ContemptAhead && g_clock.have_prev && g_clock.prev_best != -infinity && g_clock.prev_best >= ContemptAheadFrom &&
+      !val_decided(g_clock.prev_best))
+    td.contempt_ahead = ContemptAhead;
   // C2ConvRoot (the author's idea, 21/10/2026 evening): the conversion push decided once here, from the root's static
   // evaluation and exact pawn-king effect (mode 2 decides again at every iteration, below).
   td.c2_conv_root = 0;
@@ -643,6 +648,13 @@ static void deepen(ThreadData &td) {
       // Aspiration window (block 5): AspBase + an offset per thread, (id % SmpAspCycle) x SmpAspStep (default id % 8),
       // + the spread of the root scores. The offset makes the threads fail high and low at different moments.
       int delta = AspBase + td.thread_id % SmpAspCycle * SmpAspStep + (int)(std::llabs(cur.mean_sq) / AspMeanSqDiv);
+      // AspStable (R19 B12; off at 0): iterations in a row that kept the same best move narrow the window,
+      // AspStable per iteration up to 7, never below 6.
+      if (AspStable && td.pv_idx == 0) {
+        td.asp_stable = cur.pv[0] == td.asp_prev_best ? td.asp_stable + 1 : 0;
+        td.asp_prev_best = cur.pv[0];
+        delta = std::max(6, delta - AspStable * std::min(td.asp_stable, 7));
+      }
       if (td.gd_style == 2)   // AnGold: a narrower window in balanced positions, a wider one in attack
         delta = std::max(6, delta * 9 / 10);
       else if (td.gd_style == 1 || td.gd_style == 4)
@@ -650,7 +662,18 @@ static void deepen(ThreadData &td) {
       const int avg = cur.avg_score;
       int alpha = std::max(avg - delta, -infinity);
       int beta = std::min(avg + delta, (int)infinity);
-      set_thread_optimism(td, avg);
+      // SmpOptDeep (R19 S1.2; off at 0): with several threads the optimism also reads the root average of the
+      // thread that has finished the deepest iteration (SmpOptDeep/1024 of the way toward it), a better estimate than a
+      // shallower thread's own. The other threads' fields are read without a lock: a stale value only weighs less.
+      int opt_avg = avg;
+      if (SmpOptDeep && num_threads > 1) {
+        int deepest = td.completed_depth, other = avg;
+        for (const ThreadData &o : thread_data)
+          if (&o != &td && o.completed_depth > deepest && o.root_count > 0)
+            deepest = o.completed_depth, other = o.root[0].avg_score;
+        opt_avg = avg + (int)((long long)(other - avg) * SmpOptDeep / 1024);
+      }
+      set_thread_optimism(td, opt_avg);
       nn_root_sync(td);
 
       int failed_high = 0;

@@ -260,7 +260,7 @@ inline void new_search() {
 // in the audit of 25/07). The stale comment kept closed an NPS front that
 // was already won: an auditor read it and reported the prefetch as not
 // yet tried. If a comment contradicts the live default, the code wins.
-// Retested 2026-07-13 (Reckless #1085): the attempt of 2026-06-07 was
+// Retested 2026-07-13: the attempt of 2026-06-07 was
 // NPS-neutral, but meanwhile TTTwoLevel (2-slot buckets) had been baked,
 // which changes the access pattern -> hence the gain.
 // Prefetch of the FIRST cache line of the bucket right after computing the child's

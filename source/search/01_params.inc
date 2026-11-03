@@ -1,5 +1,10 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
 //
+// BAKE IMPSLOPELMP (03/11/2026, author): R19 S3.3 on, the move count follows the continuous improvement (static -
+// static two plies back, clamped to +-ImpAdjCap) instead of only the yes/no LmpNotImp: ImpSlopeLmp 0->192, ImpAdjCap
+// 200->160 (the cap is read only by the ImpSlope* levers). SPRT against off, one
+// thread, UHO, [-1, 2]: +4.59 +- 2.79 / 13,846, LLR +3.10. Bench 131701 -> 213656.
+//
 // BAKE CORR6 (02/11/2026, author): the correction weights rebalanced around a third continuation pair, our move six
 // plies back with the opponent's last move: CorrCont6W 0->5776, CorrCont6Upd 38->35, CorrNoMoveW 64049->80695, and the
 // other weights to ~0.9 so that the total correction keeps its size (CorrPawnW 17291->15562, CorrMinorW 10827->9744,
@@ -112,8 +117,8 @@
 // +3.59 +- 4.10 over 7,052. Value 1 because it is the only cap that clearly changes the fixed-depth tree (08/10: -6.6%
 // nodes, -0.55 ply of seldepth; from 2 upward the cap is rarely reached). Bench 325747 (before 460041).
 // To be checked at long TC in the A/B of the release 20261011 against the public 20261010 (30 s / 20 s).
-// BAKE INSUFMATERIAL (11/10/2026 night, user): draw by insufficient material after a capture (idea from Reckless,
-// rule also in Stormphrax, Berserk, Viridithas, Caissa, Coda; our code, rewritten on 15/10; agent AE, §42).
+// BAKE INSUFMATERIAL (11/10/2026 night, user): draw by insufficient material after a capture (rule
+// in Stormphrax, Berserk, Viridithas, Caissa, Coda; our code, rewritten on 15/10; agent AE, §42).
 // SPRT 8+0.08 on the endgame book endgame_12_18 without draw adjudication, tm28, two runs pooled (aeinsuf_eg_8
 // + aeinsuf_eg_8b): +1.13 +- 1.56 Elo over 17,162 games (LLR +0.97; socket 0 +0.77, socket 1 +1.50). First run
 // +1.47 +- 2.39 over 7,000, then the user: "another 10,000 and then bake". At fixed depth the tree does not grow (nodes
@@ -757,11 +762,11 @@
                                          /* outpost (defended by a pawn, never attackable by pawns) */     \
   P(OutpostSafe, 1, 0, 2)                /* 1: also without enemy bishops of the square's colour; 2: and without knights */ \
   /* Ordering with chess knowledge (08/10/2026, user, after the outposts), OFF by default. AttackOrder            \
-     and AttackOrderQ: the idea of rewarding the quiet move that attacks from a safe square comes from Reckless    \
-     (published SPRTs +3.7 and +5.7 at 40+0.4); here with a single rule: target = enemy piece (not pawn, not king) \
+     and AttackOrderQ: the idea of rewarding the quiet move that attacks from a safe square is known               \
+     elsewhere; here with a single rule: target = enemy piece (not pawn, not king)                                 \
      heavier or undefended. In July, in the 7.0 search, -9.7 +- 10.4 over 1,290 games: retried on the new search.  \
      PassedPush (passer push), OutpostOrderB (bishop outpost), BishopPairCapt (capture of a bishop of the pair)    \
-     are ours; PromoOrder (queen promotion first among the tactical moves) is also in Reckless. */                  \
+     are ours; PromoOrder (queen promotion first among the tactical moves) is common. */                            \
   P(AttackOrder, 0, 0, 40000)               /* pawn, knight, bishop, rook attacking a target from a safe square */ \
   P(AttackOrderQ, 0, 0, 40000)              /* ...the queen (undefended targets)                               */ \
   /* AttackSafeSee (evening of 08/10/2026, check docs/audit_8.0/Y2_VERIFICA_ORDINAMENTO.md): with 0 the target       \
@@ -891,7 +896,7 @@
   /* CLEANUP evening of 11/10/2026 (user: "clean the code if we are sure about removing things, documenting the      \
      attempt"): CLOSED and off options, removed with their branch; with the options off the tree was identical (bench \
      325747 before and after). Code in _backup/Triumviratus_8.0_pre_pulizia_2026-10-11. Attempts and measurements:    \
-     - AspDecisive (agent AE, PlentyChess/Reckless/Viridithas: aspiration fail high decided without reducing the      \
+     - AspDecisive (agent AE, PlentyChess/Viridithas: aspiration fail high decided without reducing the               \
        depth): +0.7 at 7,000 games UHO 8+0.08, flat.                                                                   \
      - ExclClean (AE: in the singular verification node no history from the eval difference and no razoring, RFP,    \
        ProbCut and hash cutoff): =3 -0.39 +- 3.46 over 10,764, flat.                                                   \
@@ -1620,7 +1625,67 @@
   /* -- hash table (tt.h reads the copies g_tt_*, synced at setoption like SeePinned) --                           */ \
   P(TtKeepMargin, 3, 0, 8)               /* the old entry stays when deeper by more than this (0 = always write) */ \
   P(TtKeepPv, 2, 0, 6)                   /*   plus this on PV entries                                        */ \
-  P(TtAgeWeight, 8, 1, 16)               /* victim value = depth - this * age                                */
+  P(TtAgeWeight, 8, 1, 16)               /* victim value = depth - this * age                                */ \
+  /* ============================================================================================================ */ \
+  /* R19 TECHNIQUES (03/11/2026, author: "le voglio tutte"; docs/audit_8.1/R19_TECNICHE_NUOVE_2026-10-29.md, test   */ \
+  /*  order in docs/audit_8.1/R22_PROVE_R19_2026-11-03.md). Known ideas of other engines, written from scratch in   */ \
+  /*  our form (only the idea is taken; the engine of origin is named at each lever). Every lever is OFF at 0: the  */ \
+  /*  tree is the previous one (bench unchanged) and the release, with constant parameters, drops the code.         */ \
+  /* -- SMP (S1; act only with Threads > 1) --                                                                       */ \
+  P(SmpLmrNoise, 0, 0, 256)              /* LMR noise per thread, +-this in 1024ths of a ply                  */ \
+  P(SmpOptDeep, 0, 0, 1024)              /* /1024 of the deepest thread's root average in the optimism        */ \
+  P(SmpPvHash, 0, 0, 1)                  /* PV node: lower bound in the hash at every alpha raise             */ \
+  P(SmpNullOdd, 0, 0, 2)                 /* odd threads: null move reduced by this many plies less (Stockfish) */ \
+  P(SmpContCorr, 0, 0, 1)                /* continuation correction shared by the threads of a node           */ \
+  /* -- singular family (S2) --                                                                                      */ \
+  P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed (Caissa)          */ \
+  P(SingDropHash, 0, 0, 1)               /* exclusion value above the hash value: the hash move loses its LMR bonus */ \
+  P(SingGapRed, 0, 0, 2048)              /* other moves reduced by this/128 per unit of (hash - exclusion) gap */ \
+  P(SingGapFrom, 128, 0, 1024)           /*   gap that starts the extra reduction                             */ \
+  P(SingGapCap, 2048, 0, 4096)           /*   cap of that reduction, 1024ths of a ply                         */ \
+  P(SingNonCut, 0, 0, 1)                 /* the exclusion search is not a cut node (Caissa)                   */ \
+  /* -- move-count family (S3, B11) --                                                                               */ \
+  P(LmpChecks, 0, 0, 1)                  /* past the move count, quiet direct checks with SEE >= 0 still searched (Integral) */ \
+  P(LmpKeepScore, 0, 0, 1000000)         /* past the move count, quiets with ordering score >= this still searched (0 = off) */ \
+  P(ImpAdjCap, 160, 16, 1024)            /* continuous improvement: static - static two plies back, clamped to +-this */ \
+  P(ImpSlopeLmp, 192, -1024, 1024)       /*   move count scaled by (1024 + this * adj / 64) / 1024 (baked 03/11) */ \
+  P(ImpSlopeRfp, 0, -1024, 1024)         /*   reverse-futility margin minus this * adj / 64                   */ \
+  P(ImpSlopeNmp, 0, -1024, 1024)         /*   null-move floor minus this * adj / 64                           */ \
+  /* -- correction learning (S4) --                                                                                  */ \
+  P(CorrRepLearn, 0, 0, 2048)            /* reachable repetition below the draw: corrections learn toward the draw, /1024 (Integral, Viridithas) */ \
+  P(CorrBadCapt, 0, 0, 1)                /* corrections learn when the best move is a capture that loses the exchange (Caissa) */ \
+  P(CorrSignKey, 0, 0, 1)                /* structure corrections signed by a key bit (count sketch; Viridithas) */ \
+  P(CorrPairCont, 0, 0, 30000)           /* correction of the position paired with the ones 1 and 2 plies back (Stormphrax, Stoat) */ \
+  /* -- null move guards (B1) --                                                                                     */ \
+  P(NmpHashCapt, 0, 0, 1)                /* no null move when the hash lower bound's move captures a minor or more */ \
+  P(NmpHashBound, 0, 0, 1)               /* null move searched against a deep enough hash lower bound below beta */ \
+  P(NmpChildCuts, 0, -128, 128)          /* null floor lower by this when the frame below had fewer than 2 cutoffs (Caissa) */ \
+  P(NmpSingGuard, 0, 0, 1)               /* no null move when the hash move could be singular                 */ \
+  /* -- when the histories learn (B2, B10) --                                                                        */ \
+  P(PriorCutPvOnly, 0, 0, 1)             /* the refuted prior move is rewarded only in cut and PV nodes       */ \
+  P(EvalDiffShallow, 0, 0, 32)           /* evaluation-change lesson only below this depth or without a hash entry */ \
+  P(HashCutEarlyParent, 0, 0, 32)        /* hash-cut reward only when the parent's move came before this number */ \
+  P(CaptWinGood, 0, 0, 1024)             /* a capture with SEE >= this (> 0) is a good capture whatever its history */ \
+  /* -- quiescence (B3) --                                                                                           */ \
+  P(QsSeeHist, 0, -4096, 4096)           /* quiescence exchange threshold moves by capture history * this / 65536 */ \
+  P(QsSeeCorr, 0, 0, 32768)              /* and drops by |correction| * this / 1024, at most 256 (our corrections are small) */ \
+  P(QsFhCapt, 0, 0, 2048)                /* a capture that fails high in quiescence earns this in its capture history */ \
+  /* -- single rules (B4-B15, 33) --                                                                                 */ \
+  P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus (Viridithas) */ \
+  P(DrawSpread, 0, 0, 1)                 /* five draw values (nodes % 5 - 2) instead of two (Alexandria)      */ \
+  P(AlphaRaiseLmr, 0, 0, 4096)           /* later moves reduced by this per alpha raise of the node, 1024ths (Viridithas) */ \
+  P(LmrGives, 0, -4096, 4096)            /* reduction of a move that gives check, 1024ths of a ply off (Alexandria) */ \
+  P(LmrCaptOfs, 0, -4096, 4096)          /* reduction offset of captures, 1024ths of a ply (PlentyChess)      */ \
+  P(LmrChain, 0, 0, 512)                 /* less reduction per ply of a chain of first moves above, up to 16  */ \
+  P(LmrSideLog, 0, 0, 512)               /* more reduction per unit of the sum of log2(move number) on the line, up to 32 */ \
+  P(AspStable, 0, 0, 16)                 /* aspiration delta minus this per iteration with the same best move, up to 7 */ \
+  P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this (Stormphrax, PlentyChess) */ \
+  P(BnfpQuiet, 0, 0, 1024)               /* bad quiets after the losing captures stop when eval + this per ply <= alpha (Integral) */ \
+  P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 (Stormphrax) */ \
+  P(CorrAbsLmp, 0, 0, 4096)              /* move count grows by |correction| * this / 1048576 of itself       */ \
+  P(RfpNoThreat, 0, 0, 512)              /* reverse futility margin lower when no enemy pawn attacks our pieces */ \
+  P(ContemptAhead, 0, 0, 200)            /* draw worth -this for the root side when the last move closed ahead (lists) */ \
+  P(ContemptAheadFrom, 100, 0, 1000)     /*   from this root score                                            */
 
 // OWN ORDERING FORM (OrdOwn, OrdMapNo/OrdMapMask, OrdOwnTact, OrdRedK, OqGood/OtGood and the Oq/Ot/Oe weights):
 // REMOVED 22/10/2026 (user). Fitted on a move-ordering oracle of 597k nodes it ordered better than the inherited

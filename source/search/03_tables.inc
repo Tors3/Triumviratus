@@ -67,6 +67,7 @@ struct SharedStats {
   // One block [2][2][NO_PC + 1][64] per NUMA copy (follow_of(td) is the copy of the thread's node).
   PieceToRow (*follow)[2][NO_PC + 1][64] = nullptr;
   PieceToRow* pawn_rows = nullptr;      // [pawn-structure index]
+  PieceToRow (*cont_corr)[64] = nullptr;   // SmpContCorr (R19): continuation correction, one [NO_PC + 1][64] per copy
   CorrSlot  (*corr)[2] = nullptr;       // [key index][side to move]
   int16_t   (*corr_x)[2] = nullptr;     // CorrExpertW: pawns per expert, on top of the shared one [index][side]
   U64 pawn_mask = 0;
@@ -93,6 +94,13 @@ static SharedStats g_stats;
 // ============================================================================
 static inline U64 pawn_rows_node() { return (g_stats.pawn_mask + 1) >> g_stats.node_bits; }
 // The continuation rows of thread td (its node's block).
+// The continuation-correction rows a thread uses: its own table, or with SmpContCorr (R19 S1.5) and several
+// threads the table its node's threads share, as they already share the pawn, minor and non-pawn corrections.
+static inline PieceToRow (*cont_corr_of(ThreadData &td))[64] {
+  if (SmpContCorr && num_threads > 1 && td.st_cont_corr)
+    return static_cast<PieceToRow (*)[64]>(td.st_cont_corr);
+  return td.cont_corr;
+}
 static inline PieceToRow (*follow_of(const ThreadData &td))[2][NO_PC + 1][64] {
   return static_cast<PieceToRow (*)[2][NO_PC + 1][64]>(td.st_follow);
 }
@@ -207,10 +215,12 @@ static void shared_stats_alloc(int threads) {
     return;
   }
   large_pages_free(g_stats.follow);
+  large_pages_free(g_stats.cont_corr);
   large_pages_free(g_stats.pawn_rows);
   large_pages_free(g_stats.corr);
   large_pages_free(g_stats.corr_x);
   g_stats.follow    = lp_alloc<PieceToRow[2][NO_PC + 1][64]>(sizeof(PieceToRow[2][2][NO_PC + 1][64]) << bits);
+  g_stats.cont_corr = lp_alloc<PieceToRow[64]>(sizeof(PieceToRow[NO_PC + 1][64]) << bits);   // 1.4 MB per copy
   g_stats.pawn_rows = lp_alloc<PieceToRow>(sizeof(PieceToRow) * pawn_rows);
   g_stats.corr      = lp_alloc<CorrSlot[2]>(sizeof(CorrSlot[2]) * CORR_ROWS_PER_SLOT * slots);
   g_stats.corr_x    = lp_alloc<int16_t[2]>(sizeof(int16_t[2]) * CORR_ROWS_PER_SLOT * slots);   // 256 KB per slot
@@ -238,6 +248,7 @@ static void stats_bind_thread(ThreadData &td) {
   td.st_pawn      = g_stats.pawn_rows + (U64)td.numa_node * pn;
   td.st_corr      = g_stats.corr + (U64)td.numa_node * cn;
   td.st_corr_x    = g_stats.corr_x + (U64)td.numa_node * cn;
+  td.st_cont_corr = g_stats.cont_corr + (NO_PC + 1) * td.numa_node;
   td.st_pawn_mask = pn - 1;
   td.st_corr_mask = cn - 1;
 }
@@ -250,6 +261,7 @@ static void stats_bind_threads() {
 // -5, -5, -742, 5).
 static void shared_stats_reset() {
   fill_with(&g_stats.follow[0][0][0][0], ((size_t)2 * 2 * (NO_PC + 1) * 64) << g_stats.node_bits, (int16_t)HistInitFollow);
+  fill_with(&g_stats.cont_corr[0][0], ((size_t)(NO_PC + 1) * 64) << g_stats.node_bits, (int16_t)HistInitContCorr);
   fill_with(g_stats.pawn_rows, (size_t)g_stats.pawn_mask + 1, (int16_t)HistInitPawn);
   fill_with(&g_stats.corr[0][0], (size_t)(g_stats.corr_mask + 1) * 2, (int16_t)HistInitCorr);
   fill_with(&g_stats.corr_x[0][0], (size_t)(g_stats.corr_mask + 1) * 2, 0);

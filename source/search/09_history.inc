@@ -586,7 +586,7 @@ static inline U64 corr_phase_key(const ThreadData &td) {
   return (CorrPhaseQueen && (td.bitboards[Q] | td.bitboards[q])) ? k ^ 0x6A09E667F3BCC909ULL : k;
 }
 
-// CorrFifty (ours, 05/10/2026, from an idea seen in Reckless): the systematic error on one structure changes with the
+// CorrFifty (ours, 05/10/2026): the systematic error on one structure changes with the
 // distance from the fifty-move rule (the evaluation is damped by the counter, and in long endgames the position is
 // worth something else). A constant per band of CorrFiftyStep plies (at most 16 bands), mixed into the pawn and
 // non-pawn keys, separates the corrections. At 0 the key is the usual one.
@@ -599,15 +599,33 @@ static inline U64 corr_fifty_key(const ThreadData &td) {
   return CorrFiftyStep ? keys[std::min(td.fifty / CorrFiftyStep, 15)] : 0;
 }
 
+// CorrSignKey (R19 S4.3, Viridithas; feature hashing, Weinberger et al. 2009): each structure table reads and writes its
+// entry times +1 or -1 taken from the top bit of the key, so two positions that share an entry cancel on average
+// instead of adding up. 0 = always +1.
+static inline int corr_key_sign(U64 key) { return CorrSignKey ? 1 - 2 * (int)(key >> 63) : 1; }
+
+// CorrPairCont (R19 S4.4, Stormphrax after Stoat): two more correction entries keyed by the position together with the
+// one 1 ply and 2 plies back (the hash keys XORed, the older one rotated so that the two pairs differ). They live in the
+// corr_x table (as CorrExpertW and CorrPkW, both off by default). false at the root of the history.
+static inline bool corr_pair_keys(const ThreadData &td, U64 &k1, U64 &k2) {
+  if (td.repetition_index < 1)
+    return false;
+  const U64 *hist = td.repetition_table + td.repetition_index;   // hist[0]: 1 ply ago, hist[-1]: 2 plies ago
+  k1 = td.hash_key ^ hist[0];
+  k2 = td.hash_key ^ ((hist[-1] << 17) | (hist[-1] >> 47));
+  return true;
+}
+
 static int corr_signal(const ThreadData &td, const NodeFrame *f) {
   PROF_GUARD(prof_corr);
   const int us = td.side;
   const U64 phk = corr_phase_key(td);
   const U64 fk = corr_fifty_key(td);
-  const int pawn = corr_slot(td, td.pawn_key ^ phk ^ fk, us).pawn;
-  const int minor = corr_slot(td, td.mm_key[0] ^ phk, us).minor;
-  const int npw = corr_slot(td, td.np_key[white] ^ fk, us).np_white;
-  const int npb = corr_slot(td, td.np_key[black] ^ fk, us).np_black;
+  const U64 kp = td.pawn_key ^ phk ^ fk, km = td.mm_key[0] ^ phk, kw = td.np_key[white] ^ fk, kb = td.np_key[black] ^ fk;
+  const int pawn = corr_key_sign(kp) * corr_slot(td, kp, us).pawn;
+  const int minor = corr_key_sign(km) * corr_slot(td, km, us).minor;
+  const int npw = corr_key_sign(kw) * corr_slot(td, kw, us).np_white;
+  const int npb = corr_key_sign(kb) * corr_slot(td, kb, us).np_black;
   const int prev = f[-1].move;
   int cont = CorrNoMoveW;   // fixed term after a null move (08/10/2026: a constant before, now a lever)
   if (move_ok(prev)) {
@@ -620,6 +638,11 @@ static int corr_signal(const ThreadData &td, const NodeFrame *f) {
     // context, was closed (-7.6 +- 7.8 at 20+0.2).
     if (CorrContOppW)
       cont += CorrContOppW * (*f[-3].cont_corr)[pc][to];
+  }
+  U64 k1, k2;
+  if (CorrPairCont && corr_pair_keys(td, k1, k2)) {
+    const auto *cx = static_cast<const int16_t (*)[2]>(td.st_corr_x);
+    cont += CorrPairCont * (cx[k1 & td.st_corr_mask][us] + cx[k2 & td.st_corr_mask][us]);
   }
   // Weight of the correction per expert (CorrGain, /1024; 1024 = old value, s*1024/1024 = s). The tables were already
   // separate by expert band (CorrPhase); the weight was one for all.

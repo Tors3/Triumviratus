@@ -64,6 +64,10 @@ struct NodeFrame {
     unsigned char settle_path;    // C2SettleHorizon: settling plies along the line up to this node
     unsigned char nn_hold;        // C2HoldDepth / C2HoldQs: the children of this node keep its experts (06_nndirty.inc)
     unsigned char null_cuts;      // NmpSibCut: null-move cuts so far among the nodes of this frame, the children of one parent
+    // LmrChain / LmrSideLog (R19, 03/11/2026): plies since the line last left a first move, and the sum of log2(move
+    // number) along the line, for the node of this frame; written by the parent before the move is searched.
+    unsigned char chain;
+    unsigned char side_log;
 };
 
 // A root move with its line and the statistics collected on it.
@@ -174,6 +178,10 @@ struct alignas(128) ThreadData {
     int  opt[2];                      // optimism of this thread (white side, black)
     int  root_side;                   // colour to move at the root (Contempt)
     int  draw_defend;                 // DrawDefend: draw value for the root colour in this search
+    int  contempt_ahead;              // ContemptAhead (R19): draw value against the root colour in this search
+    int  asp_prev_best = 0;           // AspStable (R19): best root move of the previous iteration
+    int  asp_stable = 0;              //   iterations in a row with that best move
+    void* st_cont_corr = nullptr;     // SmpContCorr (R19): the shared continuation-correction table of the node's copy
     int  c2_conv_root;                // C2ConvRoot: conversion decided at the root (+1 / -1 for the root side, 0 = none)
     int  deep_w;                      // weight 0..1024 of the Deep* terms for the current iteration
     // Analysis mode (09/10/2026, search/01_params.inc): EFFECTIVE values for the current iteration, already
