@@ -1,6 +1,7 @@
 // Triumviratus, a UCI chess engine.
 // Copyright (C) 2026 Francesco Torsello
 // Copyright (C) 2026 A Tin Man (interleaved int8 rows of the first layer, CN_W1)
+// Copyright (C) 2026 Houze Guo (AVX2 / AVX-VNNI evaluation: pawn cache in the refresh, l1 sums kept in registers)
 // SPDX-License-Identifier: GPL-3.0-or-later (see COPYING)
 // Additional term under section 7(b) of the GPLv3: anyone who copies, modifies or redistributes this file, in whole
 // or in part, must preserve this notice and the attribution "Consilium inference: Francesco Torsello, Triumviratus
@@ -1345,6 +1346,8 @@ CN_LEAF Out forward_simd(const Net& net, const Acc& us, const Acc& them, int buc
         a0 = dot4(a0, x, _mm512_load_si512(w));
         a1 = dot4(a1, x, _mm512_load_si512(w + 1));
     }
+    // (03/11/2026) The x1 sums stay in memory here: the register form of Houze Guo's patch, adopted for AVX2, gained
+    // nothing in the AVX-512 builds (xperf, Skylake-SP and Zen 4), so this path is unchanged.
     alignas(64) std::int32_t x1loc[L2];
     std::int32_t* x1 = x1out ? x1out : x1loc;   // x1out is 64-byte aligned (Handle::x1)
     _mm512_store_si512(x1, _mm512_add_epi32(a0, a2));
@@ -1439,10 +1442,9 @@ CN_LEAF Out forward_tail_avx2(const Stack& st, const __m256i* x1, const Acc& us,
     __m128i s = _mm_add_epi32(_mm256_castsi256_si128(o), _mm256_extracti128_si256(o, 1));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0x4E));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0xB1));
-    alignas(32) std::int32_t x1s[L2];
-    _mm256_store_si256((__m256i*)(x1s + 24), x1[3]);
+    const __m128i      hi3  = _mm256_extracti128_si256(x1[3], 1);
     const std::int32_t out  = st.b3 + _mm_cvtsi128_si32(s);
-    const std::int32_t skip = x1s[L2 - 2] - x1s[L2 - 1];
+    const std::int32_t skip = _mm_extract_epi32(hi3, 2) - _mm_extract_epi32(hi3, 3);
     Out r;
     r.positional = int((std::int64_t(out) + skip) * 600 / 16384);
     r.psqt       = (us.psqt[bucket] - them.psqt[bucket]) / 32;
@@ -2151,14 +2153,15 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
     refresh_tile<true>(LH, LO, entry, dst, 0, pv);
     refresh_tile<false>(LH, LO, entry, dst, L1 / 2, pv);
 }
-#define CN_PAWN_CACHE 1   // the refresh above takes the pawn vector (AVX-512 only for now)
+#define CN_PAWN_CACHE 1
 #elif defined(USE_AVX2) && defined(CN_AVX2_FUSED)
-// -DCN_AVX2_FUSED (21/10/2026; OFF by default): the single-pass refresh and king step in the AVX2 builds as well
-// (Intel hybrid processors with AVX-VNNI, Zen 3, Zen 1/2), eight tiles of 8 registers. Without it a refresh is two
-// whole passes of apply and a king step three, plus a loop over the 1024 values for S(parent) - entry + entry and a
-// 2 KB accumulator on the stack. The same integer operations in the same order per value, so the same accumulators.
+// -DCN_AVX2_FUSED (21/10/2026; OFF by default): the single-pass refresh and king step in the AVX2 builds as well, eight
+// tiles of 8 registers. Without it a refresh is two whole passes of apply and a king step three. The same integer
+// operations in the same order per value, so the same accumulators. Pawn cache (pv) in both AVX2 forms since
+// 03/11/2026 (Houze Guo). xperf of 03/11/2026 against the two passes: +1.7% cycles on Skylake-SP, +2.2% on Zen 4,
+// mixed on Raptor Lake-U, -0.75% on Raptor Cove (A Tin Man's run): it stays a choice per CPU, off by default.
 template <bool WithPsqt>
-inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t) {
+inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
     __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)entry.psqt) : _mm256_setzero_si256();
@@ -2168,21 +2171,31 @@ inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& 
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(entry.v + t + k * W), r[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
     rows8_256<R, WithPsqt>(LO, r, ps, t);   // added int8 rows only (the board's)
+    if (pv) {
+        for (int k = 0; k < R; k++) r[k] = _mm256_add_epi16(r[k], _mm256_load_si256((const __m256i*)(pv->v + t + k * W)));
+        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)pv->psqt));
+    }
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
-void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst) {
+void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     CN_TIME(1);
     constexpr int TILE = 8 * 16;
-    refresh_tile<true>(LH, LO, entry, dst, 0);
-    for (int t = TILE; t < L1; t += TILE) refresh_tile<false>(LH, LO, entry, dst, t);
+    refresh_tile<true>(LH, LO, entry, dst, 0, pv);
+    for (int t = TILE; t < L1; t += TILE) refresh_tile<false>(LH, LO, entry, dst, t, pv);
 }
+#define CN_PAWN_CACHE 1
 #else
-void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst) {
+void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     apply(LH, entry, entry);
     apply(LO, entry, dst);
+    if (pv) {
+        for (int j = 0; j < L1; j++) dst.v[j] += pv->v[j];
+        for (int b = 0; b < NBUCKETS; b++) dst.psqt[b] += pv->psqt[b];
+    }
 }
+#define CN_PAWN_CACHE 1
 #endif
 
 
@@ -2317,7 +2330,7 @@ void move_rows_all(const NnStack& S, int i, const Persp& P, RowList& L, int dir)
 
 }  // namespace
 
-Out evaluate(const Net& net, Handle& h, const Board& b) {
+Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
     CN_TIME(0);
     {   // The pawn-king entry is read at the end: asked for now, so it arrives under the accumulator work (21/10/2026).
         const char* e = reinterpret_cast<const char*>(&h.pkc[pk_index(b)]);
@@ -2355,6 +2368,7 @@ Out evaluate(const Net& net, Handle& h, const Board& b) {
         RowList*       L1    = new (&lists[1]) RowList(&net);
         const Persp*   PP[2] = {&P0, &P1};
         RowList* const LL[2] = {L0, L1};
+#if defined(USE_AVX512)
         move_rows_h(S, top, P0, *L0, 1);
         move_rows_h(S, top, P1, *L1, 1);
         move_threats(S, top, PP, LL, 1);
@@ -2362,6 +2376,17 @@ Out evaluate(const Net& net, Handle& h, const Board& b) {
         move_pawns(S, top, P1, *L1, 1);
         apply(*L0, h.acc[top - 1][0], h.acc[top][0]);
         apply(*L1, h.acc[top - 1][1], h.acc[top][1]);
+#else
+        // (03/11/2026, Houze Guo) Without AVX-512 the rows of the second perspective are gathered after the first one's
+        // update, so the two lists do not compete for L1 at once; same rows, same accumulators.
+        move_rows_h(S, top, P0, *L0, 1);
+        move_threats(S, top, PP, LL, 1);
+        move_pawns(S, top, P0, *L0, 1);
+        apply(*L0, h.acc[top - 1][0], h.acc[top][0]);
+        move_rows_h(S, top, P1, *L1, 1);
+        move_pawns(S, top, P1, *L1, 1);
+        apply(*L1, h.acc[top - 1][1], h.acc[top][1]);
+#endif
         S.st[top].computed[0] |= 1;
         S.st[top].computed[1] |= 1;
     } else {
@@ -2438,7 +2463,14 @@ Out evaluate(const Net& net, Handle& h, const Board& b) {
         }
     }
     const std::int32_t* pk = pawn_king(net, h, b);
+    // want_x1 (03/11/2026, Houze Guo): without AVX-512 the l1 sums are written to the handle only when the C2 terms read
+    // them (pk_effect); the AVX-512 path keeps writing them (no gain measured there).
+#if defined(USE_AVX512)
+    (void)want_x1;
     return CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, h.x1);   // x1 kept: pk_effect
+#else
+    return CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, want_x1 ? h.x1 : nullptr);
+#endif
 }
 
 // --- C2 signals (agent B) ---

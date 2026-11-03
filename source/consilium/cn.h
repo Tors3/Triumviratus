@@ -175,7 +175,7 @@ struct Out {
 
 void init();                      // index tables (once, at startup)
 void reset(Handle& h);            // back to the root: one state, nothing computed
-Out  evaluate(const Net& net, Handle& h, const Board& b);       // incremental along the stack
+Out  evaluate(const Net& net, Handle& h, const Board& b, bool want_x1 = false);       // incremental along the stack
 Out  evaluate_refresh(const Net& net, const Board& b, Acc acc[2]);  // from scratch, both perspectives
 bool same_accumulators(const Handle& h, const Acc acc[2]);       // nnueverify: top of the stack == refresh
 // Memory hint from the make: the HalfKA rows of a move (board before the move, phase after it). No state changes.

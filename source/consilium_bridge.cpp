@@ -353,7 +353,8 @@ static inline int nn_scale(const NnBoard& pos, Value psqt, Value positional, int
     blend -= blend * disagree / g_ev_cplx_div;
 
     // 3. material (and optimism on the same scale)
-    const int material = g_ev_pawn_mat * pos.count_type(NN_PAWN) + MAT_KNIGHT * pos.count_type(NN_KNIGHT)
+    const int pawns    = pos.count_type(NN_PAWN);   // counted once (Houze Guo, 03/11/2026)
+    const int material = g_ev_pawn_mat * pawns + MAT_KNIGHT * pos.count_type(NN_KNIGHT)
                        + MAT_BISHOP * pos.count_type(NN_BISHOP) + MAT_ROOK * pos.count_type(NN_ROOK)
                        + MAT_QUEEN * pos.count_type(NN_QUEEN);
     // With a negative pawn weight the factor could reach zero or below and flip the sign of the evaluation: it never
@@ -363,7 +364,7 @@ static inline int nn_scale(const NnBoard& pos, Value psqt, Value positional, int
     // shared with the evaluation, a fit of those two (tools/evalscale_fit.py: negative pawn, base x27) would have
     // flipped the sign of the optimism or made it vanish. At the defaults (pawn 680, base 102051) the result is
     // identical bit for bit to the shared form.
-    const int          opt_material = material + (OPT_PAWN_MAT - g_ev_pawn_mat) * pos.count_type(NN_PAWN);
+    const int          opt_material = material + (OPT_PAWN_MAT - g_ev_pawn_mat) * pawns;
     int                v;
     if (g_eval_optimism) {
         int opt = opt_local ? opt_local[pos.mover()] : g_optimism[pos.mover()].load();
@@ -757,6 +758,12 @@ int nn_pk_effect_fresh(void* handle, const unsigned long long* bb, const unsigne
                        int side_white) {
     if (!g_cn_view)
         return 0;
+#if !defined(USE_AVX512)
+    // Without AVX-512 the last evaluation left the l1 sums in the handle only when the C2 terms asked for them
+    // (cn::evaluate, want_x1; Houze Guo, 03/11/2026): otherwise this node is evaluated again with them.
+    if (!(g_c2_conv[0] || g_c2_want_effect))
+        return nn_pk_effect_now(handle, bb, occ, mailbox, side_white);
+#endif
     CnPos*        p = static_cast<CnPos*>(handle);
     const NnBoard board(bb, occ, mailbox, side_white ? WHITE : BLACK);
     const int     eff = g_c2_conv[0] || g_c2_want_effect ? p->pk_effect
@@ -773,7 +780,7 @@ int nn_pk_effect_now(void* handle, const unsigned long long* bb, const unsigned 
     const NnBoard board(bb, occ, mailbox, side_white ? WHITE : BLACK);
     if (!g_incremental)
         return pk_effect_scratch(board);
-    const cn::Out o = cn::evaluate(NET_REF, *p->h, board.view());
+    const cn::Out o = cn::evaluate(NET_REF, *p->h, board.view(), true);   // pk_effect reads the l1 sums
     p->last_pos     = o.positional;
     return pk_effect_checked(board, cn::pk_effect(NET_REF, *p->h, board.view(), o.positional), "now");
 }
@@ -865,7 +872,14 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
     if (!g_incremental)
         return eval_full(board, rule50, nullptr, opt);
 
-    const cn::Out o   = cn::evaluate(NET_REF, *p->h, board.view());
+    // The l1 sums are kept only when the C2 terms below read them (Houze Guo, 03/11/2026; the AVX-512 path keeps them
+    // always, cn::evaluate). C2B_STATS reads them at every evaluation.
+#ifdef C2B_STATS
+    const bool want_x1 = true;
+#else
+    const bool want_x1 = g_c2_on || g_c2_want_effect;
+#endif
+    const cn::Out o   = cn::evaluate(NET_REF, *p->h, board.view(), want_x1);
     int ps = o.psqt, po = o.positional;
     p->last_pos = o.positional;   // conversion push (nn_pk_effect_fresh): one store
     if (g_c2_on | g_c2_want_effect) {   // C2 evaluation terms (agent B); pk_effect reads the l1 sums evaluate just left

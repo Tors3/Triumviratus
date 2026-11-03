@@ -483,7 +483,12 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
     NnState &st = S.st[i];
     nn_fill_pawns(st.pawns, st.dp, tb.type[NN_PAWN] & tb.color[white], tb.type[NN_PAWN] & tb.color[black]);
     nn_threat_steps(tb, NnLookMailbox{mb}, st.dp, &st.threats);  // tb leaves in the state after the move
+#if defined(USE_AVX512)
     nn_mb_redo(mb, st.dp);
+#else
+    if (i + 1 < last)   // the local mailbox is not read after the last state (Houze Guo, 03/11/2026)
+      nn_mb_redo(mb, st.dp);
+#endif
     if (st.pawns.any) {  // R4: the passers change only with a pawn event
       const U64 wp = tb.type[NN_PAWN] & tb.color[white], bp = tb.type[NN_PAWN] & tb.color[black];
       v1w = nn_passers(white, wp, bp);

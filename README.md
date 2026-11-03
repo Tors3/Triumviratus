@@ -210,6 +210,11 @@ of the universal executable (+6% to +9% on the Intel Raptor Lake processors meas
 **Bastiii** reviewed the code of the 8.1 development and found a race between threads in the transposition table, dead
 work in the evaluation and a static exchange evaluation that ignored the gain of a promotion; the fixes are in 8.1.
 
+**Houze Guo** sent speedups of the evaluation for processors without AVX-512: the pawn cache in the AVX2 refresh of the
+accumulators, the sums of the first layer kept in registers, and the two perspectives updated one after the other.
+Measured on four processors (Skylake-SP, Zen 4, Raptor Lake-U, and Raptor Cove by A Tin Man), they save 1.7% to 3.2% of
+the instructions per node in the AVX2 and AVX-VNNI builds; merged for 8.1.
+
 Details of both contributions: [Contributions](docs/project/CONTRIBUTING.md#contributions).
 
 **Andres (EveAnn)** ran a 1,500-game gauntlet of the 11 October 8.0 pre-release against fifteen engines.
