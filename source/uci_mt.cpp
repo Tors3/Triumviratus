@@ -367,6 +367,7 @@ void uci_loop()
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max %d\n", max_hash);
             printf("option name Threads type spin default 1 min 1 max %d\n", max_threads);
+            printf("option name NumaSpread type check default %s\n", g_numa_spread ? "true" : "false");
             // MultiPV (multi-line analysis): OFFICIAL option, always advertised
             // (also in TRIUMV_RELEASE). The setoption arrives via the generic handler
             // -> set_search_param("MultiPV") in threads.cpp.
@@ -1100,6 +1101,20 @@ void uci_loop()
             if (threads > max_threads) threads = max_threads;
 
             init_threads(threads);
+        }
+
+        // UCI command: "setoption name NumaSpread value true|false" (03/11/2026, search/03_tables.inc): the threads
+        // spread over the NUMA nodes of a multi-socket machine. The tables are rebuilt for the new split, as by Threads.
+        else if (strncmp(input, "setoption name NumaSpread value ", 32) == 0)
+        {
+            stop_search_threads();
+            wait_for_search_done();
+            const bool on = strncmp(input + 32, "true", 4) == 0;
+            if (on != g_numa_spread)
+            {
+                g_numa_spread = on;
+                init_threads(num_threads);
+            }
         }
 
         // UCI command: "setoption name Depth value X" (0 = off; >0 = fixed depth)

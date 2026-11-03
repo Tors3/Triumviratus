@@ -64,6 +64,7 @@ struct CorrSlot {           // the corrections read with different keys but in t
 
 struct SharedStats {
   // follow[in_check][capture][piece][square] -> piece x square row of the next move. Piece 12 = sentinel.
+  // One block [2][2][NO_PC + 1][64] per NUMA copy (follow_of(td) is the copy of the thread's node).
   PieceToRow (*follow)[2][NO_PC + 1][64] = nullptr;
   PieceToRow* pawn_rows = nullptr;      // [pawn-structure index]
   CorrSlot  (*corr)[2] = nullptr;       // [key index][side to move]
@@ -72,15 +73,49 @@ struct SharedStats {
   U64 corr_mask = 0;
   int slots = 0;                        // power of two >= number of threads
   int pawn_log = 0;                     // log2 of the pawn rows per slot the table was allocated with (PawnHistLog)
+  int node_bits = 0;                    // NumaSpread: the tables are split in 1 << node_bits copies, one per node
   // --- C2 ordering (agent ORDER) --- C2StructHistW: [pawn-king signature][piece][to], 4096 rows whatever the number
   // of threads (the key takes ~230 values over the bench), shared like the pawn rows (09_history.inc).
   PieceToRow* struct_rows = nullptr;
 };
 static SharedStats g_stats;
+// ============================================================================
+// NumaSpread (03/11/2026, UCI option, off by default): on a machine with several NUMA nodes (multi-socket servers)
+// the helper threads are spread over the nodes (15_threads.inc), each node reads its own copy of the network and each
+// thread's network handle lives on its node. The shared histories are split in one copy per node, shared by the
+// threads of that node as before; the copy of another socket is never written, so no cache line moves between
+// sockets. With one node, with the option off or with one thread nothing changes: the tables of before and the same
+// tree with any number of threads. Xeon (2 x 20 cores), 5 positions x 10 s, against the same build without it: nps
+// +13.4% at 8 threads, +22.6% at 16, +41.6% at 32, +53.1% at 40; one thread level (xperf instructions per node
+// -0.01% / +0.07%, middlegame / endgames). Windows only for now.
+// ============================================================================
+static inline U64 pawn_rows_node() { return (g_stats.pawn_mask + 1) >> g_stats.node_bits; }
+// The continuation rows of thread td (its node's block).
+static inline PieceToRow (*follow_of(const ThreadData &td))[2][NO_PC + 1][64] {
+  return static_cast<PieceToRow (*)[2][NO_PC + 1][64]>(td.st_follow);
+}
+
+// The NUMA nodes the search spreads its threads over: 1 with the option off, on one node, off Windows, or when the
+// process was started on a subset of the processors (an affinity set by the user or by the tester is kept). The
+// machine is read once, at the first allocation of the tables, before any thread is bound.
+static int numa_search_nodes() {
+  static const int machine_nodes = [] {
+    int n = 1;
+#if defined(_WIN32)
+    ULONG     hi = 0;
+    DWORD_PTR pm = 0, sm = 0;
+    if (GetNumaHighestNodeNumber(&hi) && GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm) && pm == sm)
+      n = std::min(int(hi) + 1, 64);
+#endif
+    return n;
+  }();
+  return g_numa_spread ? machine_nodes : 1;
+}
 
 // Pawn rows per slot: 1 << PawnHistLog (29/10/2026, an option for the SPRT of a smaller pawn history; 13 = the 8192
 // rows of before, 12.6 MB with one thread: its row is one of the history reads of the quiet score that wait on memory).
 constexpr int CORR_ROWS_PER_SLOT = 65536;
+static inline U64 corr_rows_node() { return (g_stats.corr_mask + 1) >> g_stats.node_bits; }
 constexpr int C2_STRUCT_ROWS = 1 << 12;   // the maximum of C2StructHistBits
 
 // V1 (08/10/2026, speed, identical tree): the shared tables on large pages, like TT and network. With one thread they are
@@ -100,10 +135,13 @@ static void shared_stats_alloc(int threads) {
   while (slots < threads)
     slots <<= 1;
   const int pawn_log = PawnHistLog;
-  if (slots == g_stats.slots && pawn_log == g_stats.pawn_log)
+  int bits = 0;   // NumaSpread: 1 << bits copies, no more than the nodes and the slots
+  for (const int nodes = numa_search_nodes(); (2 << bits) <= nodes && (2 << bits) <= slots;)
+    bits++;
+  if (slots == g_stats.slots && pawn_log == g_stats.pawn_log && bits == g_stats.node_bits)
     return;
   const U64 pawn_rows = ((U64)1 << pawn_log) * (U64)slots;
-  if (slots == g_stats.slots) {   // only the pawn history changes size (PawnHistLog set before a new game)
+  if (slots == g_stats.slots && bits == g_stats.node_bits) {   // only the pawn history changes size (PawnHistLog)
     large_pages_free(g_stats.pawn_rows);
     g_stats.pawn_rows = lp_alloc<PieceToRow>(sizeof(PieceToRow) * pawn_rows);
     g_stats.pawn_mask = pawn_rows - 1;
@@ -114,13 +152,14 @@ static void shared_stats_alloc(int threads) {
   large_pages_free(g_stats.pawn_rows);
   large_pages_free(g_stats.corr);
   large_pages_free(g_stats.corr_x);
-  g_stats.follow    = lp_alloc<PieceToRow[2][NO_PC + 1][64]>(sizeof(PieceToRow[2][2][NO_PC + 1][64]));
+  g_stats.follow    = lp_alloc<PieceToRow[2][NO_PC + 1][64]>(sizeof(PieceToRow[2][2][NO_PC + 1][64]) << bits);
   g_stats.pawn_rows = lp_alloc<PieceToRow>(sizeof(PieceToRow) * pawn_rows);
   g_stats.corr      = lp_alloc<CorrSlot[2]>(sizeof(CorrSlot[2]) * CORR_ROWS_PER_SLOT * slots);
   g_stats.corr_x    = lp_alloc<int16_t[2]>(sizeof(int16_t[2]) * CORR_ROWS_PER_SLOT * slots);   // 256 KB per slot
   g_stats.pawn_mask = pawn_rows - 1;
   g_stats.corr_mask = (U64)CORR_ROWS_PER_SLOT * slots - 1;
   g_stats.slots     = slots;
+  g_stats.node_bits = bits;
   g_stats.pawn_log  = pawn_log;
   if (!g_stats.struct_rows)   // --- C2 ordering (agent ORDER) --- fixed size: allocated once
     g_stats.struct_rows = lp_alloc<PieceToRow>(sizeof(PieceToRow) * C2_STRUCT_ROWS);
@@ -132,10 +171,27 @@ static inline void fill_with(T *first, size_t count, int16_t value) {
   std::fill(p, p + count * (sizeof(T) / sizeof(int16_t)), value);
 }
 
+// The thread's node (helper i searches on node i % nodes, 15_threads.inc) and its copy of the shared histories (the
+// whole tables with one node).
+static void stats_bind_thread(ThreadData &td) {
+  td.numa_node = (td.thread_id % numa_search_nodes()) & ((1 << g_stats.node_bits) - 1);
+  const U64 pn = pawn_rows_node(), cn = corr_rows_node();
+  td.st_follow    = g_stats.follow + 2 * td.numa_node;
+  td.st_pawn      = g_stats.pawn_rows + (U64)td.numa_node * pn;
+  td.st_corr      = g_stats.corr + (U64)td.numa_node * cn;
+  td.st_corr_x    = g_stats.corr_x + (U64)td.numa_node * cn;
+  td.st_pawn_mask = pn - 1;
+  td.st_corr_mask = cn - 1;
+}
+static void stats_bind_threads() {
+  for (auto &td : thread_data)
+    stats_bind_thread(td);
+}
+
 // Starting values of the tables at a new game: parameters HistInit* since the CENSUS of 21/10/2026 (were -586, -1338,
 // -5, -5, -742, 5).
 static void shared_stats_reset() {
-  fill_with(&g_stats.follow[0][0][0][0], (size_t)2 * 2 * (NO_PC + 1) * 64, (int16_t)HistInitFollow);
+  fill_with(&g_stats.follow[0][0][0][0], ((size_t)2 * 2 * (NO_PC + 1) * 64) << g_stats.node_bits, (int16_t)HistInitFollow);
   fill_with(g_stats.pawn_rows, (size_t)g_stats.pawn_mask + 1, (int16_t)HistInitPawn);
   fill_with(&g_stats.corr[0][0], (size_t)(g_stats.corr_mask + 1) * 2, (int16_t)HistInitCorr);
   fill_with(&g_stats.corr_x[0][0], (size_t)(g_stats.corr_mask + 1) * 2, 0);
@@ -162,6 +218,7 @@ void search_clear() {
     nn_pk_cache_clear(td.nnpos);
   }
   shared_stats_alloc(num_threads);   // PawnHistLog set since the last game: the pawn rows take the new size here
+  stats_bind_threads();
   shared_stats_reset();
   clock_memory_reset();
 }
@@ -217,6 +274,7 @@ void init_threads(int thread_count) {
     td.thread_id = i;
     td.nnpos = nn_pos_create();
     td.nnstack = nn_pos_stack(td.nnpos);
+    td.nn_home = -1;   // NumaSpread: a new handle, on the node of this thread; moved at the first search
     td.nodes = td.tb_hits = 0;
     td.best_move = td.best_reply = td.depth = 0;
     td.completed_depth = 0;

@@ -92,10 +92,10 @@ struct Learner {
     PROF_GUARD(prof_corr);
     const int us = td.side, g = corr_grav(ex);
     const U64 phk = corr_phase_key(td), fk = corr_fifty_key(td);
-    hist_learn(corr_slot(td.pawn_key ^ phk ^ fk, us).pawn, amount * CorrPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td.mm_key[0] ^ phk, us).minor, amount * CorrMinorUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td.np_key[white] ^ fk, us).np_white, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td.np_key[black] ^ fk, us).np_black, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, td.pawn_key ^ phk ^ fk, us).pawn, amount * CorrPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, td.mm_key[0] ^ phk, us).minor, amount * CorrMinorUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, td.np_key[white] ^ fk, us).np_white, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, td.np_key[black] ^ fk, us).np_black, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
     if (move_ok(f[-1].move)) {
       const int to = move_to(f[-1].move), pc = td.piece_on[to];
       hist_learn((*f[-2].cont_corr)[pc][to], amount * CorrCont2Upd / 128, LIM_CORR, g);
@@ -106,10 +106,10 @@ struct Learner {
         hist_learn((*f[-3].cont_corr)[pc][to], amount * CorrContOppUpd / 128, LIM_CORR, g);
     }
     if (CorrExpertW)
-      hist_learn(g_stats.corr_x[corr_expert_key(td) & g_stats.corr_mask][us], amount * CorrExpertUpd / 128, LIM_CORR, g);
+      hist_learn(static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][us], amount * CorrExpertUpd / 128, LIM_CORR, g);
     U64 pk_key;   // C2 corrections (agent B)
     if (CorrPkW && c2_pk_key(td, pk_key))
-      hist_learn(g_stats.corr_x[pk_key & g_stats.corr_mask][us], amount * CorrPkUpd / 128, LIM_CORR, g);
+      hist_learn(static_cast<int16_t (*)[2]>(td.st_corr_x)[pk_key & td.st_corr_mask][us], amount * CorrPkUpd / 128, LIM_CORR, g);
   }
 
   // Hash-move statistic: how far the hash move can be trusted outside the PV.

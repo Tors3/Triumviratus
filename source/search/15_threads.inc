@@ -181,7 +181,38 @@ static void reset_root_lines(ThreadData &td, const int *list, int n) {
   }
 }
 
+// NumaSpread (03/11/2026, 03_tables.inc): at the start of each search the thread of id `id` (the main thread too)
+// runs on node id % nodes, its network handle is moved to that node once, and it reads the network copy of the node.
+// The threads keep their node from one search to the next; nothing is done with one node.
+static void numa_bind_thread(int id) {
+#if defined(_WIN32)
+  const int nodes = numa_search_nodes();
+  if (nodes < 2) {
+    nn_bind_node_net(-1);   // the copy of the load (the option was switched off)
+    return;
+  }
+  static thread_local int bound = -1;
+  ThreadData &td = thread_data[id];
+  const int node = id % nodes;
+  if (bound != node) {
+    GROUP_AFFINITY ga{};
+    if (GetNumaNodeProcessorMaskEx((USHORT)node, &ga))
+      SetThreadGroupAffinity(GetCurrentThread(), &ga, nullptr);
+    bound = node;
+  }
+  if (td.nn_home != node) {
+    nn_pos_rehome(td.nnpos, node);
+    td.nnstack = nn_pos_stack(td.nnpos);
+    td.nn_home = node;
+  }
+  nn_bind_node_net(node);
+#else
+  (void)id;
+#endif
+}
+
 static void thread_main(int id) {
+  numa_bind_thread(id);
   deepen(thread_data[id]);
 }
 
@@ -343,6 +374,8 @@ void search_position_mt(int depth) {
     g_helper_workers.push_back(new SearchWorker());
   for (int i = 1; i < num_threads; i++)
     g_helper_workers[i - 1]->run([i] { thread_main(i); });
+  if (num_threads > 1)
+    numa_bind_thread(0);
   deepen(thread_data[0]);
 
   // "go infinite" and ponder: the bestmove waits for stop or ponderhit.

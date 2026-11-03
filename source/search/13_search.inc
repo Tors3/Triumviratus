@@ -1305,10 +1305,10 @@ static void pl_corr_parts(const ThreadData &td, const NodeFrame *f, const NodeSt
   const int us = td.side;
   const U64 phk = corr_phase_key(td);
   const U64 fk = corr_fifty_key(td);
-  rec.corr_pawn = corr_slot(td.pawn_key ^ phk ^ fk, us).pawn;
-  rec.corr_minor = corr_slot(td.mm_key[0] ^ phk, us).minor;
-  rec.corr_npw = corr_slot(td.np_key[white] ^ fk, us).np_white;
-  rec.corr_npb = corr_slot(td.np_key[black] ^ fk, us).np_black;
+  rec.corr_pawn = corr_slot(td, td.pawn_key ^ phk ^ fk, us).pawn;
+  rec.corr_minor = corr_slot(td, td.mm_key[0] ^ phk, us).minor;
+  rec.corr_npw = corr_slot(td, td.np_key[white] ^ fk, us).np_white;
+  rec.corr_npb = corr_slot(td, td.np_key[black] ^ fk, us).np_black;
   const int prev = f[-1].move;
   if (move_ok(prev)) {
     const int to = move_to(prev), pc = td.piece_on[to];

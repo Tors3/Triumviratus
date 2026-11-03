@@ -269,7 +269,7 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
   f->move = m;
   f->hctx = 0;   // ThreatHist: the search's move loop rewrites it for its quiet moves
   f->captured = u.captured_piece;
-  f->cont_hist = &g_stats.follow[f->in_check][is_tactical(m)][move_piece(m)][move_to(m)];
+  f->cont_hist = &follow_of(td)[f->in_check][is_tactical(m)][move_piece(m)][move_to(m)];
   f->cont_corr = &td.cont_corr[move_piece(m)][move_to(m)];
   // (14/10/2026, speed at an identical tree) Prefetch of the continuation-correction cells the child reads first in
   // corr_signal (~-0.3% cycles). In the child f[-1] is this frame, so the rows are those of f[-1] and f[-3] here
@@ -315,7 +315,7 @@ static inline void step_in_null(ThreadData &td, NodeFrame *f, NullUndo &u) {
   f->move = NULL_MOVE;
   f->hctx = 0;
   f->captured = -1;
-  f->cont_hist = &g_stats.follow[0][0][NO_PC][0];
+  f->cont_hist = &follow_of(td)[0][0][NO_PC][0];
   f->cont_corr = &td.cont_corr[NO_PC][0];
 }
 

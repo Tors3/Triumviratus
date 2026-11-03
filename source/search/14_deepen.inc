@@ -373,7 +373,7 @@ static void prepare_frames(ThreadData &td) {
   memset(td.frames, 0, sizeof(td.frames));
   for (int i = 0; i < (int)(sizeof(td.frames) / sizeof(td.frames[0])); i++) {
     NodeFrame &fr = td.frames[i];
-    fr.cont_hist = &g_stats.follow[0][0][NO_PC][0];
+    fr.cont_hist = &follow_of(td)[0][0][NO_PC][0];
     fr.cont_corr = &td.cont_corr[NO_PC][0];
     fr.captured = -1;
     fr.static_eval = VAL_NONE;

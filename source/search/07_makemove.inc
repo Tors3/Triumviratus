@@ -473,14 +473,14 @@ static inline int td_make_move(ThreadData &td, int move, UndoInfo &undo, bool kn
   // without salt were used: identical with the options off, with the options on two wasted prefetches and no row fetched ahead,
   // i.e. CorrPhase and CorrFifty paid speed in the SPRTs. With the options off the salts are 0: equivalent code.
   const U64 pf_phk = corr_phase_key(td), pf_fk = corr_fifty_key(td);
-  TT_PREFETCH(&g_stats.corr[(td.pawn_key ^ pf_phk ^ pf_fk) & g_stats.corr_mask][td.side]);
-  TT_PREFETCH(&g_stats.corr[(td.mm_key[0] ^ pf_phk) & g_stats.corr_mask][td.side]);
+  TT_PREFETCH(&static_cast<CorrSlot (*)[2]>(td.st_corr)[(td.pawn_key ^ pf_phk ^ pf_fk) & td.st_corr_mask][td.side]);
+  TT_PREFETCH(&static_cast<CorrSlot (*)[2]>(td.st_corr)[(td.mm_key[0] ^ pf_phk) & td.st_corr_mask][td.side]);
   // Evening of 04/10/2026: also the two non-pawn slots, which corr_signal reads right after (1.3 MB table per
   // thread: outside L2, every slot not fetched ahead is an L3 wait in the child).
-  TT_PREFETCH(&g_stats.corr[(td.np_key[white] ^ pf_fk) & g_stats.corr_mask][td.side]);
-  TT_PREFETCH(&g_stats.corr[(td.np_key[black] ^ pf_fk) & g_stats.corr_mask][td.side]);
+  TT_PREFETCH(&static_cast<CorrSlot (*)[2]>(td.st_corr)[(td.np_key[white] ^ pf_fk) & td.st_corr_mask][td.side]);
+  TT_PREFETCH(&static_cast<CorrSlot (*)[2]>(td.st_corr)[(td.np_key[black] ^ pf_fk) & td.st_corr_mask][td.side]);
   if (CorrExpertW)
-    TT_PREFETCH(&g_stats.corr_x[corr_expert_key(td) & g_stats.corr_mask][td.side]);
+    TT_PREFETCH(&static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][td.side]);
 
   // The hash key can carry the fifty-move band (tt_key, HashFiftyStep): if it differs from the estimate the
   // right row is fetched. With the option off tt_key is td.hash_key and the test is the old one.

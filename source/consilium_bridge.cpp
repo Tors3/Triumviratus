@@ -63,6 +63,7 @@ static void embed_init_from_resource() {
 #include "consilium/cn.h"
 
 #include "large_pages.h"   // the network and the per-thread handles live on large pages when possible
+#include <mutex>
 
 // The few types and values the rest of the bridge uses, in a namespace of their own.
 namespace cnb {
@@ -129,7 +130,11 @@ static const cn::Net*  g_cn_view = nullptr;
 static std::string     g_net_mem_status;
 static std::atomic<int> g_net_gen{1};
 static std::string     g_net_path;   // path of the network loaded last (PassedScale reloads it)
-#define NET_REF (*g_cn_view)
+// NumaSpread (03/11/2026): a search thread bound to a node reads the network copy of that node (nn_bind_node_net);
+// every other thread reads the copy the load made.
+static thread_local const cn::Net* t_net = nullptr;
+static inline const cn::Net& net_ref() { return t_net ? *t_net : *g_cn_view; }
+#define NET_REF (net_ref())
 
 const char* nn_net_memory_status(void) { return g_net_mem_status.c_str(); }
 
@@ -744,6 +749,62 @@ void nn_prefetch_move(const unsigned long long* bb, int phase, int pc, int from,
                       int capSq) {
     if (g_cn_view)
         cn::prefetch_move(NET_REF, reinterpret_cast<const std::uint64_t*>(bb), phase, pc, from, toPc, to, capPc, capSq);
+}
+
+// NumaSpread (03/11/2026): the thread's handle (accumulators, king, pawn and pawn-king caches) moved to the memory of
+// `node`, the node the calling thread now runs on; the same contents, so the same values. The one pointer into the
+// handle (pkLast) is moved with it.
+void nn_pos_rehome(void* handle, int node) {
+#if defined(_WIN32)
+    CnPos*            p   = static_cast<CnPos*>(handle);
+    const std::size_t sz  = sizeof(cn::Handle);
+    void*             mem = with_lock_memory_privilege(
+      [&](std::size_t lp) -> void* {
+          return VirtualAllocExNuma(GetCurrentProcess(), nullptr, (sz + lp - 1) / lp * lp,
+                                    MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE, DWORD(node));
+      },
+      []() -> void* { return nullptr; });
+    if (!mem) mem = VirtualAllocExNuma(GetCurrentProcess(), nullptr, sz, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, DWORD(node));
+    if (!mem) return;
+    cn::Handle* old = p->h;
+    cn::Handle* h   = static_cast<cn::Handle*>(mem);
+    std::memcpy(static_cast<void*>(h), old, sz);
+    if (h->pkLast)
+        h->pkLast = reinterpret_cast<const std::int32_t*>(reinterpret_cast<const char*>(h->pkLast)
+                                                          - reinterpret_cast<const char*>(old) + reinterpret_cast<const char*>(h));
+    p->h = h;
+    large_pages_free(old);
+#else
+    (void)handle, (void)node;
+#endif
+}
+
+// NumaSpread (03/11/2026): the copy of the network on `node` for the calling thread, which runs on that node; made once
+// per node and network (TriumvShm::attach with extra = true: the area of the node, created from the loaded copy).
+void nn_bind_node_net(int node) {
+#if defined(_WIN32) && defined(TRIUMV_SHARED_NET)
+    static const cn::Net* per_node[64];
+    static int            per_gen[64];
+    static std::mutex     mx;
+    if (!g_cn_view || node < 0 || node >= 64) {
+        t_net = nullptr;
+        return;
+    }
+    const int gen = g_net_gen.load();
+    std::lock_guard<std::mutex> lk(mx);
+    if (per_gen[node] != gen) {
+        std::string st;
+        const void* sh = TriumvShm::attach(g_cn_view, sizeof(cn::Net), g_cn_view->contentHash ^ std::uint64_t(sizeof(cn::Net)),
+                                           st, true);
+        per_node[node] = sh ? static_cast<const cn::Net*>(sh) : g_cn_view;
+        per_gen[node]  = gen;
+        std::printf("info string NUMA node %d network: %s\n", node, st.c_str());
+        std::fflush(stdout);
+    }
+    t_net = per_node[node];
+#else
+    (void)node;
+#endif
 }
 
 void nn_set_pk_stale(void* handle, int on) { static_cast<CnPos*>(handle)->h->pkStale = on; }

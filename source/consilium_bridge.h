@@ -40,6 +40,10 @@ int nn_set_passed_scale(int pct);
 // C2PkStale (27/10/2026): 1 = on a pawn-king cache miss the handle reuses the outputs of its last lookup (set by the
 // search for shallow nodes before evaluating), 0 = compute as usual.
 void nn_set_pk_stale(void* handle, int on);
+// NumaSpread (03/11/2026, 15_threads.inc): the calling thread reads the network copy of its NUMA node; a thread's
+// handle moved to the memory of its node.
+void nn_bind_node_net(int node);
+void nn_pos_rehome(void* handle, int node);
 
 // No-ops kept for API stability: the refresh cache is always on, and "accstats" has no counters.
 void nn_set_finny(int on);

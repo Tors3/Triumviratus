@@ -405,8 +405,8 @@ static inline int search_band(const ThreadData &td) {
 
 static inline PieceToRow &pawn_row(const ThreadData &td) {
   if (C2PawnHist)   // C2 idea 4 (21/10/2026, agent A): the pawn history split by expert; OFF by default, SPRT pending
-    return g_stats.pawn_rows[(td.pawn_key ^ c2_pawn_salt(td)) & g_stats.pawn_mask];
-  return g_stats.pawn_rows[td.pawn_key & g_stats.pawn_mask];
+    return static_cast<PieceToRow *>(td.st_pawn)[(td.pawn_key ^ c2_pawn_salt(td)) & td.st_pawn_mask];
+  return static_cast<PieceToRow *>(td.st_pawn)[td.pawn_key & td.st_pawn_mask];
 }
 
 // ============================================================================
@@ -532,8 +532,8 @@ static inline int quiet_ctx_slow(const ThreadData &td, int m) {
 // 13_search.inc) and the gravity per expert of the update (CorrGrav).
 // ============================================================================
 
-static inline CorrSlot &corr_slot(U64 key, int side_to_move) {
-  return g_stats.corr[key & g_stats.corr_mask][side_to_move];
+static inline CorrSlot &corr_slot(const ThreadData &td, U64 key, int side_to_move) {
+  return static_cast<CorrSlot (*)[2]>(td.st_corr)[key & td.st_corr_mask][side_to_move];
 }
 
 // CorrPhase (idea 9, 04/10/2026): with four experts the systematic error on one structure changes with the expert. A
@@ -604,10 +604,10 @@ static int corr_signal(const ThreadData &td, const NodeFrame *f) {
   const int us = td.side;
   const U64 phk = corr_phase_key(td);
   const U64 fk = corr_fifty_key(td);
-  const int pawn = corr_slot(td.pawn_key ^ phk ^ fk, us).pawn;
-  const int minor = corr_slot(td.mm_key[0] ^ phk, us).minor;
-  const int npw = corr_slot(td.np_key[white] ^ fk, us).np_white;
-  const int npb = corr_slot(td.np_key[black] ^ fk, us).np_black;
+  const int pawn = corr_slot(td, td.pawn_key ^ phk ^ fk, us).pawn;
+  const int minor = corr_slot(td, td.mm_key[0] ^ phk, us).minor;
+  const int npw = corr_slot(td, td.np_key[white] ^ fk, us).np_white;
+  const int npb = corr_slot(td, td.np_key[black] ^ fk, us).np_black;
   const int prev = f[-1].move;
   int cont = CorrNoMoveW;   // fixed term after a null move (08/10/2026: a constant before, now a lever)
   if (move_ok(prev)) {
@@ -661,10 +661,10 @@ static inline bool c2_pk_key(const ThreadData &td, U64 &key) {
 static inline int corr_signal_extra(const ThreadData &td) {
   int s = 0;
   if (CorrExpertW)
-    s += CorrExpertW * g_stats.corr_x[corr_expert_key(td) & g_stats.corr_mask][td.side];
+    s += CorrExpertW * static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][td.side];
   U64 pk_key;
   if (CorrPkW && c2_pk_key(td, pk_key))
-    s += CorrPkW * g_stats.corr_x[pk_key & g_stats.corr_mask][td.side];
+    s += CorrPkW * static_cast<int16_t (*)[2]>(td.st_corr_x)[pk_key & td.st_corr_mask][td.side];
   return s;
 }
 

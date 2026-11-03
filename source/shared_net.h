@@ -91,8 +91,10 @@ inline int open_ready(const char* name, std::uint64_t hash, std::size_t size, in
 
 // Returns a pointer to the shared object (read-only for whoever opens it, written once by whoever creates it),
 // or nullptr: then the caller keeps its local copy. `status` describes the outcome for the info string.
-inline const void* attach(const void* src, std::size_t size, std::uint64_t hash, std::string& status) {
-    release();
+// extra (NumaSpread, 03/11/2026): one more area for another node, kept open; the current view is not touched.
+inline const void* attach(const void* src, std::size_t size, std::uint64_t hash, std::string& status,
+                          bool extra = false) {
+    if (!extra) release();
     const int node = numa_node();
     char name[128];
     std::snprintf(name, sizeof name, "Local\\triumv_net_%016llx_%llx_n%d", (unsigned long long) hash,
@@ -118,7 +120,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
         w = WaitForSingleObject(mtx, 1000);
         if (w == WAIT_TIMEOUT && open_ready(name, hash, size, node, v, result, status) == 1) {
             CloseHandle(mtx);
-            current() = v;
+            if (!extra) current() = v;
             return result;
         }
     }
@@ -164,7 +166,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
     }
     ReleaseMutex(mtx);
     CloseHandle(mtx);
-    if (result) current() = v;
+    if (result && !extra) current() = v;
     return result;
 }
 

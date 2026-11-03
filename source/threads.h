@@ -102,8 +102,26 @@ extern SearchLimits g_limits;
 
 constexpr int FRAME_OFFSET = 7;   // frame[FRAME_OFFSET] is the root; 7 sentinel frames before it
 
-struct ThreadData {
+// alignas(128) (03/11/2026, speed at several threads, same tree): the ThreadData of the threads lie one after the other
+// in ThreadDataVec, and without it the last line of one (nnstack, read at every make and unmake; nn_hold, written at
+// every make) was the first line of the next (thread_id and the bitboards, written at every move): every move of a
+// thread invalidated a line of its neighbour. Sampling at 8 threads on 8 cores of one socket against 1 thread (same
+// binary, xperf 03/11/2026): the make's stack push 25x and the unmake's pop 12x more cycles per node. 128 and not 64:
+// the spatial prefetcher of Intel cores fetches lines in pairs. Xeon, 5 positions x 10 s: nps +7.1% at 8 threads and
+// +5.9% at 16; one thread level (xperf cycles per node +0.05% middlegame, +0.09% endgames).
+struct alignas(128) ThreadData {
     int thread_id;
+    // NumaSpread (03/11/2026, 15_threads.inc): the NUMA node the thread searches on, which is also the copy of the
+    // shared histories it reads and writes (0 with one node); nn_home = the node its network handle was moved to.
+    int numa_node = 0;
+    int nn_home   = -1;
+    // Its node's copy of the shared histories (stats_bind_threads, 03_tables.inc): base and mask once per thread,
+    // so that every access is base[key & mask] as with one table.
+    void*         st_follow = nullptr;   // PieceToRow (*)[2][NO_PC + 1][64]
+    void*         st_pawn   = nullptr;   // PieceToRow*
+    void*         st_corr   = nullptr;   // CorrSlot (*)[2]
+    void*         st_corr_x = nullptr;   // int16_t (*)[2]
+    unsigned long long st_pawn_mask = 0, st_corr_mask = 0;
 
     // Board of the thread
     U64 bitboards[12];
@@ -241,6 +259,7 @@ extern std::vector<std::thread> search_threads;
 extern ThreadDataVec thread_data;
 extern std::atomic<bool> stop_threads;
 extern int num_threads;
+extern bool g_numa_spread;   // UCI NumaSpread (03/11/2026): the threads spread over the NUMA nodes (15_threads.inc)
 
 extern void init_threads(int thread_count);
 extern void copy_board_to_thread(ThreadData& td);
