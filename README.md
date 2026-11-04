@@ -163,6 +163,21 @@ AVX-512 VNNI, AVX-512 VBMI2). The engine name is `Triumviratus - 8.0`. The same 
 (arm64, with and without the dot-product instructions) and **macOS** (Apple Silicon and Intel), with the network
 embedded.
 
+## How to compile
+
+On Windows one PowerShell command (not as administrator) builds Triumviratus for your CPU from the current `main`:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force; irm https://raw.githubusercontent.com/Tors3/Triumviratus/main/build/variants_here.ps1 -OutFile $env:TEMP\variants_here.ps1; & $env:TEMP\variants_here.ps1 -Day (Get-Date -Format yyyyMMdd) -Variants @()
+```
+
+It installs git if it is missing, checks Visual Studio 2022 with its clang components (if they are missing it
+downloads [`build/setup_toolchain.ps1`](build/setup_toolchain.ps1) and says how to run it), downloads the source and
+the network (checked by SHA-256 and MD5), and builds with PGO every variant your CPU can run, each one verified by
+`bench`. The executables are in `%USERPROFILE%\Triumviratus_release\variants\`, and a zip of the same folder is left on
+the Desktop. `-Variants avx2` (or `avx512`, `vnni512`, ...) builds only the variants named; `-Ref <tag or commit>`
+builds another version.
+
 **Building from source.** On Windows, [`build/release.ps1`](build/release.ps1) downloads the source and the network
 (checked by SHA-256 and MD5), checks the compiler and builds with PGO. Each variant's profile is recorded on a CPU
 that runs it: every machine builds and verifies the variants its CPU runs, then one machine joins the profiles into the
