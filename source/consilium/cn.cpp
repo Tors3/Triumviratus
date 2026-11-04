@@ -536,15 +536,31 @@ void build_pp_rows() {
     for (int a = 0; a < 96; a++)
         for (int b = 0; b < 96; b++) g_ppRow[a][b] = a == b ? 0 : g_ppStore[pair_spec(a, b)];
 }
-inline int pair_index(int a, int b) { return g_ppRow[a][b]; }
 
 u64 passers(int c, u64 own, u64 opp) {
-    u64 out = 0;
-    for (u64 b = own; b; b &= b - 1) {
-        const int s = CN_LSB(b);
-        if (!(opp & g_frontSpan[c][s]) && !(own & g_frontFile[c][s])) out |= 1ULL << s;
+    constexpr u64 notA = 0xFEFEFEFEFEFEFEFEULL, notH = 0x7F7F7F7F7F7F7F7FULL;
+    u64           s    = opp | ((opp & notA) >> 1) | ((opp & notH) << 1);
+    if (c == 0) {
+        s <<= 8;
+        s |= s << 8;
+        s |= s << 16;
+        s |= s << 32;
+        u64 f = own << 8;
+        f |= f << 8;
+        f |= f << 16;
+        f |= f << 32;
+        return own & ~(s | f);
+    } else {
+        s >>= 8;
+        s |= s >> 8;
+        s |= s >> 16;
+        s |= s >> 32;
+        u64 f = own >> 8;
+        f |= f >> 8;
+        f |= f >> 16;
+        f |= f >> 32;
+        return own & ~(s | f);
     }
-    return out;
 }
 
 // ================================================================ accumulation
@@ -920,11 +936,9 @@ struct SliderAtt {
 };
 void slider_att_fill(const Board& b, SliderAtt& sa) {
     const u64 occ = b.occ[2];
-    for (int c = 0; c < 2; c++) {
-        for (u64 x = b.bb[BISHOP + 6 * c]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_bishop_attacks(CN_LSB(x), occ);
-        for (u64 x = b.bb[ROOK + 6 * c]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_rook_attacks(CN_LSB(x), occ);
-        for (u64 x = b.bb[QUEEN + 6 * c]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_queen_attacks(CN_LSB(x), occ);
-    }
+    for (u64 x = b.bb[BISHOP] | b.bb[BISHOP + 6]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_bishop_attacks(CN_LSB(x), occ);
+    for (u64 x = b.bb[ROOK] | b.bb[ROOK + 6]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_rook_attacks(CN_LSB(x), occ);
+    for (u64 x = b.bb[QUEEN] | b.bb[QUEEN + 6]; x; x &= x - 1) sa.att[CN_LSB(x)] = get_queen_attacks(CN_LSB(x), occ);
     sa.ready = true;
 }
 
@@ -933,11 +947,12 @@ void active_pawns(const Board& b, const Persp& P, RowList& L) {
     const u64 wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
     const u64 pawns = wp | bp;
     for (u64 x = pawns; x; x &= x - 1) {
-        const int s = CN_LSB(x);
-        const int cs = (bp >> s) & 1;
+        const int           s     = CN_LSB(x);
+        const int           cs    = (bp >> s) & 1;
+        const std::uint16_t* ppRow = g_ppRow[P.pid(cs, s)];
         for (u64 t = g_ppMask[s] & pawns & ((1ULL << s) - 1); t; t &= t - 1) {   // each pair once
             const int to = CN_LSB(t);
-            L.pushP(pair_index(P.pid(cs, s), P.pid((bp >> to) & 1, to)), 1);
+            L.pushP(ppRow[P.pid((bp >> to) & 1, to)], 1);
         }
     }
     const u64 pw = passers(0, wp, bp), pb = passers(1, bp, wp);
@@ -949,21 +964,24 @@ void active_pawns(const Board& b, const Persp& P, RowList& L) {
 // false: the threat rows only (the refresh takes the pawn rows from the pawn cache).
 void active_other(const Board& b, const Persp& P, RowList& L, SliderAtt& sa, bool withPawns = true) {
     if (!sa.ready) slider_att_fill(b, sa);
-    const u64 occ = b.occ[2];
-    const u64 kings = b.bb[KING] | b.bb[KING + 6];
-    const u64 pawns = b.bb[PAWN] | b.bb[PAWN + 6];
-    const u64 noK = occ & ~kings;
+    const u64 occ    = b.occ[2];
+    const u64 kings  = b.bb[KING] | b.bb[KING + 6];
+    const u64 queens = b.bb[QUEEN] | b.bb[QUEEN + 6];
+    const u64 nr     = b.bb[KNIGHT] | b.bb[KNIGHT + 6] | b.bb[ROOK] | b.bb[ROOK + 6];
+    const u64 noK    = occ & ~kings;
+    const u64 noKQ   = noK & ~queens;
     for (int c = 0; c < 2; c++) {
         for (u64 x = b.bb[PAWN + 6 * c]; x; x &= x - 1) {
             const int f = CN_LSB(x);
-            for (u64 t = pawn_attacks[c][f] & noK & ~pawns; t; t &= t - 1) {
+            for (u64 t = pawn_attacks[c][f] & nr; t; t &= t - 1) {
                 const int to = CN_LSB(t);
                 int       valid;
                 const int i = threat_row(P.p, P.mo, PAWN + 6 * c, b.mb[to], f, to, valid);
                 L.pushT(i, valid, 1);
             }
         }
-        for (int pt = KNIGHT; pt <= QUEEN; pt++)
+        for (int pt = KNIGHT; pt <= QUEEN; pt++) {
+            const u64 mask = (pt == BISHOP || pt == ROOK) ? noKQ : noK;
             for (u64 x = b.bb[pt + 6 * c]; x; x &= x - 1) {
                 const int f   = CN_LSB(x);
                 const u64 att = pt == KNIGHT ? knight_attacks[f] : sa.att[f];
@@ -977,13 +995,14 @@ void active_other(const Board& b, const Persp& P, RowList& L, SliderAtt& sa, boo
                     std::abort();
                 }
 #endif
-                for (u64 t = att & noK; t; t &= t - 1) {
+                for (u64 t = att & mask; t; t &= t - 1) {
                     const int to = CN_LSB(t);
                     int       valid;
                     const int i = threat_row(P.p, P.mo, pt + 6 * c, b.mb[to], f, to, valid);
                     L.pushT(i, valid, 1);
                 }
             }
+        }
     }
 
     if (withPawns) active_pawns(b, P, L);
@@ -1007,6 +1026,9 @@ void refresh_one(const Net& net, const Board& b, int p, Acc& a) {
     apply(L, a, a);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
 void kcache_init(const Net& net, Handle& h) {
     for (auto& a : h.kcache)
         for (auto& b : a)
@@ -1018,14 +1040,19 @@ void kcache_init(const Net& net, Handle& h) {
     h.cacheNet = net.contentHash;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+void pawn_init(const Net& net, Handle& h) {
+    for (PawnCacheEntry& e : h.pawnc) e.pm = 0;
+    h.pawnNet = net.contentHash;
+}
+
 // The pawn vector of the board for perspective P (pawn-pair + passed-pawn rows summed from zero, PSQT included): from
 // the pawn cache, or computed and stored there. Direct mapped on a hash of the pawns, exact key. The rows depend only
 // on the pawns, the perspective and its orientation (never on the king bucket or the expert).
 const Acc& pawn_vec(const Net& net, Handle& h, const Board& b, const Persp& P, RowList& L) {
-    if (h.pawnNet != net.contentHash) {
-        for (PawnCacheEntry& e : h.pawnc) e.pm = 0;
-        h.pawnNet = net.contentHash;
-    }
+    if (h.pawnNet != net.contentHash) pawn_init(net, h);
     const u64           wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
     const std::uint32_t pm = std::uint32_t(P.p | 2 * P.mo) + 1;
     std::uint64_t       k  = wp * 0x9E3779B97F4A7C15ULL ^ (bp + 0x632BE59BD9B4E019ULL) * 0xC2B2AE3D27D4EB4FULL ^ pm;
@@ -1044,11 +1071,15 @@ const Acc& pawn_vec(const Net& net, Handle& h, const Board& b, const Persp& P, R
 // last time (the entry's bitboards are updated here; its accumulator by whoever applies the rows).
 KingCacheEntry& kcache_rows(const Net& net, Handle& h, const Board& b, const Persp& P, RowList& L) {
     if (h.cacheNet != net.contentHash) kcache_init(net, h);
-    KingCacheEntry& e = h.kcache[P.p][P.ksq][P.phase];
+    KingCacheEntry& e     = h.kcache[P.p][P.ksq][P.phase];
+    const int       hbase = P.hbase;
     for (int pc = 0; pc < 12; pc++) {
-        for (u64 x = e.bb[pc] & ~b.bb[pc]; x; x &= x - 1) L.pushH(P.hka(pc, CN_LSB(x)), -1);
-        for (u64 x = b.bb[pc] & ~e.bb[pc]; x; x &= x - 1) L.pushH(P.hka(pc, CN_LSB(x)), 1);
-        e.bb[pc] = b.bb[pc];
+        const u64 eb = e.bb[pc], bb = b.bb[pc], d = eb ^ bb;
+        if (!d) continue;
+        const std::int16_t* hk = P.hk[pc];
+        for (u64 x = eb & d; x; x &= x - 1) L.pushH(hbase + hk[CN_LSB(x)], -1);
+        for (u64 x = bb & d; x; x &= x - 1) L.pushH(hbase + hk[CN_LSB(x)], 1);
+        e.bb[pc] = bb;
     }
     return e;
 }
@@ -1103,18 +1134,20 @@ void move_pawns(const NnStack& S, int i, const Persp& P, RowList& L, int dir) {
     if (pw.any) {
         u64 cur[2] = {pw.before[0], pw.before[1]};
         for (int k = 0; k < pw.nRemoved; k++) {
-            const int s = pw.removedSq[k], c = pw.removedC[k];
+            const int           s     = pw.removedSq[k], c = pw.removedC[k];
+            const std::uint16_t* ppRow = g_ppRow[P.pid(c, s)];
             cur[c] &= ~(1ULL << s);
             for (u64 t = g_ppMask[s] & (cur[0] | cur[1]); t; t &= t - 1) {
                 const int to = CN_LSB(t);
-                L.pushP(pair_index(P.pid(c, s), P.pid((cur[1] >> to) & 1, to)), -1 * dir);
+                L.pushP(ppRow[P.pid((cur[1] >> to) & 1, to)], -1 * dir);
             }
         }
         if (pw.addedSq != NN_SQ_NONE) {
-            const int s = pw.addedSq, c = pw.addedC;
+            const int           s     = pw.addedSq, c = pw.addedC;
+            const std::uint16_t* ppRow = g_ppRow[P.pid(c, s)];
             for (u64 t = g_ppMask[s] & (cur[0] | cur[1]); t; t &= t - 1) {
                 const int to = CN_LSB(t);
-                L.pushP(pair_index(P.pid(c, s), P.pid((cur[1] >> to) & 1, to)), 1 * dir);
+                L.pushP(ppRow[P.pid((cur[1] >> to) & 1, to)], 1 * dir);
             }
         }
         const u64 bw = S.v1PassW[i - 1], aw = S.v1PassW[i], bb = S.v1PassB[i - 1], ab = S.v1PassB[i];
@@ -1226,44 +1259,48 @@ inline __m512i dot4(__m512i acc, __m512i x, __m512i w) {
 // Layers after l1 in registers (spec 5.3-5.8). Squares of |x| cut at 16383 (l1) and 8191 (l2), which is exact
 // (spec 5.4), so 32-bit products cannot overflow.
 // The square is CN_SQ512 (vpmulld, or vpmaddwd with -DCN_SQ_MADD: see the top of the file).
-inline void act16(__m512i x, int cut, int sqShift, int vShift, __m128i& sq, __m128i& val) {
-    const __m512i zero = _mm512_setzero_si512(), top = _mm512_set1_epi32(127);
-    const __m512i ax = _mm512_min_epi32(_mm512_abs_epi32(x), _mm512_set1_epi32(cut));
-    const __m512i q  = _mm512_min_epi32(_mm512_srli_epi32(CN_SQ512(ax), sqShift), top);
-    const __m512i v  = _mm512_min_epi32(_mm512_max_epi32(_mm512_srai_epi32(x, vShift), zero), top);
-    sq  = _mm512_cvtepi32_epi8(q);
-    val = _mm512_cvtepi32_epi8(v);
+// Packed to one 64-byte register (q0[0..15], q1[0..15], v0[0..15], v1[0..15]) with packs + packus + permutexvar:
+// avoids four 128-bit stores followed by a 512-bit load (store-to-load forwarding stall on Skylake-SP and Zen 4).
+inline __m512i act32_512(__m512i x0, __m512i x1, int cut, int sqShift, int vShift) {
+    const __m512i top = _mm512_set1_epi32(127), c = _mm512_set1_epi32(cut);
+    const __m512i ax0 = _mm512_min_epi32(_mm512_abs_epi32(x0), c);
+    const __m512i ax1 = _mm512_min_epi32(_mm512_abs_epi32(x1), c);
+    const __m512i q0  = _mm512_min_epi32(_mm512_srli_epi32(CN_SQ512(ax0), sqShift), top);
+    const __m512i q1  = _mm512_min_epi32(_mm512_srli_epi32(CN_SQ512(ax1), sqShift), top);
+    const __m512i v0  = _mm512_min_epi32(_mm512_srai_epi32(x0, vShift), top);
+    const __m512i v1  = _mm512_min_epi32(_mm512_srai_epi32(x1, vShift), top);
+    const __m512i b   = _mm512_packus_epi16(_mm512_packs_epi32(q0, q1), _mm512_packs_epi32(v0, v1));
+    return _mm512_permutexvar_epi32(_mm512_setr_epi32(0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15), b);
 }
 
 CN_LEAF Out forward_tail_simd(const Stack& st, const std::int32_t* x1, const Acc& us, const Acc& them, int bucket) {
-    alignas(64) std::uint8_t a1[2 * L2], a2[2 * L3];
+    alignas(64) std::uint8_t a1[2 * L2];
     const __m512i x1lo = _mm512_load_si512(x1), x1hi = _mm512_load_si512(x1 + 16);
-    __m128i q0, v0, q1, v1;
-    act16(x1lo, 16383, 21, 7, q0, v0);
-    act16(x1hi, 16383, 21, 7, q1, v1);
-    _mm_store_si128((__m128i*)(a1), q0);
-    _mm_store_si128((__m128i*)(a1 + 16), q1);
-    _mm_store_si128((__m128i*)(a1 + 32), v0);
-    _mm_store_si128((__m128i*)(a1 + 48), v1);
+    const __m512i a1v  = act32_512(x1lo, x1hi, 16383, 21, 7);
+    _mm512_store_si512(a1, a1v);
 
     const std::int32_t* in = reinterpret_cast<const std::int32_t*>(a1);
     __m512i c0 = _mm512_loadu_si512(st.b2), c1 = _mm512_loadu_si512(st.b2 + 16);
-    for (int g = 0; g < 2 * L2 / 4; g++) {
-        const __m512i  x = _mm512_set1_epi32(in[g]);
-        const __m512i* w = reinterpret_cast<const __m512i*>(st.w2g[g]);
-        c0 = dot4(c0, x, _mm512_load_si512(w));
-        c1 = dot4(c1, x, _mm512_load_si512(w + 1));
+    __m512i d0 = _mm512_setzero_si512(), d1 = d0;
+#if defined(__clang__)
+    #pragma nounroll
+#endif
+    for (int g = 0; g < 2 * L2 / 4; g += 2) {
+        const __m512i  x0 = _mm512_set1_epi32(in[g]), x1 = _mm512_set1_epi32(in[g + 1]);
+        const __m512i* w0 = reinterpret_cast<const __m512i*>(st.w2g[g]);
+        const __m512i* w1 = reinterpret_cast<const __m512i*>(st.w2g[g + 1]);
+        c0 = dot4(c0, x0, _mm512_load_si512(w0));
+        c1 = dot4(c1, x0, _mm512_load_si512(w0 + 1));
+        d0 = dot4(d0, x1, _mm512_load_si512(w1));
+        d1 = dot4(d1, x1, _mm512_load_si512(w1 + 1));
     }
-    act16(c0, 8191, 19, 6, q0, v0);
-    act16(c1, 8191, 19, 6, q1, v1);
-    _mm_store_si128((__m128i*)(a2), q0);
-    _mm_store_si128((__m128i*)(a2 + 16), q1);
-    _mm_store_si128((__m128i*)(a2 + 32), v0);
-    _mm_store_si128((__m128i*)(a2 + 48), v1);
+    c0 = _mm512_add_epi32(c0, d0);
+    c1 = _mm512_add_epi32(c1, d1);
+    const __m512i a2v = act32_512(c0, c1, 8191, 19, 6);
 
-    __m512i o = dot4(_mm512_setzero_si512(), _mm512_load_si512(a1), _mm512_loadu_si512(st.w3));
-    o = dot4(o, _mm512_load_si512(a2), _mm512_loadu_si512(st.w3 + 2 * L2));
-    const std::int32_t out  = st.b3 + _mm512_reduce_add_epi32(o);
+    const __m512i o1 = dot4(_mm512_setzero_si512(), a1v, _mm512_loadu_si512(st.w3));
+    const __m512i o2 = dot4(_mm512_setzero_si512(), a2v, _mm512_loadu_si512(st.w3 + 2 * L2));
+    const std::int32_t out  = st.b3 + _mm512_reduce_add_epi32(_mm512_add_epi32(o1, o2));
     const std::int32_t skip = x1[L2 - 2] - x1[L2 - 1];
     Out r;
     r.positional = int((std::int64_t(out) + skip) * 600 / 16384);
@@ -1405,14 +1442,14 @@ inline int l0_side(const Acc& a, std::uint8_t* out, std::int32_t* nz, int n, int
 // Activations of 32 int32 values (four registers) to 32 bytes in order: packs/packus work per 128-bit lane, the
 // final permutation puts the 4-byte groups back in order.
 inline __m256i act32(const __m256i* x, int cut, int sqShift, int vShift, bool square) {
-    const __m256i zero = _mm256_setzero_si256(), top = _mm256_set1_epi32(127), c = _mm256_set1_epi32(cut);
+    const __m256i top = _mm256_set1_epi32(127), c = _mm256_set1_epi32(cut);
     __m256i       r[4];
     for (int k = 0; k < 4; k++) {
         if (square) {
             const __m256i ax = _mm256_min_epi32(_mm256_abs_epi32(x[k]), c);
             r[k] = _mm256_min_epi32(_mm256_srli_epi32(CN_SQ256(ax), sqShift), top);
         } else
-            r[k] = _mm256_min_epi32(_mm256_max_epi32(_mm256_srai_epi32(x[k], vShift), zero), top);
+            r[k] = _mm256_min_epi32(_mm256_srai_epi32(x[k], vShift), top);
     }
     const __m256i b = _mm256_packus_epi16(_mm256_packs_epi32(r[0], r[1]), _mm256_packs_epi32(r[2], r[3]));
     return _mm256_permutevar8x32_epi32(b, _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7));
@@ -1420,8 +1457,9 @@ inline __m256i act32(const __m256i* x, int cut, int sqShift, int vShift, bool sq
 
 CN_LEAF Out forward_tail_avx2(const Stack& st, const __m256i* x1, const Acc& us, const Acc& them, int bucket) {
     alignas(32) std::uint8_t a1[2 * L2];
-    _mm256_store_si256((__m256i*)a1, act32(x1, 16383, 21, 7, true));
-    _mm256_store_si256((__m256i*)(a1 + 32), act32(x1, 16383, 21, 7, false));
+    const __m256i a1lo = act32(x1, 16383, 21, 7, true), a1hi = act32(x1, 16383, 21, 7, false);
+    _mm256_store_si256((__m256i*)a1, a1lo);
+    _mm256_store_si256((__m256i*)(a1 + 32), a1hi);
     const std::int32_t* in = reinterpret_cast<const std::int32_t*>(a1);
     __m256i x2[4];
     for (int k = 0; k < 4; k++) x2[k] = _mm256_loadu_si256((const __m256i*)(st.b2 + 8 * k));
@@ -1430,15 +1468,12 @@ CN_LEAF Out forward_tail_avx2(const Stack& st, const __m256i* x1, const Acc& us,
         const __m256i* w = reinterpret_cast<const __m256i*>(st.w2g[g]);
         for (int k = 0; k < 4; k++) x2[k] = dot8(x2[k], x, _mm256_load_si256(w + k));
     }
-    alignas(32) std::uint8_t a2[2 * L3];
-    _mm256_store_si256((__m256i*)a2, act32(x2, 8191, 19, 6, true));
-    _mm256_store_si256((__m256i*)(a2 + 32), act32(x2, 8191, 19, 6, false));
-    __m256i o = _mm256_setzero_si256();
-    for (int k = 0; k < 2; k++) {
-        o = dot8(o, _mm256_load_si256((const __m256i*)(a1 + 32 * k)), _mm256_loadu_si256((const __m256i*)(st.w3 + 32 * k)));
-        o = dot8(o, _mm256_load_si256((const __m256i*)(a2 + 32 * k)),
-                 _mm256_loadu_si256((const __m256i*)(st.w3 + 2 * L2 + 32 * k)));
-    }
+    const __m256i a2lo = act32(x2, 8191, 19, 6, true), a2hi = act32(x2, 8191, 19, 6, false);
+    __m256i o0 = dot8(_mm256_setzero_si256(), a1lo, _mm256_loadu_si256((const __m256i*)(st.w3)));
+    __m256i o1 = dot8(_mm256_setzero_si256(), a1hi, _mm256_loadu_si256((const __m256i*)(st.w3 + 32)));
+    o0 = dot8(o0, a2lo, _mm256_loadu_si256((const __m256i*)(st.w3 + 2 * L2)));
+    o1 = dot8(o1, a2hi, _mm256_loadu_si256((const __m256i*)(st.w3 + 2 * L2 + 32)));
+    const __m256i o = _mm256_add_epi32(o0, o1);
     __m128i s = _mm_add_epi32(_mm256_castsi256_si128(o), _mm256_extracti128_si256(o, 1));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0x4E));
     s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0xB1));
@@ -2136,9 +2171,11 @@ inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& 
         if (WithPsqt) ps = _mm256_sub_epi32(ps, psqt_of(LH.s16[i], 2 * L1));
     }
     // Consilium Plebis: the HalfKA rows are int8 (in the 8-bit lists of LH).
-    rows8_512<R, WithPsqt>(LH, r, ps, t);
-    for (int k = 0; k < R; k++) _mm512_storeu_si512(entry.v + t + k * W, r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
+    if (LH.n8a + LH.n8s > 0) {
+        rows8_512<R, WithPsqt>(LH, r, ps, t);
+        for (int k = 0; k < R; k++) _mm512_storeu_si512(entry.v + t + k * W, r[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
+    }
     rows8_512<R, WithPsqt>(LO, r, ps, t);   // added rows only (the board's): the removed list is empty
     if (pv) {
         for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(pv->v + t + k * W));
@@ -2166,10 +2203,12 @@ inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& 
     __m256i       r[R];
     __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)entry.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(entry.v + t + k * W));
-    rows16_256<R, WithPsqt>(LH, r, ps, t);
-    rows8_256<R, WithPsqt>(LH, r, ps, t);
-    for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(entry.v + t + k * W), r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
+    if (LH.n8a + LH.n8s > 0) {
+        rows16_256<R, WithPsqt>(LH, r, ps, t);
+        rows8_256<R, WithPsqt>(LH, r, ps, t);
+        for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(entry.v + t + k * W), r[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
+    }
     rows8_256<R, WithPsqt>(LO, r, ps, t);   // added int8 rows only (the board's)
     if (pv) {
         for (int k = 0; k < R; k++) r[k] = _mm256_add_epi16(r[k], _mm256_load_si256((const __m256i*)(pv->v + t + k * W)));
@@ -2188,7 +2227,7 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
 #define CN_PAWN_CACHE 1
 #else
 void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
-    apply(LH, entry, entry);
+    if (LH.n8a + LH.n8s > 0) apply(LH, entry, entry);
     apply(LO, entry, dst);
     if (pv) {
         for (int j = 0; j < L1; j++) dst.v[j] += pv->v[j];
@@ -2225,14 +2264,16 @@ inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& L
         for (int k = 0; k < R; k++) ev[k] = _mm512_sub_epi16(ev[k], _mm512_load_si512(LP.s16[i] + t + k * W));
         if (WithPsqt) ep = _mm256_sub_epi32(ep, psqt_of(LP.s16[i], 2 * L1));
     }
-    rows8_512<R, WithPsqt>(LP, ev, ep, t);
+    if (LP.n8a + LP.n8s > 0) {
+        rows8_512<R, WithPsqt>(LP, ev, ep, t);
+        for (int k = 0; k < R; k++) _mm512_storeu_si512(ePar.v + t + k * W, ev[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)ePar.psqt, ep);
+    }
     for (int k = 0; k < R; k++) {
-        _mm512_storeu_si512(ePar.v + t + k * W, ev[k]);
         sv[k] = _mm512_sub_epi16(sv[k], ev[k]);
         ev[k] = _mm512_loadu_si512(eNew.v + t + k * W);
     }
     if (WithPsqt) {
-        _mm256_storeu_si256((__m256i*)ePar.psqt, ep);
         sp = _mm256_sub_epi32(sp, ep);
         ep = _mm256_loadu_si256((const __m256i*)eNew.psqt);
     }
@@ -2244,15 +2285,13 @@ inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& L
         for (int k = 0; k < R; k++) ev[k] = _mm512_sub_epi16(ev[k], _mm512_load_si512(LN.s16[i] + t + k * W));
         if (WithPsqt) ep = _mm256_sub_epi32(ep, psqt_of(LN.s16[i], 2 * L1));
     }
-    rows8_512<R, WithPsqt>(LN, ev, ep, t);
-    for (int k = 0; k < R; k++) {
-        _mm512_storeu_si512(eNew.v + t + k * W, ev[k]);
-        sv[k] = _mm512_add_epi16(sv[k], ev[k]);
+    if (LN.n8a + LN.n8s > 0) {
+        rows8_512<R, WithPsqt>(LN, ev, ep, t);
+        for (int k = 0; k < R; k++) _mm512_storeu_si512(eNew.v + t + k * W, ev[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)eNew.psqt, ep);
     }
-    if (WithPsqt) {
-        _mm256_storeu_si256((__m256i*)eNew.psqt, ep);
-        sp = _mm256_add_epi32(sp, ep);
-    }
+    for (int k = 0; k < R; k++) sv[k] = _mm512_add_epi16(sv[k], ev[k]);
+    if (WithPsqt) sp = _mm256_add_epi32(sp, ep);
     rows8_512<R, WithPsqt>(LO, sv, sp, t);
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, sv[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, sp);
@@ -2275,29 +2314,29 @@ inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& L
     __m256i       r[R];
     __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)ePar.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(ePar.v + t + k * W));
-    rows16_256<R, WithPsqt>(LP, r, ps, t);
-    rows8_256<R, WithPsqt>(LP, r, ps, t);
-    for (int k = 0; k < R; k++) {
-        _mm256_storeu_si256((__m256i*)(ePar.v + t + k * W), r[k]);
+    if (LP.n8a + LP.n8s > 0) {
+        rows16_256<R, WithPsqt>(LP, r, ps, t);
+        rows8_256<R, WithPsqt>(LP, r, ps, t);
+        for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(ePar.v + t + k * W), r[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)ePar.psqt, ps);
+    }
+    for (int k = 0; k < R; k++)
         _mm256_storeu_si256((__m256i*)(dst.v + t + k * W),
                             _mm256_sub_epi16(_mm256_loadu_si256((const __m256i*)(sPar.v + t + k * W)), r[k]));
-    }
     if (WithPsqt) {
-        _mm256_storeu_si256((__m256i*)ePar.psqt, ps);
         _mm256_storeu_si256((__m256i*)dst.psqt, _mm256_sub_epi32(_mm256_loadu_si256((const __m256i*)sPar.psqt), ps));
         ps = _mm256_loadu_si256((const __m256i*)eNew.psqt);
     }
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(eNew.v + t + k * W));
-    rows16_256<R, WithPsqt>(LN, r, ps, t);
-    rows8_256<R, WithPsqt>(LN, r, ps, t);
-    for (int k = 0; k < R; k++) {
-        _mm256_storeu_si256((__m256i*)(eNew.v + t + k * W), r[k]);
+    if (LN.n8a + LN.n8s > 0) {
+        rows16_256<R, WithPsqt>(LN, r, ps, t);
+        rows8_256<R, WithPsqt>(LN, r, ps, t);
+        for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(eNew.v + t + k * W), r[k]);
+        if (WithPsqt) _mm256_storeu_si256((__m256i*)eNew.psqt, ps);
+    }
+    for (int k = 0; k < R; k++)
         r[k] = _mm256_add_epi16(r[k], _mm256_loadu_si256((const __m256i*)(dst.v + t + k * W)));
-    }
-    if (WithPsqt) {
-        _mm256_storeu_si256((__m256i*)eNew.psqt, ps);
-        ps = _mm256_add_epi32(ps, _mm256_loadu_si256((const __m256i*)dst.psqt));
-    }
+    if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_loadu_si256((const __m256i*)dst.psqt));
     rows8_256<R, WithPsqt>(LO, r, ps, t);   // the O rows of the move (int8)
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
     if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
@@ -2313,8 +2352,8 @@ void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, con
 #else
 void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar, Acc& eNew,
                     Acc& dst) {
-    apply(LP, ePar, ePar);
-    apply(LN, eNew, eNew);
+    if (LP.n8a + LP.n8s > 0) apply(LP, ePar, ePar);
+    if (LN.n8a + LN.n8s > 0) apply(LN, eNew, eNew);
     alignas(64) Acc t;
     for (int j = 0; j < L1; j++)
         t.v[j] = std::int16_t(std::uint16_t(sPar.v[j]) - std::uint16_t(ePar.v[j]) + std::uint16_t(eNew.v[j]));

@@ -86,6 +86,7 @@ static inline bool nn_can_slider_threat(int pc, int slider) {
 // our numbering group c is the squares 16c..16c+15, contiguous in the mailbox too.
 template <int SqShift, int PcShift, typename Look>
 static inline void nn_write_multi(const Look &look, U64 mask, std::uint32_t tmpl, NnDirtyThreats *dts) {
+  if (!mask) return;
   std::uint32_t *write = dts->list + dts->n;
   dts->n += count_bits(mask);
   alignas(64) static constexpr std::uint32_t lane[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
