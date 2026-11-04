@@ -1,5 +1,12 @@
 // search/01_params.inc -- Search parameters and the globals shared with the other units.
 //
+// R23 CLEANUP (04/11/2026, author, after the analysis docs/audit_8.1/R23_ANALISI_R19_2026-11-04.md): eleven R19 levers
+// that lost or stayed flat and are not worth a retry were removed with their code (all were off, bench unchanged):
+// PriorCutPvOnly, NmpHashCapt, NmpHashBound, NmpSingGuard, CorrSignKey, CorrBadCapt, SingNonCut, BnfpQuiet, DrawSpread,
+// LmpChecks, AlphaRaiseLmr (results in docs/audit_8.1/R22_PROVE_R19_2026-11-03.md). Two were corrected to the form of
+// the idea and wait for a new SPRT: SingDropHash (no negative extension once the hash move is beaten) and ProbCutAdapt
+// (the short verification against a raised beta, ProbCutAdaptRise). Backup: _backup/Triumviratus_8.1_pre_r23_pulizia_2026-11-04.
+//
 // BAKE QSSEECORR (03/11/2026, author): R19 B3.b on, both exchange tests of the quiescence drop by |correction| x
 // QsSeeCorr / 1024, at most 256 (a pawn): where the network misjudges the position, a capture that looks a little
 // unsound is still tried. QsSeeCorr 0->2048. SPRT against off, one thread, UHO, [-1, 2]: +1.74 +- 2.35 / 20,544,
@@ -1644,13 +1651,11 @@
   P(SmpContCorr, 0, 0, 1)                /* continuation correction shared by the threads of a node           */ \
   /* -- singular family (S2) --                                                                                      */ \
   P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed (Caissa)          */ \
-  P(SingDropHash, 0, 0, 1)               /* exclusion value above the hash value: the hash move loses its LMR bonus */ \
+  P(SingDropHash, 0, 0, 1)               /* exclusion value above the hash value: no LMR bonus, no negative extension (R23) */ \
   P(SingGapRed, 0, 0, 2048)              /* other moves reduced by this/128 per unit of (hash - exclusion) gap */ \
   P(SingGapFrom, 128, 0, 1024)           /*   gap that starts the extra reduction                             */ \
   P(SingGapCap, 2048, 0, 4096)           /*   cap of that reduction, 1024ths of a ply                         */ \
-  P(SingNonCut, 0, 0, 1)                 /* the exclusion search is not a cut node (Caissa)                   */ \
   /* -- move-count family (S3, B11) --                                                                               */ \
-  P(LmpChecks, 0, 0, 1)                  /* past the move count, quiet direct checks with SEE >= 0 still searched (Integral) */ \
   P(LmpKeepScore, 0, 0, 1000000)         /* past the move count, quiets with ordering score >= this still searched (0 = off) */ \
   P(ImpAdjCap, 160, 16, 1024)            /* continuous improvement: static - static two plies back, clamped to +-this */ \
   P(ImpSlopeLmp, 192, -1024, 1024)       /*   move count scaled by (1024 + this * adj / 64) / 1024 (baked 03/11) */ \
@@ -1658,16 +1663,10 @@
   P(ImpSlopeNmp, 0, -1024, 1024)         /*   null-move floor minus this * adj / 64                           */ \
   /* -- correction learning (S4) --                                                                                  */ \
   P(CorrRepLearn, 0, 0, 2048)            /* reachable repetition below the draw: corrections learn toward the draw, /1024 (Integral, Viridithas) */ \
-  P(CorrBadCapt, 0, 0, 1)                /* corrections learn when the best move is a capture that loses the exchange (Caissa) */ \
-  P(CorrSignKey, 0, 0, 1)                /* structure corrections signed by a key bit (count sketch; Viridithas) */ \
   P(CorrPairCont, 0, 0, 30000)           /* correction of the position paired with the ones 1 and 2 plies back (Stormphrax, Stoat) */ \
   /* -- null move guards (B1) --                                                                                     */ \
-  P(NmpHashCapt, 0, 0, 1)                /* no null move when the hash lower bound's move captures a minor or more */ \
-  P(NmpHashBound, 0, 0, 1)               /* null move searched against a deep enough hash lower bound below beta */ \
   P(NmpChildCuts, 0, -128, 128)          /* null floor lower by this when the frame below had fewer than 2 cutoffs (Caissa) */ \
-  P(NmpSingGuard, 0, 0, 1)               /* no null move when the hash move could be singular                 */ \
   /* -- when the histories learn (B2, B10) --                                                                        */ \
-  P(PriorCutPvOnly, 0, 0, 1)             /* the refuted prior move is rewarded only in cut and PV nodes       */ \
   P(EvalDiffShallow, 0, 0, 32)           /* evaluation-change lesson only below this depth or without a hash entry */ \
   P(HashCutEarlyParent, 0, 0, 32)        /* hash-cut reward only when the parent's move came before this number */ \
   P(CaptWinGood, 0, 0, 1024)             /* a capture with SEE >= this (> 0) is a good capture whatever its history */ \
@@ -1677,15 +1676,13 @@
   P(QsFhCapt, 0, 0, 2048)                /* a capture that fails high in quiescence earns this in its capture history */ \
   /* -- single rules (B4-B15, 33) --                                                                                 */ \
   P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus (Viridithas) */ \
-  P(DrawSpread, 0, 0, 1)                 /* five draw values (nodes % 5 - 2) instead of two (Alexandria)      */ \
-  P(AlphaRaiseLmr, 0, 0, 4096)           /* later moves reduced by this per alpha raise of the node, 1024ths (Viridithas) */ \
+  P(ProbCutAdaptRise, 512, 0, 1024)      /*   the short verification's beta rises by ProbCutAdapt * this / 1024 per ply off (R23) */ \
   P(LmrGives, 0, -4096, 4096)            /* reduction of a move that gives check, 1024ths of a ply off (Alexandria) */ \
   P(LmrCaptOfs, 0, -4096, 4096)          /* reduction offset of captures, 1024ths of a ply (PlentyChess)      */ \
   P(LmrChain, 0, 0, 512)                 /* less reduction per ply of a chain of first moves above, up to 16  */ \
   P(LmrSideLog, 0, 0, 512)               /* more reduction per unit of the sum of log2(move number) on the line, up to 32 */ \
   P(AspStable, 0, 0, 16)                 /* aspiration delta minus this per iteration with the same best move, up to 7 */ \
   P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this (Stormphrax, PlentyChess) */ \
-  P(BnfpQuiet, 0, 0, 1024)               /* bad quiets after the losing captures stop when eval + this per ply <= alpha (Integral) */ \
   P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 (Stormphrax) */ \
   P(CorrAbsLmp, 0, 0, 4096)              /* move count grows by |correction| * this / 1048576 of itself       */ \
   P(RfpNoThreat, 0, 0, 512)              /* reverse futility margin lower when no enemy pawn attacks our pieces */ \

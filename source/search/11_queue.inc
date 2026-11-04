@@ -73,7 +73,7 @@ struct MoveQueue {
   int           depth;
   int           cut_threshold;   // QK_CUTS: SEE threshold
   bool          quiets_off;      // move-count pruning: no more quiet moves
-  bool          count_keep;      // LmpChecks / LmpKeepScore (R19): past the count some quiet moves still come out
+  bool          count_keep;      // LmpKeepScore (R19): past the count some quiet moves still come out
 #ifdef TRIUMV_PRUNELOG
   bool          pl_count_off;    // data build: move-count pruning applied move by move in skip_move (prunelog.h)
 #endif
@@ -374,7 +374,7 @@ static void queue_start(MoveQueue &q, ThreadData &td, NodeFrame *f, int hash_mov
   q.kind = kind;
   q.depth = depth;
   q.quiets_off = false;
-  q.count_keep = kind == QK_MAIN && (LmpChecks || LmpKeepScore);
+  q.count_keep = kind == QK_MAIN && LmpKeepScore;
 #ifdef TRIUMV_PRUNELOG
   q.pl_count_off = false;
 #endif
@@ -1134,17 +1134,11 @@ static inline void queue_prefetch(const MoveQueue &q, int m) {
     td_prefetch_child(*q.td, td_child_key_guess(*q.td, m));
 }
 
-// R19 S3.1 / S3.2 (03/11/2026, off at 0): once the move count has stopped the quiet moves, a quiet move still comes out
-// when it gives a direct check and loses no material (LmpChecks; Integral, Viridithas), or when its ordering
-// score is at least LmpKeepScore (the move's own history moves the cut; Stormphrax, PlentyChess). The check
-// squares are those of the ordering (q.checks, ready once fill_quiets has run).
+// R19 S3.2 (03/11/2026, off at 0): once the move count has stopped the quiet moves, a quiet move still comes out when its
+// ordering score is at least LmpKeepScore (the move's own history moves the cut; Stormphrax, PlentyChess).
 static inline bool queue_keeps_after_count(const MoveQueue &q, const ScoredMove &sm) {
-  if (LmpKeepScore && sm.score >= LmpKeepScore)
-    return true;
-  if (!LmpChecks || !q.checks || !q.checks->ready)
-    return false;
-  const int m = sm.move, kind = kPieceKind[move_piece(m)];
-  return (q.checks->chk[kind] >> move_to(m) & 1) && see_holds(*q.td, m, 0);
+  (void)q;
+  return sm.score >= LmpKeepScore;
 }
 
 // Next pseudo-legal move, 0 when the queue is empty. The hash move is handed out once.

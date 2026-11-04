@@ -106,11 +106,8 @@ static inline int contempt(const ThreadData &td) {
   return c ? (td.side == td.root_side ? -c : c) : 0;
 }
 
-// A draw with a value close to zero: +-1 depending on the node count, so that draws are not all identical. DrawSpread
-// (R19 B9, Alexandria; off at 0): five values, -2..+2, so that a line of draws is less often scored as one.
-static inline int draw_score(const ThreadData &td) {
-  return (DrawSpread ? (int)(td.nodes % 5) - 2 : -1 + (int)(td.nodes & 2)) + contempt(td);
-}
+// A draw with a value close to zero: +-1 depending on the node count, so that draws are not all identical.
+static inline int draw_score(const ThreadData &td) { return -1 + (int)(td.nodes & 2) + contempt(td); }
 
 // ============================================================================
 // LEGALITY AND CHECK BEFORE MOVING

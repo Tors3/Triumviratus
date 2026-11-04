@@ -62,7 +62,6 @@ struct NodeState {
   int  sing_gap;                 // SingGapRed: hash value - exclusion value when the hash move was found singular, else 0
   bool sing_drop;                // SingDropHash: the exclusion search came back above the hash value
   bool rep_seen;                 // CorrRepLearn: a repetition was in reach at entry
-  int  alpha_raises;             // AlphaRaiseLmr: times a move raised alpha in this node
 };
 
 #ifdef TRIUMV_REDLOG
@@ -493,8 +492,6 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
   //  LmrChain       the line reached this node through first moves only for `chain` plies: a prediction of the node's
   //                 value, so less reduction; LmrSideLog: the line wandered far from the first moves (sum of log2 of
   //                 the move numbers), more reduction;
-  //  AlphaRaiseLmr  each move that already raised alpha here makes the later moves less likely to
-  //                 (Viridithas, Stormphrax; meant with AlphaRed 0, which lowers the depth for the same reason);
   //  SmpLmrNoise    with several threads, a small pseudo-random term per thread and node count, so the threads do not
   //                 search the same tree.
   if (n.sing_gap && m != n.h.move)
@@ -503,7 +500,7 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
     r -= LmrGives;
   if (tact)
     r += LmrCaptOfs;
-  r += LmrSideLog * f->side_log - LmrChain * f->chain + AlphaRaiseLmr * n.alpha_raises;
+  r += LmrSideLog * f->side_log - LmrChain * f->chain;
   if (SmpLmrNoise && num_threads > 1)
     r += (int)((td.nodes + (U64)td.thread_id * 61) % (U64)(2 * SmpLmrNoise + 1)) - SmpLmrNoise;
   return r;
@@ -1047,15 +1044,6 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
     if (npm <= NmpNpmFloor)
       return NO_VALUE;
   }
-  // R19 guards (03/11/2026, off at 0). NmpHashCapt: the hash lower bound came from a capture of a minor piece or more,
-  // so the position is worth that capture and passing tells nothing. NmpSingGuard: the hash move may be
-  // singular here, and the singular test, not a pass, should decide the node.
-  const HashView &h = n.h;
-  if (NmpHashCapt && h.move && h.bound == BOUND_LOW && get_move_capture(h.move) && victim_kind(td, h.move) >= N)
-    return NO_VALUE;
-  if (NmpSingGuard && n.depth >= SingMinDepth + SingMinDepthTtPv * f->tt_pv && h.depth >= n.depth - SingHashSlack &&
-      h.bound != BOUND_UP && bound_covers(h.bound, true) && val_known(h.value) && !val_decided(h.value))
-    return NO_VALUE;
   // Reduction in our form (27/10/2026, docs/audit_8.1/R9): the whole plies of the inherited rule, NmpRedBase +
   // d/NmpDepthDiv + the evaluation term, plus a part in 1024ths of a ply rounded with ten bits of the key: DeepNmp,
   // NmpRedDepth per ply of depth (a continuous slope on top of the integer d/NmpDepthDiv) and NmpRedImp on an
@@ -1066,35 +1054,26 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   // SmpNullOdd (R19, Stockfish): with several threads the odd ones reduce the null move less, so the threads differ.
   if (SmpNullOdd && num_threads > 1 && (td.thread_id & 1))
     r = std::max(r - SmpNullOdd, 1);
-  // NmpHashBound (R19): a hash lower bound below beta, from a search nearly as deep, is the value the pass has
-  // to keep; the null search is run against it. Clearing that bar but not beta sends the node to the verification below
-  // at half the depth instead of cutting it.
-  const bool hb = NmpHashBound && h.bound == BOUND_LOW && val_known(h.value) && !val_decided(h.value) &&
-                  h.value < n.beta && h.depth >= n.depth - 2;
-  const int bar = hb ? h.value : n.beta;
   NullUndo nu;
   step_in_null(td, f, nu);
   f[1].in_check = false;
-  const int nv = -explore<AN>(td, f + 1, -bar, -bar + 1, n.depth - r, false, false);
+  const int nv = -explore<AN>(td, f + 1, -n.beta, -n.beta + 1, n.depth - r, false, false);
   step_out_null(td, nu);
-  if (nv < bar || val_won(nv))
+  if (nv < n.beta || val_won(nv))
     return NO_VALUE;
-  if (nv >= n.beta && (td.nmp_min_ply || n.depth < e_nmp_verify_depth(td))) {
+  if (td.nmp_min_ply || n.depth < e_nmp_verify_depth(td)) {
     PL_RULE(3);
     f->null_cuts += f->null_cuts < 255;
     return nv;
   }
-  if (td.nmp_min_ply)   // NmpHashBound: under a verification already, a pass short of beta cuts nothing
-    return NO_VALUE;
-  const int verify_depth = nv >= n.beta ? n.depth - r : std::max(n.depth / 2, 1);
-  td.nmp_min_ply = td.ply + NmpVerifyNum * verify_depth / 4;
-  const int v = explore<AN>(td, f, n.beta - 1, n.beta, verify_depth, false, false);
+  td.nmp_min_ply = td.ply + NmpVerifyNum * (n.depth - r) / 4;
+  const int v = explore<AN>(td, f, n.beta - 1, n.beta, n.depth - r, false, false);
   td.nmp_min_ply = 0;
   if (v < n.beta)
     return NO_VALUE;
   PL_RULE(4);
   f->null_cuts += f->null_cuts < 255;
-  return nv >= n.beta ? nv : v;   // NmpHashBound: the pass only reached the hash bound; the verification cleared beta
+  return nv;
 }
 
 // Capture probe (ProbCut): a capture that clears a raised beta in quiescence and then in a reduced search cuts the
@@ -1125,14 +1104,18 @@ static int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
     int v = -quiesce(td, f + 1, -cut_beta, -cut_beta + 1, false);
     // ProbCutAdapt (R19 B4, Viridithas): the further the quiescence value sits above the raised beta, the
     // shorter the verification, one ply per ProbCutAdapt units of surplus, up to 3; a short verification that does
-    // not hold is repeated at the usual depth. 0 = the usual depth only.
+    // not hold is repeated at the usual depth. 0 = the usual depth only. Corrected 04/11/2026 (R23): the short
+    // verification searches against a beta raised by ProbCutAdaptRise/1024 of ProbCutAdapt per ply removed, so a
+    // shallower search has to keep part of the surplus that bought each ply (the first form kept the same beta and
+    // its cuts were less safe: +0.66 +- 3.55 / 9,012).
     int verified = cut_depth;   // depth of the search that decided, for the hash entry
     if (v >= cut_beta && cut_depth > 0) {
       const int short_by = (ProbCutAdapt && !val_decided(v)) ? std::min((v - cut_beta) / ProbCutAdapt, 3) : 0;
       bool held = false;
       if (short_by > 0 && cut_depth - short_by > 0) {
-        v = -explore<AN>(td, f + 1, -cut_beta, -cut_beta + 1, cut_depth - short_by, !n.cut, false);
-        held = v >= cut_beta;
+        const int short_beta = cut_beta + short_by * ProbCutAdapt * ProbCutAdaptRise / 1024;
+        v = -explore<AN>(td, f + 1, -short_beta, -short_beta + 1, cut_depth - short_by, !n.cut, false);
+        held = v >= short_beta;
         if (held)
           verified = cut_depth - short_by;
       }
@@ -1346,13 +1329,6 @@ static bool skip_move(ThreadData &td, NodeFrame *f, NodeState &n, MoveQueue &q, 
   // the guard on a lost best value above was read before it).
   // A quiet move goes through the quiet gate (not on the previous line in a PV node), a capture or a check through the
   // capture gate.
-  // BnfpQuiet (R19 B6, Integral; off at 0): the quiet moves rated bad come after the losing captures; once
-  // there, a node whose evaluation plus BnfpQuiet per ply of reduced depth stays at or below alpha stops handing them out.
-  if (BnfpQuiet && !tact && !gives && !n.in_check && q.step == QS_QUIET_LOW &&
-      f->static_eval + BnfpQuiet * std::max(red_depth, 1) <= n.alpha) {
-    q.quiets_off = true;
-    return true;
-  }
   const bool skip = (!tact && !gives) ? !(f->follow_pv && n.pv) && quiet_gate<AN>(td, f, n, q, m, red_depth, ctx)
                                       : capture_gate<AN>(td, f, n, q, m, gives, red_depth, own_pieces, pr_exp);
   count_gate<AN>(td, f, n, q, pr_exp);
@@ -1775,8 +1751,7 @@ static int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int
   const int s_beta = h.value - margin * n.depth / SingMarginDiv - SingBarBase;
   const int s_depth = (new_depth * SingDepthMul + 128 * SingDepthOfs) / 2048;
   f->excluded = m;
-  // SingNonCut (R19, Caissa): the exclusion search runs as a node that expects to fail low, not as a cut node.
-  const int v = explore<AN>(td, f, s_beta - 1, s_beta, s_depth, n.cut && !SingNonCut, false);
+  const int v = explore<AN>(td, f, s_beta - 1, s_beta, s_depth, n.cut, false);
   f->excluded = 0;
 
   if (v < s_beta) {
@@ -1808,10 +1783,13 @@ static int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int
     *cutoff = v;
     return 0;
   }
-  // SingDropHash (R19): another move reached more than the hash value, so the hash entry was wrong about this
-  // node: the hash move is searched without the reduction bonus of a hash move.
-  if (SingDropHash && v > h.value)
+  // SingDropHash (R19; corrected 04/11/2026, R23): another move reached more than the hash value, so the hash entry was
+  // wrong about this node: the hash move loses the reduction bonus of a hash move and, being no longer the expected
+  // best move, takes no negative extension either (the first form took both and lost, -1.42 +- 5.86 / 3,422).
+  if (SingDropHash && v > h.value) {
     n.sing_drop = true;
+    return 0;
+  }
   // Negative extension, split by its two reasons: the hash value already clears beta, or the node expects a cutoff.
   if (h.value >= n.beta)
     return -SingNegHigh;
@@ -2358,7 +2336,6 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
             !(AN && (td.an_bits & AN_KEEPDEPTH) && f->ply <= kAnKeepPly))   // AnKeepDepth: not near the root
           n.depth = std::max(n.depth - alpha_raised_cut(n, value - n.alpha), 1);
         n.alpha = value;
-        n.alpha_raises++;   // AlphaRaiseLmr
         // SmpPvHash (R19): with several threads, the new best move of a PV node goes to the hash at once as a
         // lower bound, so the other threads see it before this node ends.
         if (SmpPvHash && n.pv && num_threads > 1 && !n.excluded && !n.root)
@@ -2429,11 +2406,7 @@ static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
     CSTAT(net_phase(count_bits(td.occupancies[both])), fb, kind, n.best - plain, n.best - f->static_eval);
   }
 #endif
-  // CorrBadCapt (R19 S4.2, Caissa; off at 0): a best move that is a capture usually says nothing about the static
-  // evaluation (the material was simply there), but a capture that loses the exchange and is still the best move does.
-  const bool capt_best = n.best_move && get_move_capture(n.best_move) &&
-                         !(CorrBadCapt && !see_holds(td, n.best_move, 0));
-  if (!n.in_check && !capt_best && dir_ok && learn_ok)
+  if (!n.in_check && !(n.best_move && get_move_capture(n.best_move)) && dir_ok && learn_ok)
     on_eval_error(td, f, n);   // 13_learn.inc
   // CorrRepLearn (R19 S4.1, Integral, Viridithas; off at 0): a repetition was in reach and the corrected static
   // evaluation is below the draw: the corrections also learn toward the draw, the line can hold it.
@@ -2476,7 +2449,7 @@ static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth,
   n.n_quiets = n.n_tacts = 0;
   n.best_score = INT_MIN;
   n.causal = 0;
-  n.sing_gap = 0, n.sing_drop = false, n.rep_seen = false, n.alpha_raises = 0;   // R19 techniques
+  n.sing_gap = 0, n.sing_drop = false, n.rep_seen = false;   // R19 techniques
   // LdseMax: Ldse extensions on the line up to here. f->ldse goes back to 0 until move_loop extends a move, so
   // the children of the null move and of probcut do not inherit one.
   f->ldse = 0;

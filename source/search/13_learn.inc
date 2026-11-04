@@ -93,11 +93,10 @@ struct Learner {
     const int us = td.side, g = corr_grav(ex);
     const U64 phk = corr_phase_key(td), fk = corr_fifty_key(td);
     const U64 kp = td.pawn_key ^ phk ^ fk, km = td.mm_key[0] ^ phk, kw = td.np_key[white] ^ fk, kb = td.np_key[black] ^ fk;
-    // CorrSignKey (09_history.inc): the entry learns the amount times its key sign, as corr_signal reads it.
-    hist_learn(corr_slot(td, kp, us).pawn, corr_key_sign(kp) * amount * CorrPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, km, us).minor, corr_key_sign(km) * amount * CorrMinorUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, kw, us).np_white, corr_key_sign(kw) * amount * CorrNonPawnUpd / 128, LIM_CORR, g);
-    hist_learn(corr_slot(td, kb, us).np_black, corr_key_sign(kb) * amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, kp, us).pawn, amount * CorrPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, km, us).minor, amount * CorrMinorUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, kw, us).np_white, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
+    hist_learn(corr_slot(td, kb, us).np_black, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
     U64 k1, k2;
     if (CorrPairCont && corr_pair_keys(td, k1, k2)) {   // CorrPairCont: the two position pairs, in corr_x
       auto *cx = static_cast<int16_t (*)[2]>(td.st_corr_x);
@@ -232,12 +231,8 @@ static void on_node_outcome(ThreadData &td, NodeFrame *f, const NodeState &n) {
   }
   if (n.prev_to < 0)
     return;
-  // PriorCutPvOnly (R19 B2.a; off at 0): an ALL node failing low was expected, so it says little about the
-  // opponent's move; only a cut or PV node that fails low rewards it.
-  if (!n.prior_capture && (!PriorCutPvOnly || n.cut || n.pv))
+  if (!n.prior_capture)
     on_prior_refuted(L, n);
-  else if (!n.prior_capture)
-    return;
   else
     hist_learn(td.capt_hist[td.piece_on[n.prev_to]][n.prev_to][f[-1].captured % 6],
                by_exp4(n.expert, PrCapt0, PrCapt1, PrCapt2, PrCapt3), LIM_CAPT, hist_cgrav(n.expert));

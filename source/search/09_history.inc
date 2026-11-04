@@ -599,11 +599,6 @@ static inline U64 corr_fifty_key(const ThreadData &td) {
   return CorrFiftyStep ? keys[std::min(td.fifty / CorrFiftyStep, 15)] : 0;
 }
 
-// CorrSignKey (R19 S4.3, Viridithas; feature hashing, Weinberger et al. 2009): each structure table reads and writes its
-// entry times +1 or -1 taken from the top bit of the key, so two positions that share an entry cancel on average
-// instead of adding up. 0 = always +1.
-static inline int corr_key_sign(U64 key) { return CorrSignKey ? 1 - 2 * (int)(key >> 63) : 1; }
-
 // CorrPairCont (R19 S4.4, Stormphrax after Stoat): two more correction entries keyed by the position together with the
 // one 1 ply and 2 plies back (the hash keys XORed, the older one rotated so that the two pairs differ). They live in the
 // corr_x table (as CorrExpertW and CorrPkW, both off by default). false at the root of the history.
@@ -622,10 +617,10 @@ static int corr_signal(const ThreadData &td, const NodeFrame *f) {
   const U64 phk = corr_phase_key(td);
   const U64 fk = corr_fifty_key(td);
   const U64 kp = td.pawn_key ^ phk ^ fk, km = td.mm_key[0] ^ phk, kw = td.np_key[white] ^ fk, kb = td.np_key[black] ^ fk;
-  const int pawn = corr_key_sign(kp) * corr_slot(td, kp, us).pawn;
-  const int minor = corr_key_sign(km) * corr_slot(td, km, us).minor;
-  const int npw = corr_key_sign(kw) * corr_slot(td, kw, us).np_white;
-  const int npb = corr_key_sign(kb) * corr_slot(td, kb, us).np_black;
+  const int pawn = corr_slot(td, kp, us).pawn;
+  const int minor = corr_slot(td, km, us).minor;
+  const int npw = corr_slot(td, kw, us).np_white;
+  const int npb = corr_slot(td, kb, us).np_black;
   const int prev = f[-1].move;
   int cont = CorrNoMoveW;   // fixed term after a null move (08/10/2026: a constant before, now a lever)
   if (move_ok(prev)) {
