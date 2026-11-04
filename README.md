@@ -175,8 +175,16 @@ It installs git if it is missing, checks Visual Studio 2022 with its clang compo
 downloads [`build/setup_toolchain.ps1`](build/setup_toolchain.ps1) and says how to run it), downloads the source and
 the network (checked by SHA-256 and MD5), and builds with PGO every variant your CPU can run, each one verified by
 `bench`. The executables are in `%USERPROFILE%\Triumviratus_release\variants\`, and a zip of the same folder is left on
-the Desktop. `-Variants avx2` (or `avx512`, `vnni512`, ...) builds only the variants named; `-Ref <tag or commit>`
-builds another version.
+the Desktop. `-Variants` with one or more names builds only those, and `-Ref <tag or commit>` builds another version.
+The seven variants:
+
+- `sse41`: x86-64 CPUs without AVX2;
+- `avx2-nopext`: AVX2 where PEXT is slow (AMD Zen 1 and Zen 2);
+- `avx2`: AVX2 with fast PEXT (Intel Haswell and later, AMD Zen 3 and later);
+- `avxvnni`: AVX-VNNI without AVX-512 (Intel Core of the 12th generation and later, Core Ultra);
+- `avx512`: AVX-512 without VNNI (Intel Skylake-SP and Skylake-X);
+- `vnni512`: AVX-512 with VNNI (Intel Cascade Lake and later, AMD Zen 4 and later);
+- `avx512icl`: AVX-512 with VBMI2 (Intel Ice Lake and later, AMD Zen 4 and later).
 
 **Building from source.** On Windows, [`build/release.ps1`](build/release.ps1) downloads the source and the network
 (checked by SHA-256 and MD5), checks the compiler and builds with PGO. Each variant's profile is recorded on a CPU
