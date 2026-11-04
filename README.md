@@ -96,7 +96,9 @@ weights, rather than only in the small layers after it.
 ## Rating lists
 
 On **CCRL 40/15** Triumviratus 8.0 is **first** in the list of 30 October 2026, both on 4 CPUs (3650 ± 28; Stockfish
-18, 4 CPU: 3649) and among the single-CPU engines (3633 ± 21; Stockfish 19, 1 CPU: 3629).
+18, 4 CPU: 3649) and among the single-CPU engines (3633 ± 21; Stockfish 19, 1 CPU: 3629). On **CCRL Blitz**
+Triumviratus 8.0 on one CPU is **second** in the list of 31 October 2026 (3784 ± 13), behind Stockfish 19 on 8 CPUs
+(3803).
 
 **CCRL 40/15** (40 moves in 15 minutes, with increment), list of 2026-10-30
 
@@ -111,12 +113,13 @@ On **CCRL 40/15** Triumviratus 8.0 is **first** in the list of 30 October 2026, 
 | Triumviratus 7.0 (1 CPU) | 3606 ± 13 | | 1,156 |
 | Triumviratus 5.0 (1 CPU) | 3572 ± 16 | | 717 |
 
-**CCRL Blitz** (2 min + 1 s), list of 2026-10-27
+**CCRL Blitz** (2 min + 1 s), list of 2026-10-31
 
 | version | rating | rank | games |
 |---|---:|---:|---:|
+| **Triumviratus 8.0** (1 CPU) | **3784** ± 13 | **2** | 1,573 |
 | Triumviratus 7.0 (8 CPU) | 3780 ± 20 | | 1,106 |
-| Triumviratus 7.0 (1 CPU) | 3755 ± 12 | | 2,015 |
+| Triumviratus 7.0 (1 CPU) | 3756 ± 12 | | 2,015 |
 | Triumviratus 6.0 (1 CPU) | 3743 ± 12 | | 2,056 |
 | Triumviratus 4.2 (1 CPU) | 3666 ± 13 | | 1,518 |
 
