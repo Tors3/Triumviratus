@@ -37,6 +37,20 @@ Results from testers are published in [`tests/`](../tests/README.md) with their 
 
 Merged contributions, newest first.
 
+- **Houze Guo**, branch `perf/avx512-eval-speedup` (5 November 2026), speed at an identical search tree: in the AVX-512
+  builds the activations of the last two layers of the network stay in registers (no store-to-load stall), the
+  second layer runs two independent accumulator chains, the one-time pawn-cache initialisation moves out of the
+  evaluation (no register spills), empty threat masks return at once; in every build the refresh skips the write-back
+  of unchanged king-cache entries, the passed pawns are found with bitboard shifts, and pieces that cannot be threat
+  targets are filtered out early. Bench unchanged, `nnperft` clean. Measured with hardware counters: -0.23% / -0.20%
+  cycles per node (middlegame / endgames) on Skylake-SP in the AVX-512 build, level in AVX2; on Zen 4 -2.3% in the
+  AVX-512 VNNI build and level in AVX-512 with VBMI2 (middlegame; the laptop's endgame runs were too noisy).
+- **Houze Guo**, AVX2 / AVX-VNNI evaluation speedups (3 November 2026), at an identical search tree: the pawn cache in
+  the AVX2 refresh of the accumulators, the sums of the first layer written to memory only when the C2 terms read them,
+  and the second perspective's rows gathered after the first one's update. 1.7% to 3.2% fewer instructions per node
+  in the AVX2 and AVX-VNNI builds, measured on four processors (Skylake-SP, Zen 4, Raptor Lake-U, and Raptor Cove by
+  A Tin Man); the AVX-512 paths unchanged.
+
 - **A Tin Man**, bug report (28 October 2026): in a CCRL Blitz gauntlet game against Halogen 16.0.0, Triumviratus 8.0
   played 37.Re4 at depth 26 with +1.27, and 37...Nxe4 wins the rook. The investigation traced it to a false hash hit:
   the Zobrist keys, inherited from the BBC base, were built from 16-bit pieces of a 32-bit xorshift generator, so every

@@ -239,7 +239,9 @@ work in the evaluation and a static exchange evaluation that ignored the gain of
 **Houze Guo** sent speedups of the evaluation for processors without AVX-512: the pawn cache in the AVX2 refresh of the
 accumulators, the sums of the first layer kept in registers, and the two perspectives updated one after the other.
 Measured on four processors (Skylake-SP, Zen 4, Raptor Lake-U, and Raptor Cove by A Tin Man), they save 1.7% to 3.2% of
-the instructions per node in the AVX2 and AVX-VNNI builds; merged for 8.1.
+the instructions per node in the AVX2 and AVX-VNNI builds; merged for 8.1. A second contribution keeps the last layers
+of the network in registers in the AVX-512 builds and skips empty work in the refresh: -0.2% cycles per node on
+Skylake-SP and -2.3% in the AVX-512 VNNI build on Zen 4, at an identical search tree; merged for 8.1.
 
 Details of both contributions: [Contributions](docs/project/CONTRIBUTING.md#contributions).
 
