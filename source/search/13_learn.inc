@@ -97,12 +97,6 @@ struct Learner {
     hist_learn(corr_slot(td, km, us).minor, amount * CorrMinorUpd / 128, LIM_CORR, g);
     hist_learn(corr_slot(td, kw, us).np_white, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
     hist_learn(corr_slot(td, kb, us).np_black, amount * CorrNonPawnUpd / 128, LIM_CORR, g);
-    U64 k1, k2;
-    if (CorrPairCont && corr_pair_keys(td, k1, k2)) {   // CorrPairCont: the two position pairs, in corr_x
-      auto *cx = static_cast<int16_t (*)[2]>(td.st_corr_x);
-      hist_learn(cx[k1 & td.st_corr_mask][us], amount * CorrCont2Upd / 128, LIM_CORR, g);
-      hist_learn(cx[k2 & td.st_corr_mask][us], amount * CorrCont2Upd / 128, LIM_CORR, g);
-    }
     if (move_ok(f[-1].move)) {
       const int to = move_to(f[-1].move), pc = td.piece_on[to];
       hist_learn((*f[-2].cont_corr)[pc][to], amount * CorrCont2Upd / 128, LIM_CORR, g);
@@ -114,9 +108,6 @@ struct Learner {
     }
     if (CorrExpertW)
       hist_learn(static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][us], amount * CorrExpertUpd / 128, LIM_CORR, g);
-    U64 pk_key;   // C2 corrections (agent B)
-    if (CorrPkW && c2_pk_key(td, pk_key))
-      hist_learn(static_cast<int16_t (*)[2]>(td.st_corr_x)[pk_key & td.st_corr_mask][us], amount * CorrPkUpd / 128, LIM_CORR, g);
   }
 
   // Hash-move statistic: how far the hash move can be trusted outside the PV.

@@ -496,6 +496,16 @@ static void deepen(ThreadData &td) {
   nn_thread_router(SmpRouteShift && (td.thread_id & 1));
   root->in_check = td_is_square_attacked(td, get_ls1b_index(td.bitboards[td.side == white ? K : k]), td.side ^ 1);
   td.root_side = td.side;   // Contempt: the draw is worth less for the side to move at the root
+  // SmpAff (01_params.inc): the helpers split the 8 material regimes into as many contiguous groups as there are
+  // helpers, at most 8 (04/11/2026, author); past 8 helpers the groups repeat. Group g covers ceil(8g/G)..ceil(8(g+1)/G)-1,
+  // so 3 helpers (4 threads) keep the measured 0-2, 3-5, 6-7, 7 helpers get 0-1, 2, 3, ..., 7, and 15 one regime each,
+  // twice. The main thread has none.
+  td.smp_aff_on = SmpAff && num_threads > 1 && td.thread_id > 0;
+  if (td.smp_aff_on) {
+    const int groups = std::min(num_threads - 1, 8), g = (td.thread_id - 1) % groups;
+    td.smp_aff_lo = (8 * g + groups - 1) / groups;
+    td.smp_aff_hi = (8 * (g + 1) + groups - 1) / groups - 1;
+  }
   // DrawDefend: from the score with which the previous move closed (fixed for the whole search and the same for all the
   // threads; recomputing it at every iteration would turn it off as soon as the search finds the draw it was looking for).
   td.draw_defend = 0;
@@ -662,18 +672,8 @@ static void deepen(ThreadData &td) {
       const int avg = cur.avg_score;
       int alpha = std::max(avg - delta, -infinity);
       int beta = std::min(avg + delta, (int)infinity);
-      // SmpOptDeep (R19 S1.2; off at 0): with several threads the optimism also reads the root average of the
-      // thread that has finished the deepest iteration (SmpOptDeep/1024 of the way toward it), a better estimate than a
-      // shallower thread's own. The other threads' fields are read without a lock: a stale value only weighs less.
-      int opt_avg = avg;
-      if (SmpOptDeep && num_threads > 1) {
-        int deepest = td.completed_depth, other = avg;
-        for (const ThreadData &o : thread_data)
-          if (&o != &td && o.completed_depth > deepest && o.root_count > 0)
-            deepest = o.completed_depth, other = o.root[0].avg_score;
-        opt_avg = avg + (int)((long long)(other - avg) * SmpOptDeep / 1024);
-      }
-      set_thread_optimism(td, opt_avg);
+      // (SmpOptDeep, the optimism read from the deepest thread's root average, closed negative, removed 04/11/2026.)
+      set_thread_optimism(td, avg);
       nn_root_sync(td);
 
       int failed_high = 0;

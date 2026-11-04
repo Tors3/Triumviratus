@@ -652,13 +652,8 @@ static int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
     best_move = m;
     if (pv)
       pv_extend(td, m);
-    if (value >= beta) {
-      // QsFhCapt (R19 B3.c; off at 0): the quiescence learns too, a capture that fails high earns a fixed
-      // amount in its capture history.
-      if (QsFhCapt && is_tactical(m) && !get_move_promoted(m))
-        hist_learn(td.capt_hist[move_piece(m)][move_to(m)][victim_kind(td, m)], QsFhCapt, LIM_CAPT, hist_cgrav(w.ex));
-      break;
-    }
+    if (value >= beta)
+      break;   // (QsFhCapt, a capture-history reward for a quiescence fail high, closed negative, removed 04/11/2026)
     alpha = value;
   }
   int count = seen;

@@ -599,18 +599,6 @@ static inline U64 corr_fifty_key(const ThreadData &td) {
   return CorrFiftyStep ? keys[std::min(td.fifty / CorrFiftyStep, 15)] : 0;
 }
 
-// CorrPairCont (R19 S4.4, Stormphrax after Stoat): two more correction entries keyed by the position together with the
-// one 1 ply and 2 plies back (the hash keys XORed, the older one rotated so that the two pairs differ). They live in the
-// corr_x table (as CorrExpertW and CorrPkW, both off by default). false at the root of the history.
-static inline bool corr_pair_keys(const ThreadData &td, U64 &k1, U64 &k2) {
-  if (td.repetition_index < 1)
-    return false;
-  const U64 *hist = td.repetition_table + td.repetition_index;   // hist[0]: 1 ply ago, hist[-1]: 2 plies ago
-  k1 = td.hash_key ^ hist[0];
-  k2 = td.hash_key ^ ((hist[-1] << 17) | (hist[-1] >> 47));
-  return true;
-}
-
 static int corr_signal(const ThreadData &td, const NodeFrame *f) {
   PROF_GUARD(prof_corr);
   const int us = td.side;
@@ -634,11 +622,8 @@ static int corr_signal(const ThreadData &td, const NodeFrame *f) {
     if (CorrContOppW)
       cont += CorrContOppW * (*f[-3].cont_corr)[pc][to];
   }
-  U64 k1, k2;
-  if (CorrPairCont && corr_pair_keys(td, k1, k2)) {
-    const auto *cx = static_cast<const int16_t (*)[2]>(td.st_corr_x);
-    cont += CorrPairCont * (cx[k1 & td.st_corr_mask][us] + cx[k2 & td.st_corr_mask][us]);
-  }
+  // (CorrPairCont, two entries keyed by the position paired with the ones 1 and 2 plies back, closed negative,
+  // removed 04/11/2026.)
   // Weight of the correction per expert (CorrGain, /1024; 1024 = old value, s*1024/1024 = s). The tables were already
   // separate by expert band (CorrPhase); the weight was one for all.
   // Our form (27/10/2026, docs/audit_8.1/R9): the two non-pawn tables, one per colour, may weigh differently for the
@@ -661,29 +646,12 @@ static inline U64 corr_expert_key(const ThreadData &td) {
   return td.pawn_key ^ keys[band];
 }
 
-// CorrPkW (21/10/2026, ours, C2 corrections of agent B): a correction keyed by the pawn structure as the network has
-// learned it. The pawn-king subnetwork of Consilium Plebis maps pawns and kings to 32 outputs; the key keeps only the signs
-// of the CorrPkBits most variable outputs against their medians (consilium/cn.cpp, pk_signature), so structures the
-// net reads alike share an entry. The pawn-key tables of 11/10/2026 (CorrKingPawnW, all pawns + king zones) failed
-// with a key too fine; this one is coarse by construction and comes from the network itself. Like CorrExpertW it
-// enters the evaluation only, not n.signal; it shares that table (CorrExpertW stays 0). OFF by default; SPRT pending.
-// Cost: the key reads the thread's pawn-king cache. With CorrPkCompute 0 a board whose entry is not there (the node
-// reads the key before its evaluation, which fills the entry) gets no term and teaches nothing; with 1 the subnetwork
-// runs on such a miss (bench 21/10: one more miss per six nodes, ~-20% speed at 1 against ~-2% at 0, see REPORT_B).
-static inline bool c2_pk_key(const ThreadData &td, U64 &key) {
-  const long long s = nn_pk_signature(td.nnpos, td.bitboards, td.side == white, CorrPkBits, CorrPkCompute);
-  key = ((U64)s * 0x9E3779B97F4A7C15ULL) ^ 0x5851F42D4C957F2DULL;
-  return s >= 0;
-}
-
+// (CorrPkW, a correction keyed by the signs of the pawn-king subnetwork outputs, closed negative at 12 and 16 bits and
+// removed 04/11/2026; nn_pk_signature stays for the structure history above.)
 static inline int corr_signal_extra(const ThreadData &td) {
-  int s = 0;
   if (CorrExpertW)
-    s += CorrExpertW * static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][td.side];
-  U64 pk_key;
-  if (CorrPkW && c2_pk_key(td, pk_key))
-    s += CorrPkW * static_cast<int16_t (*)[2]>(td.st_corr_x)[pk_key & td.st_corr_mask][td.side];
-  return s;
+    return CorrExpertW * static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][td.side];
+  return 0;
 }
 
 static inline int corrected_eval(int v, int signal) {

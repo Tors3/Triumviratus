@@ -5,12 +5,12 @@
 #      Set-ExecutionPolicy -Scope Process Bypass -Force
 #      .\setup_toolchain.ps1
 #
-#  Installa solo cio' che serve a `build_pgo_clang_80.ps1`:
+#  Installa solo cio' che serve alla catena di release (`release.ps1`, source\universal):
 #    - Visual Studio 2022 Community + workload C++ desktop
 #    - C++ Clang Compiler for Windows      -> clang-cl, llvm-profdata, clang_rt.profile
 #    - MSBuild support for LLVM (clang-cl) -> PlatformToolset=ClangCL richiesto dal vcxproj
 #    - LLVM 23 (clang-cl 23.1.4): il compilatore delle release, piu' veloce della clang di VS (vedi 4b)
-#    - Python 3.11  (pgo_train.py usa SOLO la stdlib: nessun pacchetto pip)
+#    - Python 3.11  (l'allenamento PGO, universal\pgo_train_det.py, usa SOLO la stdlib: nessun pacchetto pip)
 #    - Git
 #
 #  ⚠️ I due componenti Clang NON sono inclusi nel workload C++ di default. Senza il

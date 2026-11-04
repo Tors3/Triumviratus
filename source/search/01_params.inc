@@ -297,6 +297,13 @@
   P(SmpAspCycle, 8, 1, 16)                                                                                \
   P(SmpAspStep, 1, 0, 8)                                                                                  \
   P(SmpSkew, 0, 0, 3)                                                                                     \
+  /* SmpAff (SMP-2, the author's direction, ours in this form; restored 04/11/2026 from the innovation code of 01/11,  */ \
+  /*  OFF): the helpers split the 8 material regimes (mean of the two Consilium Plebis experts) into up to 8 groups, */ \
+  /*  0-2 / 3-5 / 6-7 at 4 threads, one regime each from 9 threads (14_deepen.inc), and each reduces SmpAffLmr/1024  */ \
+  /*  of a ply less in the nodes of its group. 4 threads,                                                             */ \
+  /*  10+0.1 without HT: +2.74 +- 5.03 / 4,188 (SPRT paused, LLR +0.54). At one thread it cannot act.                */ \
+  P(SmpAff, 0, 0, 1)                                                                                      \
+  P(SmpAffLmr, 512, -4096, 4096)                                                                          \
   /* SmpRouteShift (21/10/2026, ours; idea 9 of docs/rete/C2_IDEE_FABLE_2026-10-21.md; Consilium Plebis builds only; OFF, */ \
   /*  SPRT pending): the odd helper threads evaluate with the routing table shifted by this many material classes   */ \
   /*  (negative = toward less material, "one trade ahead"; experts clamped to 0..7), so the threads search with a   */ \
@@ -1413,11 +1420,6 @@
   P(TmC2Exp7, 0, -500, 1000)                                                                               \
   P(CorrC2Key, 0, 0, 2)                  /* salt of the pawn/minor corrections (CorrPhase): 0 = piece band; 1 =   */ \
                                          /* C2 expert of the side to move; 2 = C2 expert pair (own, opponent)     */ \
-  P(CorrPkW, 0, 0, 40000)                /* correction keyed by the pawn-king subnetwork's output, quantized to   */ \
-                                         /* CorrPkBits signs (0 = off; table shared with CorrExpertW)            */ \
-  P(CorrPkUpd, 128, 0, 400)              /* step of that table, /128                                              */ \
-  P(CorrPkBits, 12, 4, 32)               /* signs of the pk outputs in the key (most variable outputs first)      */ \
-  P(CorrPkCompute, 0, 0, 1)              /* 0: key only from the pawn-king cache (a miss = no term); 1: compute it */ \
   P(C2ConvW, 0, 0, 4096)                 /* endgame conversion (the author's idea): what the pawn-king subnetwork */ \
                                          /* adds to the positional output, beyond C2ConvFrom and up to C2ConvCap  */ \
                                          /* (positional units), x C2ConvW/1024 x share of non-pawn material      */ \
@@ -1645,47 +1647,32 @@
   /*  tree is the previous one (bench unchanged) and the release, with constant parameters, drops the code.         */ \
   /* -- SMP (S1; act only with Threads > 1) --                                                                       */ \
   P(SmpLmrNoise, 0, 0, 256)              /* LMR noise per thread, +-this in 1024ths of a ply                  */ \
-  P(SmpOptDeep, 0, 0, 1024)              /* /1024 of the deepest thread's root average in the optimism        */ \
   P(SmpPvHash, 0, 0, 1)                  /* PV node: lower bound in the hash at every alpha raise             */ \
   P(SmpNullOdd, 0, 0, 2)                 /* odd threads: null move reduced by this many plies less (Stockfish) */ \
   P(SmpContCorr, 0, 0, 1)                /* continuation correction shared by the threads of a node           */ \
   /* -- singular family (S2) --                                                                                      */ \
   P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed (Caissa)          */ \
   P(SingDropHash, 0, 0, 1)               /* exclusion value above the hash value: no LMR bonus, no negative extension (R23) */ \
-  P(SingGapRed, 0, 0, 2048)              /* other moves reduced by this/128 per unit of (hash - exclusion) gap */ \
-  P(SingGapFrom, 128, 0, 1024)           /*   gap that starts the extra reduction                             */ \
-  P(SingGapCap, 2048, 0, 4096)           /*   cap of that reduction, 1024ths of a ply                         */ \
   /* -- move-count family (S3, B11) --                                                                               */ \
-  P(LmpKeepScore, 0, 0, 1000000)         /* past the move count, quiets with ordering score >= this still searched (0 = off) */ \
   P(ImpAdjCap, 160, 16, 1024)            /* continuous improvement: static - static two plies back, clamped to +-this */ \
   P(ImpSlopeLmp, 192, -1024, 1024)       /*   move count scaled by (1024 + this * adj / 64) / 1024 (baked 03/11) */ \
   P(ImpSlopeRfp, 0, -1024, 1024)         /*   reverse-futility margin minus this * adj / 64                   */ \
   P(ImpSlopeNmp, 0, -1024, 1024)         /*   null-move floor minus this * adj / 64                           */ \
   /* -- correction learning (S4) --                                                                                  */ \
   P(CorrRepLearn, 0, 0, 2048)            /* reachable repetition below the draw: corrections learn toward the draw, /1024 (Integral, Viridithas) */ \
-  P(CorrPairCont, 0, 0, 30000)           /* correction of the position paired with the ones 1 and 2 plies back (Stormphrax, Stoat) */ \
-  /* -- null move guards (B1) --                                                                                     */ \
-  P(NmpChildCuts, 0, -128, 128)          /* null floor lower by this when the frame below had fewer than 2 cutoffs (Caissa) */ \
   /* -- when the histories learn (B2, B10) --                                                                        */ \
   P(EvalDiffShallow, 0, 0, 32)           /* evaluation-change lesson only below this depth or without a hash entry */ \
   P(HashCutEarlyParent, 0, 0, 32)        /* hash-cut reward only when the parent's move came before this number */ \
-  P(CaptWinGood, 0, 0, 1024)             /* a capture with SEE >= this (> 0) is a good capture whatever its history */ \
   /* -- quiescence (B3) --                                                                                           */ \
   P(QsSeeHist, 0, -4096, 4096)           /* quiescence exchange threshold moves by capture history * this / 65536 */ \
   P(QsSeeCorr, 2048, 0, 32768)           /* and drops by |correction| * this / 1024, at most 256 (baked 03/11) */ \
-  P(QsFhCapt, 0, 0, 2048)                /* a capture that fails high in quiescence earns this in its capture history */ \
   /* -- single rules (B4-B15, 33) --                                                                                 */ \
   P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus (Viridithas) */ \
   P(ProbCutAdaptRise, 512, 0, 1024)      /*   the short verification's beta rises by ProbCutAdapt * this / 1024 per ply off (R23) */ \
   P(LmrGives, 0, -4096, 4096)            /* reduction of a move that gives check, 1024ths of a ply off (Alexandria) */ \
-  P(LmrCaptOfs, 0, -4096, 4096)          /* reduction offset of captures, 1024ths of a ply (PlentyChess)      */ \
-  P(LmrChain, 0, 0, 512)                 /* less reduction per ply of a chain of first moves above, up to 16  */ \
-  P(LmrSideLog, 0, 0, 512)               /* more reduction per unit of the sum of log2(move number) on the line, up to 32 */ \
   P(AspStable, 0, 0, 16)                 /* aspiration delta minus this per iteration with the same best move, up to 7 */ \
   P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this (Stormphrax, PlentyChess) */ \
   P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 (Stormphrax) */ \
-  P(CorrAbsLmp, 0, 0, 4096)              /* move count grows by |correction| * this / 1048576 of itself       */ \
-  P(RfpNoThreat, 0, 0, 512)              /* reverse futility margin lower when no enemy pawn attacks our pieces */ \
   P(ContemptAhead, 0, 0, 200)            /* draw worth -this for the root side when the last move closed ahead (lists) */ \
   P(ContemptAheadFrom, 100, 0, 1000)     /*   from this root score                                            */
 

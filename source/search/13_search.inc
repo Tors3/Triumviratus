@@ -57,9 +57,9 @@ struct NodeState {
   bool c2_asym;                  // the two perspectives use different experts
   int  c2_pk;                    // conversion push (C2ConvPkSrc 1): exact pawn-king effect of this node, INT_MIN = not read
   int  c2_imb;                   // C2Imb*: +1 ahead, -1 behind by material class and evaluation, 0 otherwise or off
+  bool aff;                      // SmpAff: the node is in the material regimes of this helper
   bool pk_crit;                  // PkCrit: the pawn-king subnetwork adds >= PkCritFrom here (fresh evaluations only)
   // R19 techniques (03/11/2026, 01_params.inc), written only when their lever is on.
-  int  sing_gap;                 // SingGapRed: hash value - exclusion value when the hash move was found singular, else 0
   bool sing_drop;                // SingDropHash: the exclusion search came back above the hash value
   bool rep_seen;                 // CorrRepLearn: a repetition was in reach at entry
 };
@@ -484,23 +484,14 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
   if (CausalRed && n.causal && !tact && !gives && !passer && m != n.h.move &&
       !(((1ULL << move_from(m)) | (1ULL << move_to(m))) & n.causal))
     r += CausalRed;
-  // R19 terms (03/11/2026, 01_params.inc; all 0 = the reduction above). In 1024ths of a ply, positive = more reduction.
-  //  SingGapRed     the hash move was singular by a wide gap: the other moves are reduced more, from SingGapFrom
-  //                 units of gap up to SingGapCap;
-  //  LmrGives       a move that gives check is reduced less; LmrCaptOfs moves the reduction of captures
-  //                 (PlentyChess, Alexandria);
-  //  LmrChain       the line reached this node through first moves only for `chain` plies: a prediction of the node's
-  //                 value, so less reduction; LmrSideLog: the line wandered far from the first moves (sum of log2 of
-  //                 the move numbers), more reduction;
+  // R19 terms (03/11/2026, 01_params.inc; 0 = the reduction above). In 1024ths of a ply, positive = more reduction.
+  //  LmrGives       a move that gives check is reduced less (Alexandria);
   //  SmpLmrNoise    with several threads, a small pseudo-random term per thread and node count, so the threads do not
   //                 search the same tree.
-  if (n.sing_gap && m != n.h.move)
-    r += std::clamp(SingGapRed * (n.sing_gap - SingGapFrom) / 128, 0, SingGapCap);
+  // Closed negative and removed on 04/11/2026 (archive _archivio/leve_negative_2026-11-04): SingGapRed, LmrCaptOfs,
+  // LmrChain, LmrSideLog and the D1 levers (LmrPiece0-5, the trajectory table).
   if (gives)
     r -= LmrGives;
-  if (tact)
-    r += LmrCaptOfs;
-  r += LmrSideLog * f->side_log - LmrChain * f->chain;
   if (SmpLmrNoise && num_threads > 1)
     r += (int)((td.nodes + (U64)td.thread_id * 61) % (U64)(2 * SmpLmrNoise + 1)) - SmpLmrNoise;
   return r;
@@ -667,6 +658,11 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
     n.c2_asym = e_us != e_them;
   }
   n.c2_imb = 0;
+  if (td.smp_aff_on) {   // SmpAff: regime = mean of the two experts of the node (c2_experts_td: one nibble per side)
+    const int pair = c2_experts_td(td), regime = ((pair & 15) + (pair >> 4 & 15)) / 2;
+    n.aff = regime >= td.smp_aff_lo && regime <= td.smp_aff_hi;
+  } else
+    n.aff = false;
   if (C2SameRegImp)   // C2 idea 7 (regime selectivity): the expert pair of this node, for the comparisons of its children
     f->c2pair = (unsigned char)c2_experts_td(td);
   return NO_VALUE;
@@ -948,21 +944,9 @@ static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
   if (g_c2_node)   // C2 idea 1 (21/10/2026, agent A): the multiplier per Consilium Plebis expert. OFF by default; SPRT pending
     mult += c2_tab[C2T_RFP][n.c2e];
   const int lean = RfpImproving * n.improving + RfpOppWorse * n.opp_worse;   // the node's trend, per 1024 of mult
-  // R19 (off at 0): ImpSlopeRfp, the margin follows the continuous improvement; RfpNoThreat, a lower margin
-  // when no enemy pawn attacks one of our pieces, a cheap sign that nothing of ours hangs.
-  int r19 = ImpSlopeRfp * imp_adj(f) / 64;
-  if (RfpNoThreat) {
-    const int us = td.side, off = us == white ? 0 : 6;
-    const U64 ours = td.occupancies[us] & ~td.bitboards[P + off] & ~td.bitboards[K + off];
-    const U64 their_pawns = td.bitboards[P + (off ^ 6)];
-    // a8 = 0: a black pawn on s attacks s+7 (file - 1) and s+9 (file + 1), a white one s-9 and s-7; the masks drop the
-    // squares a capture would wrap onto (file h after file - 1, file a after file + 1).
-    constexpr U64 file_a = 0x0101010101010101ULL, file_h = 0x8080808080808080ULL;
-    const U64 hit = us == white ? ((their_pawns << 7) & ~file_h) | ((their_pawns << 9) & ~file_a)
-                                : ((their_pawns >> 9) & ~file_h) | ((their_pawns >> 7) & ~file_a);
-    if (!(hit & ours))
-      r19 += RfpNoThreat;
-  }
+  // R19 (off at 0): ImpSlopeRfp, the margin follows the continuous improvement (RfpNoThreat, closed negative, removed
+  // 04/11/2026).
+  const int r19 = ImpSlopeRfp * imp_adj(f) / 64;
   // Margin in our form (27/10/2026, docs/audit_8.1/R9): + RfpMarginBase, a constant that does not grow with depth, and
   // the correction read with its sign as well as its size: corr = signal / RfpCorrDiv adds |corr| (as before; integer
   // division truncates toward zero, so |s|/D = |s/D|) plus RfpCorrSign/1024 of corr (positive = less trust in an
@@ -1023,12 +1007,9 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   // drops by NmpSibCut per such sibling, at most NmpSibCap of them.
   if (NmpSibCut)
     floor -= NmpSibCut * std::min<int>(f->null_cuts, NmpSibCap);
-  // R19 (03/11/2026, all 0 = off): ImpSlopeNmp, the floor follows the continuous improvement; NmpChildCuts,
-  // a lower floor when the frame below had fewer than two cutoffs so far, i.e. the earlier siblings' children rarely
-  // refuted anything (Caissa).
+  // R19 (03/11/2026, 0 = off): ImpSlopeNmp, the floor follows the continuous improvement (NmpChildCuts, closed
+  // negative, removed 04/11/2026).
   floor -= ImpSlopeNmp * imp_adj(f) / 64;
-  if (NmpChildCuts && f[1].cutoff_cnt < 2)
-    floor -= NmpChildCuts;
   PL_SET(pl_nmp_floor, floor - n.beta);
   if (!n.cut || f->static_eval < floor || n.excluded || !pieces || td.ply < td.nmp_min_ply || n.beta < -NmpBetaFloor ||
       (AN && gd_skip_null(td, n)) ||
@@ -1285,12 +1266,9 @@ static void count_gate(ThreadData &td, NodeFrame *f, const NodeState &n, MoveQue
     lmp_count = lmp_count * (1024 + s) / 1024;
   }
   // R19: ImpSlopeLmp (on since 03/11/2026, 01_params.inc), the count follows the continuous improvement instead of only
-  // the yes/no LmpNotImp; CorrAbsLmp (off at 0), a large correction keeps more moves (Stormphrax;
-  // see CorrAbsFut).
+  // the yes/no LmpNotImp (CorrAbsLmp, closed negative, removed 04/11/2026).
   if (ImpSlopeLmp)
     lmp_count = std::max(lmp_count * (1024 + ImpSlopeLmp * imp_adj(f) / 64) / 1024, 0);
-  if (CorrAbsLmp)
-    lmp_count += (int)((long long)lmp_count * (std::abs(n.signal) / CorrEvalDiv) * CorrAbsLmp / 1048576);
   if (f->move_count >= lmp_count && !(AN && (td.an_bits & AN_LMPNEAR) && (n.pv || f->ply <= 2))) {   // AnLmpNear
 #ifdef TRIUMV_PRUNELOG
     q.pl_count_off = true;
@@ -1755,9 +1733,6 @@ static int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int
   f->excluded = 0;
 
   if (v < s_beta) {
-    // SingGapRed (R19): how far the hash move stands above the other moves; move_loop reduces them more.
-    if (SingGapRed)
-      n.sing_gap = h.value - v;
     // Extra plies: a ladder on the gap under the bar. The first rung is a threshold built from the node facts, plus
     // an offset per expert; every further rung sits one step higher, and the step has its own weights of the same
     // facts. A move earns one extra ply per rung it clears, up to SingRungs. The step may shrink or grow with depth
@@ -1771,6 +1746,8 @@ static int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int
                       common;
     const int step = SingStepBase + SingStepPv * n.pv - SingStepQuiet * quiet + SingStepTtPv * f->tt_pv + hist -
                      SingStepDeep * beyond + SingStepDepth * n.depth / 16;
+    // SingExact split into bar only and ladder only (SingExactMode, 04/11/2026): both closed negative and removed; in PV
+    // nodes the first rung (~211) is far above the 57 x depth / 64 SingExact adds, so its effect is all in the bar.
     const int gap = s_beta - v;
     int extra = 0;
     for (int k = 0; k < SingRungs; k++)
@@ -2077,6 +2054,12 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
       f->stat_score = (StatQuietW * qh_main(td, us, quiet_key(m), ctx) + StatCont1W * (*f[-1].cont_hist)[pc][to] +
                        StatCont2W * (*f[-2].cont_hist)[pc][to]) / 1024;
     r = red_final_v80(td, f, n, m, r, tact, gives, passer, node_red);
+    if (n.aff && SmpAffLmr) {   // SmpAff: a helper reduces less in its own regimes (never below 0 through this term)
+      if (SmpAffLmr > 0)
+        r = std::max(r - SmpAffLmr, std::min(r, 0));
+      else
+        r -= SmpAffLmr;
+    }
     // AnGold, tweaks of the reductions far from the root (units 1/1024 ply): in attack captures and checks
     // -60, in defence the quiet moves -40, in manoeuvring the quiet moves without check +80 from depth 9.
     if (gd_style && n.depth > 5 && f->ply > 1) {
@@ -2449,7 +2432,7 @@ static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth,
   n.n_quiets = n.n_tacts = 0;
   n.best_score = INT_MIN;
   n.causal = 0;
-  n.sing_gap = 0, n.sing_drop = false, n.rep_seen = false;   // R19 techniques
+  n.sing_drop = false, n.rep_seen = false;   // R19 techniques
   // LdseMax: Ldse extensions on the line up to here. f->ldse goes back to 0 until move_loop extends a move, so
   // the children of the null move and of probcut do not inherit one.
   f->ldse = 0;
@@ -2457,12 +2440,6 @@ static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth,
   // Same count for the extensions from negative reduction (move_loop; BAKE NEGEXTMAX 11/10/2026).
   f->negext = 0;
   f->negext_path = f[-1].negext_path + f[-1].negext;
-  // LmrChain / LmrSideLog (R19): read from the parent's move number (0 after a null move, so the count restarts).
-  if (LmrChain | LmrSideLog) {
-    const int mc = f[-1].move_count;
-    f->chain = (unsigned char)(mc == 1 ? std::min(f[-1].chain + 1, 16) : 0);
-    f->side_log = (unsigned char)std::min(f[-1].side_log + (mc > 1 ? 31 - __builtin_clz((unsigned)mc) : 0), 32);
-  }
   if (C2SettleHorizon) {   // C2 idea 11: the settling plies along the line, the same count
     f->settle = 0;
     f->settle_path = f[-1].settle_path + f[-1].settle;
