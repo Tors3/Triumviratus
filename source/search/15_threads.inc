@@ -3,6 +3,71 @@
 
 #include <condition_variable>
 #include <functional>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
+// Stack of the search threads (05/11/2026, issue #9). The search recurses once per ply up to max_ply = 128, plus the
+// frames re-entered at the same ply (singular search, null-move verification). Measured with -fstack-usage (GCC 13,
+// x86-64): explore 688 B + move_loop 4400 B = ~5.1 KB per ply of the main search, quiesce 4208 B per ply of the
+// quiescence search, plus ~7 KB of leaf helpers (fill_quiets, rank_into_v). Worst case at max_ply with two frames per
+// ply: ~1.3 MB, and other compilers or ABIs (Apple clang, arm64) can be larger. Default thread stacks are 512 KB for
+// secondary threads on macOS and 128 KB on musl, and on Windows the reserve written in the exe header (1 MB unless
+// the linker sets it), so a deep search on a helper thread crashed on macOS arm64 with Threads=2 (EXC_BAD_ACCESS in
+// the stack guard page at depth 22, seldepth 53). The threads are now created with an explicit stack of 8 MB on every
+// platform: only address space is reserved, the pages are committed when touched, so a shallow search costs nothing
+// more. The search never runs on the main (UCI) thread: "go" and "bench" both go through the master worker below.
+constexpr size_t SEARCH_STACK_BYTES = (size_t)8 * 1024 * 1024;
+
+// Starts body(arg) on a new detached thread with a stack of SEARCH_STACK_BYTES. Windows: CreateThread with the size as
+// a reservation (the default would commit it all). POSIX: pthread attributes; if the system refuses the size, the
+// thread is created with the default stack rather than not at all. A thread that cannot be created stops the program,
+// as std::thread did by throwing.
+struct SearchThreadStart {
+  void (*body)(void *);
+  void *arg;
+};
+#ifdef _WIN32
+static DWORD WINAPI search_thread_entry(LPVOID p) {
+#else
+static void *search_thread_entry(void *p) {
+#endif
+  const SearchThreadStart s = *static_cast<SearchThreadStart *>(p);
+  delete static_cast<SearchThreadStart *>(p);
+  s.body(s.arg);
+  return 0;
+}
+
+static void start_search_thread(void (*body)(void *), void *arg) {
+  SearchThreadStart *s = new SearchThreadStart{body, arg};
+#ifdef _WIN32
+  HANDLE h = CreateThread(nullptr, SEARCH_STACK_BYTES, search_thread_entry, s, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+  if (!h) {
+    fprintf(stderr, "info string error: cannot create a search thread (CreateThread %lu)\n", (unsigned long)GetLastError());
+    std::abort();
+  }
+  CloseHandle(h);   // detached: the handle is not needed
+#else
+  pthread_attr_t at;
+  pthread_t t;
+  pthread_attr_init(&at);
+  pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+  int rc = pthread_attr_setstacksize(&at, SEARCH_STACK_BYTES);
+  if (rc == 0)
+    rc = pthread_create(&t, &at, search_thread_entry, s);
+  pthread_attr_destroy(&at);
+  if (rc != 0) {   // size refused: default stack, as before this change
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    rc = pthread_create(&t, &at, search_thread_entry, s);
+    pthread_attr_destroy(&at);
+  }
+  if (rc != 0) {
+    fprintf(stderr, "info string error: cannot create a search thread (pthread_create %d)\n", rc);
+    std::abort();
+  }
+#endif
+}
 
 // Persistent threads (12/10/2026). Before, every "go" created a thread for the main search and one per helper and
 // joined them at the end: 1-2 ms per move with 4-8 threads (costi_infrastruttura.py). Now each thread is created once
@@ -13,8 +78,8 @@ struct SearchWorker {
   std::condition_variable cv;
   std::function<void()> job;
   bool busy = false;
-  std::thread th;
-  SearchWorker() : th([this] { loop(); }) { th.detach(); }
+  // Started by start_search_thread (explicit stack size, issue #9) instead of std::thread.
+  SearchWorker() { start_search_thread([](void *w) { static_cast<SearchWorker *>(w)->loop(); }, this); }
   void loop() {
     for (;;) {
       std::function<void()> j;

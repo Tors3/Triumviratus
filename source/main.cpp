@@ -143,6 +143,9 @@ int main()
     // Since then the vcxproj sets StackReserveSize = 8 MB (AUDIT D).
     // We raise the soft limit to 256 MB BEFORE creating any thread (the pthreads
     // created afterwards inherit the big stack).
+    // Since 05/11/2026 (issue #9) the search threads set their stack explicitly (8 MB,
+    // start_search_thread in search/15_threads.inc), because macOS (512 KB) and musl
+    // (128 KB) ignore RLIMIT_STACK for new threads. This limit now only covers the main thread.
     {
         struct rlimit rl;
         if (getrlimit(RLIMIT_STACK, &rl) == 0) {
