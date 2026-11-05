@@ -51,7 +51,7 @@ margin and the number of games; the full context of each is in [`DEVELOPMENT_8.0
 
 ## Summary
 
-Of 60 entries, **15 are new**, **29 are known ideas revisited in a different form**, and **16 were done elsewhere
+Of 61 entries, **16 are new**, **29 are known ideas revisited in a different form**, and **16 were done elsewhere
 first**. Three of the new ones are adopted and measured as gains, and together they form the core of 8.0: a network
 divided by game phase, an input block that the king-relative block cannot express, and corrections that follow the
 experts of the network. The analysis build has its own section ([§10](#10-analysis-build-position-solver)), outside these counts.
@@ -72,6 +72,7 @@ experts of the network. The analysis build has its own section ([§10](#10-analy
 | `Mobility` input block | New as an idea | 8.0 dev | cost only: −16.2% NPS | archived, never trained |
 | Slider attacks by obstruction difference on the four lines of a square in one AVX-512 register, with the lane-wise leading-zero count (`vplzcntq`) | New in its form | 8.1 dev | **−0.98%** cycles per node in the middlegame, **−1.20%** in endgames, whole engine (xperf, PGO, Xeon) | adopted, default of the AVX-512 builds |
 | History update as a listwise ranker (`HistGrad`): the reward of the best quiet move and the penalties of the quiet moves tried before it are scaled by the gradient of a softmax over their ordering scores, so a best move the ordering expected learns little, a surprising one a lot, and a tried move the ordering rated low is barely punished | New | 8.1 dev | **+0.90 ± 3.41** (5+0.05, both sockets and a Zen 4 laptop, 11,166); without socket 1 +3.1 ± 4.2; the stronger blend (512) −4.0 ± 6.3 (3,066) | adopted at 256 (22 October 2026); blend and temperature to the history tuning |
+| Helper threads specialised by material regime (`SmpAff`): each helper of the parallel search takes a range of the material regimes read from the experts of the network (0-2, 3-5, 6-7 in turn) and searches wider in the nodes of its range, so the threads share one network but divide the tree by the kind of position | New in its form (diversified helpers exist elsewhere, see `DiverseSMP`) | 8.1 dev | +0.54 ± 3.42 at 4 and 8 threads (8,940 games, 5 to 10 s, both machines); +1.9 ± 13.1 at 20 and 32 threads (544) | measurement still open, neutral so far (off by default) |
 | Discovered check in move ordering (`ChkDisc`): a quiet move whose piece stands between one of our sliders and the enemy king and lands off that line gets a bonus, on top of the bonus for direct checks | Revisited (Coda scores discovered attacks on any enemy piece) | 8.1 dev | +0.8 ± 3.7 over 9,178 (8+0.08 and 5+0.05 summed, both sockets; test paused, to be continued); first test −0.2 ± 5.3 (4,174) | being tested (off by default) |
 | Pawn break in a closed structure (three or more blocked pawns) reduced less (`RdPawnBreak`) | New | 8.1 dev | 2048: +0.19 ± 5.74 (8+0.08, 3,724), +0.6 ± 4.8 pooled with 7+0.07 (5,142); 3072 −3.7 ± 9.2 | closed, neutral |
 | Hyperbola quintessence for AVX2 in our form (`pair_hqs`: the two diagonals in a vector register, the rook in general registers) | Revisited | 8.1 dev | −0.23% / −0.05% cycles per node | adopted, default of the AVX2 builds |
@@ -316,6 +317,17 @@ divided by phase.
 
 ## 6. Other new ideas, not adopted
 
+- **Helper threads specialised by material regime (`SmpAff`), 8.1 development, the author's direction.** In Lazy SMP
+  every thread searches the same root with the same rules and the threads help each other only through the shared
+  hash table. Here the main thread is unchanged and each helper takes a range of material regimes, read from the two
+  experts of the Consilium network along the line (their mean, in the ranges 0-2, 3-5 and 6-7, assigned in turn); in
+  the nodes of its range the helper reduces half a ply less (`SmpAffLmr`; offsets for the other pruning rules exist
+  and are at zero). The network is the same on every thread; the shape of the tree differs, so each helper goes
+  deeper in its kind of position and the main thread finds those results in the table. Helpers with different search
+  parameters are known (`DiverseSMP`, after Reckless, in §9); the division of the work by the experts of the network
+  needs a network with experts by material. From 8 threads the helpers split the eight regimes into up to eight
+  groups. Measured: +0.54 ± 3.42 over 8,940 games at 4 and 8 threads, +1.9 ± 13.1 over 544 games at 20 and 32
+  threads. **New in its form**; the measurement is still open (neutral so far, the runs at many threads are short).
 - **Expert-boundary ideas (PhaseEdge), 8.0.** A capture that changes the active expert must clear an extra margin
   (−2.5 ± 10.0, removed); "improving" is not computed between evaluations of different experts (−14.1 ± 19.4,
   removed); a capture that crosses a boundary is neither pruned nor reduced more (+1.3 ± 2.3 on 24,292, neutral, off).

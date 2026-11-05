@@ -426,6 +426,9 @@
   P(ThrEsc0, 1280, 0, 3840)  P(ThrEsc1, 1280, 0, 3840)  P(ThrEsc2, 1280, 0, 3840)  P(ThrEsc3, 1280, 0, 3840)  \
   P(ThrEnt0, 1280, 0, 3840)  P(ThrEnt1, 1280, 0, 3840)  P(ThrEnt2, 1280, 0, 3840)  P(ThrEnt3, 1280, 0, 3840)  \
   P(ThrSafe0, 0, 0, 60)  P(ThrSafe1, 0, 0, 60)  P(ThrSafe2, 0, 0, 60)  P(ThrSafe3, 0, 0, 60)              \
+  /*    QuietSeeMal, REMOVED 05/11/2026: malus for a quiet move onto an enemy-attacked square where the exchange   */ \
+  /*    loses the piece (beyond ThrEnt), 1280 against off at 20+0.2 -6.76 +- 8.82 / 1,542. Code in                */ \
+  /*    _backup/Triumviratus_8.1_pre_rimozione_quietseemal_2026-11-05 (docs/audit_8.1/R24).                       */ \
   /* A. LpDecay: how fast the first-ply history weight falls, 8 x entry x 1024 / (1024 + ply x LpDecay);        */ \
   /*    1024 = the old 8 x entry / (1 + ply), 0 = the same weight at every ply. Max 3072: beyond it the 40-bit  */ \
   /*    reciprocal of 11_queue.inc is no longer exact.                                                          */ \
