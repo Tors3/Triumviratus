@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1010" width="1500" height="1010"
      font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img"
      aria-label="Design of the next Triumviratus network (06/11/2026): shared threat, pawn-pair and passed-pawn inputs and an int8 HalfKA block split into six experts chosen per side by the opponent's material with the queen as a boundary; two 1024 accumulators with 1024-byte rows and no PSQT inside them; a 24 KB piece-square table outside the rows; clipped ReLU with pairwise product; a 128-unit pawn-king subnetwork active only in pawn endgames; sixteen layer stacks chosen by piece count and by the queens on the board">
-  <title>TRANN5 &#8212; the next Triumviratus network &#8212; design of 06/11/2026</title>
+  <title>Lex Hortensia (TRANN5) &#8212; the next Triumviratus network &#8212; design of 06/11/2026</title>
   <defs>
     <style>
       text        { fill: #E8ECF2; }
@@ -34,7 +34,7 @@
 
   <rect width="1500" height="1010" fill="#0E131C"/>
 
-  <text x="40" y="48" font-size="24" font-weight="600">The next Triumviratus network (TRANN5) · design of 06/11/2026</text>
+  <text x="40" y="48" font-size="24" font-weight="600">Lex Hortensia · the next Triumviratus network (TRANN5) · design of 06/11/2026</text>
   <text x="40" y="74" font-size="14" class="dim">Six experts with the queen as a boundary, rows of exactly 1024 bytes, the PSQT in a small table, a pawn-king block only in the pawn endgames, sixteen layer stacks.</text>
   <text x="40" y="96" font-size="13" class="dim"><tspan class="new">NEW</tspan> marks what changes from Consilium Plebis; everything else is as in 8.1. Future training direction, not in training now: it comes from the lessons of Consilium Plebis.</text>
 
