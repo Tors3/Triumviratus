@@ -24,6 +24,7 @@ architecture keeps the number:
 | `TRANN2` | `legio-septima` | 7.0 | SFNNv16 + `PassedPawns` |
 | `TRANN3` | Consilium | 8.0 | TRANN2 with the HalfKA block split into four experts by total piece count |
 | `TRANN4` | Consilium Plebis | 8.1 | int8 HalfKA split into eight experts per side, chosen by the opponent's non-pawn material, plus a pawn-king subnetwork |
+| `TRANN5` | the next network (designed, not in training) | after 8.1 | six experts per side with the queen as a boundary, 1024-byte rows with the PSQT in a small table, a gated pawn-king block, sixteen layer stacks |
 
 ---
 
@@ -32,8 +33,8 @@ repository **[Triumviratus-Networks](https://github.com/Tors3/Triumviratus-Netwo
 
 ## The next network — future training direction (not in training now)
 
-No network is being trained now. This is the design the next training will follow, and it comes from the lessons of
-Consilium Plebis. The measures behind it are of two kinds:
+No network is being trained now. This is the design the next training will follow, architecture `TRANN5`, and it
+comes from the lessons of Consilium Plebis. The measures behind it are of two kinds:
 - **offline studies on the released network,** judged on the game result over 179,008 quiet positions of 8.1 games
   (concordance: the share of position pairs with different results that the evaluation orders correctly);
 - **xperf counts of the engine's cost per node** on a Xeon (large pages) and a Zen 4 laptop (4 KB pages).

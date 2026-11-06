@@ -54,7 +54,7 @@ layer stack.
 <details>
 <summary><b>The next network: future training direction (not in training now)</b></summary>
 
-No network is being trained now. This design comes from the lessons of Consilium Plebis: offline studies of what its
+No network is being trained now. This design, architecture `TRANN5`, comes from the lessons of Consilium Plebis: offline studies of what its
 experts, PSQT and pawn blocks contribute, judged on game results, and speed measurements of the engine (November
 2026). It has six experts with the queen as a boundary, rows of exactly 1024 bytes with the PSQT in a small table,
 a pawn-king block only in the pawn endgames and sixteen layer stacks.
