@@ -126,6 +126,11 @@ struct alignas(128) ThreadData {
     // Board of the thread
     U64 bitboards[12];
     U64 occupancies[3];
+#if defined(USE_AVX512ICL)
+    // avx512icl (05/11/2026, R26 §6): the same mailbox in bytes, one aligned cache line, kept by the make beside piece_on:
+    // the network's catch-up builds the board before the pending moves from it in one register (06_nndirty.inc).
+    alignas(64) std::int8_t pc8[64];
+#endif
     int piece_on[64];             // piece on every square (P..k), -1 = empty
     int side;
     int enpassant;

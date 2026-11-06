@@ -4,16 +4,17 @@
 #
 #  Checks first that every input folder is intact (its SHA256SUMS.txt) and belongs to the same build as this source:
 #  same source fingerprint, same compiler flags, same network, same clang, same version, flavour and expected bench.
-#  Then takes for every variant the profile of the first folder that has it, merges them into one profile (ThinLTO
-#  needs one profile for all the modules it links together, see build_universal.ps1), compiles the seven variants and
-#  links them behind entry.cpp exactly as build_universal.ps1 does (same functions, ubuild_lib.ps1). Finally runs the
-#  bench of every variant this CPU runs; the others are checked with verify_universal.ps1 on a CPU that has them.
+#  Then takes for every variant the profile recorded on the CPU closest to the ones that variant is for (see "one
+#  profile per variant" below), compiles every variant with its own profile, links it alone and joins the native
+#  objects behind entry.cpp exactly as build_universal.ps1 does (Build-Variant and Link-Universal, ubuild_lib.ps1).
+#  Finally runs the bench of every variant this CPU runs; the others are checked with verify_universal.ps1 on a CPU
+#  that has them.
 #
 #  USE:
 #    .\pack_universal.ps1 -From D:\rel\zen4, D:\rel\ultra7, D:\rel\xeon -Out D:\rel\dist
 #    .\pack_universal.ps1 -From D:\rel\zen4 -Out D:\rel\dist -AllowMissing   # avxvnni without PGO (no CPU for it)
 #  Result in <Out>: Triumviratus_<ver>_<day>_universal.exe (or _windows_universal.exe with -Official builds),
-#  SHA256SUMS.txt, verifica.txt, manifest_universal.json, profiles\merged.profdata.
+#  SHA256SUMS.txt, verifica.txt, manifest_universal.json, profiles\v<n>.profdata (the profile each variant was built with).
 # =====================================================================================================================
 param(
     [Parameter(Mandatory = $true)][string[]]$From,
@@ -95,12 +96,24 @@ $base = Get-BaseFlags -Day $Day -NoStrictAliasing:$NoStrictAliasing -ExtraFlags 
 if ((Get-FlagsFingerprint) -ne $m0.flags_fingerprint) { Fail "compiler flags differ from phase 1 (same -ExtraFlags, -Tune, -NoStrictAliasing?)" }
 $cpu = Get-CpuInfo
 
-# --- one profile per variant: the first input folder that has it ------------------------------------------------------
+# --- one profile per variant: recorded on the CPU closest to the ones the variant is for ------------------------------
+# (06/11/2026) Among the folders that have the variant's profile, the one whose CPU has the lowest best variant: avx512
+# from the Xeon (Skylake-SP) rather than from the Zen 4, avx2 from the Core Ultra rather than from an AVX-512 CPU. The
+# first folder in -From order wins a tie. Before, the first folder with the profile won: the 04/11 pre-release, packed
+# on the Zen 4, gave the Zen 4 profile to avx512 as well.
+$isaRank = @{ 6 = 0; 1 = 1; 2 = 2; 7 = 3; 3 = 4; 4 = 5; 5 = 6 }
 $pick = @{}
 foreach ($n in 1..7) {
+    $bestRank = 99
     foreach ($i in $ins) {
         $v = @($i.m.variants | Where-Object { $_.n -eq $n -and $_.pgo -and $_.ok }) | Select-Object -First 1
-        if ($v) { $pick[$n] = @{ path = Join-Path $i.dir ($v.profile -replace '/', '\'); host = $i.m.host; cpu = $i.m.cpu.name; bench = $v.bench }; break }
+        if (-not $v) { continue }
+        $runs = "$($i.m.cpu.runs)"
+        $r = if ($runs) { $isaRank[[int]"$($runs[-1])"] } else { 98 }
+        if ($r -lt $bestRank) {
+            $bestRank = $r
+            $pick[$n] = @{ path = Join-Path $i.dir ($v.profile -replace '/', '\'); host = $i.m.host; cpu = $i.m.cpu.name; bench = $v.bench }
+        }
     }
 }
 $missing = @(1..7 | Where-Object { -not $pick.ContainsKey($_) })
@@ -111,14 +124,17 @@ if ($missing.Count) {
     if (-not $AllowMissing) { Fail "$msg. Run build_variants.ps1 on such a CPU, or -AllowMissing to compile them without PGO" }
     Say "WARNING: $msg -> compiled without PGO"
 }
-foreach ($n in $pick.Keys | Sort-Object) { Say "profile $($VariantNames[$n]): $($pick[$n].host) ($($pick[$n].cpu))" }
-$merged = "$Out\profiles\merged.profdata"
-if ($pick.Count) {
-    & $PD merge -o $merged @($pick.Keys | Sort-Object | ForEach-Object { $pick[$_].path })
-    if ($LASTEXITCODE -ne 0) { Fail "merge of the profiles" }
+foreach ($n in $pick.Keys | Sort-Object) {
+    Say "profile $($VariantNames[$n]): $($pick[$n].host) ($($pick[$n].cpu))"
+    # Profiles recorded before 06/11/2026 name the internal functions after the full path of the build folder: here
+    # they would match nothing and those functions would be built without PGO, silently (see Compile-Units).
+    if (@(& $PD show --all-functions $pick[$n].path | Select-String -SimpleMatch ':\' | Select-Object -First 1).Count) {
+        Fail "$($pick[$n].path) names functions by folder path (recorded by the old build scripts): record it again with build_variants.ps1"
+    }
+    Copy-Item $pick[$n].path "$Out\profiles\v$n.profdata" -Force   # the profiles the executable was built with
 }
 
-# --- build: as build_universal.ps1 (lowest variant first in the link) -------------------------------------------------
+# --- build: as build_universal.ps1, every variant with its own profile -------------------------------------------------
 $WRAP = New-UnitWrappers
 Say "common parts"
 Build-CommonParts
@@ -126,8 +142,10 @@ Say "optimised builds"
 $exe = if ($Official) { "$Out\Triumviratus_${VER}_windows_universal.exe" } else { "$Out\Triumviratus_${VER}_${Day}_universal.exe" }
 if ($PosSolver) { $exe = $exe -replace "Triumviratus_${VER}_", "Triumviratus_${VER}_PosSolver_" }
 $pobjs = Compile-Units @(1..7 | ForEach-Object {
-    if ($pick.ContainsKey($_)) { @{ n = $_; mode = 'use'; as = $_; prof = $merged } } else { @{ n = $_; mode = 'none'; as = $_; prof = '' } } })
-Link $exe (@("$OBJ\entry.obj") + $pobjs[1] + $pobjs[2] + $pobjs[3] + $pobjs[4] + $pobjs[5] + $pobjs[6] + $pobjs[7])
+    if ($pick.ContainsKey($_)) { @{ n = $_; mode = 'use'; as = $_; prof = "$Out\profiles\v$_.profdata" } } else { @{ n = $_; mode = 'none'; as = $_; prof = '' } } })
+$nat = @{}
+foreach ($n in 1..7) { $nat[$n] = Build-Variant $n $pobjs[$n] "$OBJ\s$n.exe" }
+Link-Universal $exe $nat
 
 # --- verification on this CPU ---------------------------------------------------------------------------------------
 Say "bench of the variants this CPU runs"

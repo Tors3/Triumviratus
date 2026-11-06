@@ -1,6 +1,7 @@
 {
   "_comment": "Release data read by the build scripts (build_universal.ps1, build_variants.ps1, pack_universal.ps1, build/release.ps1) and by the macOS and Linux workflows. Update bench at every change of the search tree; bench_possolver is the analysis-mode bench of a -PosSolver build (null = unknown, give it on the command line). The network is the file the engine loads by default (CN_DEFAULT_NET_FILE); on Windows the scripts also copy it under the name triumv.rc embeds.",
   "version": "8.1",
+  "clang_min": "23.1.4",
   "bench": 179025,
   "bench_possolver": null,
   "network": {

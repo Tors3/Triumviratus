@@ -45,6 +45,18 @@ function Find-Toolchain([switch]$NeedPgo) {
         if ($v -gt $best) { $best = $v; $t = $c }
     }
     if (-not $t) { Fail "no complete LLVM (clang-cl, lld-link, llvm-rc, llvm-profdata, clang_rt.profile) in TRIUMV_LLVM, $env:ProgramFiles\LLVM or Visual Studio (see build\setup_toolchain.ps1)" }
+    # Minimum compiler (05/11/2026, R26): the 04/11 release was built with the clang 19 of Visual Studio on all three
+    # machines because no LLVM 23 was installed, without a word. clang 23 against clang 19 on the same source, release
+    # chain, xperf 6 rounds on the Xeon: -1.27% cycles per node in the middlegame, -1.48% in endgames. release.json
+    # "clang_min" now stops the build when the newest clang found is older; TRIUMV_ALLOW_OLD_CLANG=1 lets a trial pass.
+    $relj = Join-Path $PSScriptRoot 'release.json'
+    if (Test-Path $relj) {
+        $min = (Get-Content $relj -Raw | ConvertFrom-Json).clang_min
+        if ($min -and $best -lt [version]$min) {
+            if ($env:TRIUMV_ALLOW_OLD_CLANG) { Write-Host "WARNING: clang $best is older than clang_min $min (TRIUMV_ALLOW_OLD_CLANG)" -ForegroundColor Yellow }
+            else { Fail "clang $best is older than clang_min $min of release.json: install LLVM $min (build\setup_toolchain.ps1, step 4b) or set TRIUMV_LLVM" }
+        }
+    }
     if (-not $t.rt -and $NeedPgo) { Fail "missing clang_rt.profile-x86_64.lib (needed by PGO)" }
     $t.msvc = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
     $kits = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue).KitsRoot10
@@ -117,6 +129,11 @@ function Get-BaseFlags([string]$Day, [switch]$DevOptions, [switch]$NoStrictAlias
     # Loops aligned to 64 bytes: the one-unit-per-variant binary lost 2.2% of cycles against the separate builds in
     # avx512 with identical instructions; the alignment recovers 0.7 of it (xperf 08/10/2026).
     $b += '/clang:-falign-loops=64'
+    # CMPXCHG16B declared (05/11/2026, R26): the MSVC STL marks every function of <atomic> with target("cx16") when
+    # compiled by clang (header <atomic>, "#pragma clang attribute ... [[gnu::target("cx16")]]"), and clang 23 refuses
+    # to inline a callee whose target features the caller lacks: every std::atomic load and store becomes a call.
+    # /arch:AVX2 implies cx16, so only the sse41 variant (no /arch) was affected; every CPU of every variant has it.
+    $b += '/clang:-mcx16'
     if ($ExtraFlags) { $b += $ExtraFlags.Split(' ', [StringSplitOptions]::RemoveEmptyEntries) }
     if ($Official) { $b += '-DTRIUMV_OFFICIAL' }
     if ($PosSolver) { $b += '-DTRIUMV_POS_SOLVER' }
@@ -220,7 +237,13 @@ function Compile-Units($specs, [switch]$Standalone) {
             $a = $base + (VFlags $sp.as) + (VTune $sp.n) + @("-DTRIUMV_VID=$($sp.n)", '-flto=thin')
             if ($sp.mode -eq 'gen') { $a += @('-fprofile-generate', '-DCLANG_PGO_GEN') }
             if ($sp.mode -eq 'use') { $a += @("-fprofile-use=$($sp.prof)", '-Wno-profile-instr-out-of-date', '-Wno-profile-instr-unprofiled') }
-            $a += @($f, "/Fo$o")
+            # The wrappers by file name only, compiled from their folder (06/11/2026, R26): clang names the internal
+            # functions in the profile "<main file as given>;<name>" and hashes the same string into the name of every
+            # anonymous namespace. With the full path ($OBJ\mtu\...) a profile matched only a build in the same folder:
+            # pack_universal.ps1 (another folder, often another machine) found no profile for the 124 internal
+            # functions, the hottest of the network among them (cn.cpp forward_simd, apply, pawn_king_compute).
+            $fa = if ($wfiles -contains $f) { Split-Path $f -Leaf } else { $f }
+            $a += @($fa, "/Fo$o")
             $a = $a | ForEach-Object { if ($_ -match ' ') { "`"$_`"" } else { $_ } }
             $todo.Add(@(, $a) + @($o))
             $uobjs[$sp.n] += $o
@@ -229,15 +252,15 @@ function Compile-Units($specs, [switch]$Standalone) {
     $run = @()
     foreach ($t in $todo) {
         while (@($run | Where-Object { -not $_.HasExited }).Count -ge $Jobs) { Start-Sleep -Milliseconds 200 }
-        $run += Keep-Handle (Start-Process -FilePath $CXX -ArgumentList $t[0] -NoNewWindow -PassThru `
+        $run += Keep-Handle (Start-Process -FilePath $CXX -ArgumentList $t[0] -NoNewWindow -PassThru -WorkingDirectory $WRAP `
                              -RedirectStandardOutput "$($t[1]).out" -RedirectStandardError "$($t[1]).err")
     }
     Wait-All $run "compilation (separate files)"
     return $uobjs
 }
-function Link($exe, $objs, [switch]$Gen) {
+function Link($exe, $objs, [switch]$Gen, [string[]]$Extra = @()) {
     $a = @('/nologo', "/OUT:$exe", '/SUBSYSTEM:CONSOLE', '/STACK:8388608', '/LARGEADDRESSAWARE') + $objs +
-         @("$OBJ\tbprobe.obj", "$OBJ\triumv.res", 'advapi32.lib')
+         @("$OBJ\tbprobe.obj", "$OBJ\triumv.res", 'advapi32.lib') + $Extra
     if ($Gen) { $a += $rt.FullName } else { $a += @('/OPT:REF', '/OPT:ICF') }
     if ($MultiTU) { $a += "/opt:lldltojobs=$Jobs" }   # the objects are ThinLTO bitcode: the code is generated here
     # W3 (09/10/2026): no cmov -> branch conversion in the ThinLTO codegen (-0.15% middlegame, -0.29% endgames, z_w3)
@@ -249,6 +272,61 @@ function Link($exe, $objs, [switch]$Gen) {
     [IO.File]::WriteAllLines($rsp, [string[]]@($a | ForEach-Object { if ($_ -match ' ') { "`"$_`"" } else { $_ } }), (New-Object Text.UTF8Encoding $false))
     & $LNK "@$rsp" 2>&1 | Out-File -Append -Encoding utf8 $LOG
     if ($LASTEXITCODE -ne 0) { Fail "link of $exe failed" }
+}
+
+# --- one variant, optimised exactly as its own executable (06/11/2026, R26) ------------------------------------------
+# The universal executable used to be ONE ThinLTO link of the seven variants, which needs one profile for all the
+# modules (the linker refuses modules with different profile summaries, see build_universal.ps1): the seven profiles
+# were merged. The summary of the merged profile (the counts that make a block hot or cold for the inliner, the loop
+# passes and the block layout) is the one of the sum, and the scalar network of sse41 counts 270 times more than the
+# AVX-512 one (largest block 1.4e13 against 5.1e10): the hot threshold of every variant rose from 4.2e7 to 2.7e8 and a
+# large part of the hot code of the AVX variants was optimised as warm. The avx512 variant inside the universal ran
+# +5.0% instructions per node against the same variant built alone (Xeon), avx512icl +5.7% (Zen 4).
+# Now every variant is linked alone, with its own profile, as the executable that build_variants.ps1 verifies:
+# standalone.cpp compiled natively (not bitcode, so that the ThinLTO modules are only the engine's) and the native
+# objects of the ThinLTO backends kept through the cache of lld-link (one object per module). Link-Universal then
+# joins these native objects behind entry.cpp with no second code generation: each variant of the universal is the
+# code of its own executable. What the variants still share are the out-of-line copies of the standard library that
+# their links keep as COMDAT (strings, streams, locale, exceptions, std::mutex: cold code, 558 symbols on 06/11/2026):
+# the linker takes the first copy, and sse41 comes first so that these copies run on every CPU. Before, the first
+# copy came from avx2-nopext (/arch:AVX2): the sse41 variant called AVX code on a CPU that may not have it.
+# Returns the native objects of the variant; $exe is the verified standalone executable of the same code.
+function Build-Variant($n, $objs, $exe) {
+    $sa = "$OBJ\sa$n.obj"
+    $a = $base + (VFlags $n) + (VTune $n) + @("-DTRIUMV_VID=$n", "$U\standalone.cpp", "/Fo$sa")
+    & $CXX @a
+    if ($LASTEXITCODE -ne 0) { Fail "standalone.cpp of $($VariantNames[$n])" }
+    $cache = "$OBJ\lto$n"
+    Remove-Item -Recurse -Force $cache -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory $cache | Out-Null
+    Link $exe (@($objs) + @($sa)) -Extra @("/lldltocache:$cache")
+    $nat = @(Get-ChildItem "$cache\llvmcache-*" | Sort-Object Name | ForEach-Object FullName)
+    if ($nat.Count -ne @($objs).Count) { Fail "$($VariantNames[$n]): $($nat.Count) native objects in $cache for $(@($objs).Count) modules" }
+    return , $nat
+}
+# The universal executable from the native objects of Build-Variant ($nat: variant number -> objects).
+# clang 23 emits the vector deleting destructor of a class (??_E) as a weak alias of its scalar deleting destructor
+# (??_G) in the IR; the ThinLTO link resolves it, but the native objects of the backends keep only the references:
+# linked natively, ??_E of std::basic_ifstream and its kin would stay undefined. The same aliases are given back here
+# as /alternatename, only for a ??_E that no object defines while its ??_G is defined. Any other missing symbol still
+# stops the link.
+function Link-Universal($exe, $nat) {
+    $objs = @("$OBJ\entry.obj")
+    foreach ($n in 6, 1, 2, 7, 3, 4, 5) { if ($nat.ContainsKey($n)) { $objs += $nat[$n] } }
+    $nm = Join-Path (Split-Path $LNK -Parent) 'llvm-nm.exe'
+    if (-not (Test-Path $nm)) { Fail "llvm-nm.exe missing next to $LNK" }
+    $def = New-Object 'System.Collections.Generic.HashSet[string]'
+    $und = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($l in (& $nm @objs 2>$null)) {
+        if ($l -match '^\s*U (\S+)$') { [void]$und.Add($Matches[1]) }
+        elseif ($l -match '^\S* ?[A-Z] (\S+)$') { [void]$def.Add($Matches[1]) }
+    }
+    $alt = @(foreach ($s in $und) {
+        if ($s.StartsWith('??_E') -and -not $def.Contains($s) -and $def.Contains('??_G' + $s.Substring(4))) {
+            "/alternatename:$s=??_G$($s.Substring(4))"
+        } })
+    if ($alt.Count) { Say "vector deleting destructors aliased to the scalar ones: $($alt.Count)" }
+    Link $exe $objs -Extra $alt
 }
 # Parts every executable shares: fathom (C, ISA-independent), the entry point, the resources (icon and network).
 function Build-CommonParts {

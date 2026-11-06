@@ -162,7 +162,13 @@ struct alignas(64) LinesBishop {   // (diagonal, antidiagonal), twice the bit, t
 };
 extern LinesBishop g_linesB[64];
 inline __m128i pair_hqs(int sq, u64 occ) {
-    const LinesBishop& B = g_linesB[sq];
+    // The lines of the square in one register (R26, 06/11/2026, same attacks): as base + index (g_linesB + 64 sq) the
+    // folded loads of hq_lanes are split into two uops each on Intel cores (three-operand VEX ops); AMD does not care.
+    const LinesBishop* pB = &g_linesB[sq];
+#if defined(__clang__) || defined(__GNUC__)
+    __asm__("" : "+r"(pB));
+#endif
+    const LinesBishop& B = *pB;
     __m128i            l;
     const __m128i      d = hq_lanes(_mm_set1_epi64x(static_cast<long long>(occ)), B.line, B.twoS, B.twoSRev, l);
     // file: one square per rank, so bswap reverses it

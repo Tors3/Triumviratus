@@ -2,13 +2,11 @@
 #  build_variants.ps1 -- release chain, phase 1 (29/10/2026): the variants THIS CPU runs, each with its PGO profile
 #  recorded with its own instructions, each verified by bench in a standalone executable.
 #
-#  The universal executable cannot be assembled from objects built on different machines: with ThinLTO the variants
-#  import each other's copies of the standard library at link time, and the linker refuses modules compiled with
-#  different profiles ("ProfileSummary: conflicting values", see build_universal.ps1). What travels between machines is
-#  therefore the PROFILE of each variant (the only part that needs the CPU), with a manifest that pins the source, the
-#  flags, the compiler and the network it was recorded with. pack_universal.ps1 merges the profiles and compiles the
-#  universal executable with the same flags as build_universal.ps1 (shared code in ubuild_lib.ps1). The standalone
-#  executables written here are the check that each variant, built with its own profile, gives the expected bench.
+#  What travels between machines is the PROFILE of each variant (the only part that needs the CPU), with a manifest
+#  that pins the source, the flags, the compiler and the network it was recorded with. pack_universal.ps1 compiles
+#  every variant with its own profile, links it alone as here and joins the native objects behind entry.cpp
+#  (Build-Variant and Link-Universal, ubuild_lib.ps1). The standalone executables written here are the check that each
+#  variant, built with its own profile, gives the expected bench: the universal executable runs the same code.
 #
 #  Run it through build\release.ps1 (download of the source and of the network, toolchain check). By hand:
 #    .\build_variants.ps1 -Out D:\rel\zen4                    # every variant this CPU runs
@@ -121,9 +119,11 @@ $tag = if ($Official) { 'official' } else { $Day }
 $pre = if ($PosSolver) { "Triumviratus_${VER}_PosSolver_${tag}" } else { "Triumviratus_${VER}_${tag}" }
 $pobjs = Compile-Units @($chosen | ForEach-Object {
     if ($profs.ContainsKey($_)) { @{ n = $_; mode = 'use'; as = $_; prof = $profs[$_] } } else { @{ n = $_; mode = 'none'; as = $_; prof = '' } }
-}) -Standalone
+})
+# Built as pack_universal.ps1 builds the variant inside the universal executable (Build-Variant, ubuild_lib.ps1): the
+# executable verified here is the code the universal one runs.
 $exes = @{}
-foreach ($n in $chosen) { $exes[$n] = "$Out\${pre}_$($VariantNames[$n]).exe"; Link $exes[$n] $pobjs[$n] }
+foreach ($n in $chosen) { $exes[$n] = "$Out\${pre}_$($VariantNames[$n]).exe"; $null = Build-Variant $n $pobjs[$n] $exes[$n] }
 
 # --- nnperft (optional): development build of the same variants -----------------------------------------------------
 $perft = @{}

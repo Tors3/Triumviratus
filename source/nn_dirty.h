@@ -76,6 +76,26 @@ struct NnDirtyPawns {
 // 10/10/2026, kept because it holds for every network).
 inline unsigned nn_net_epoch = 0;
 
+// avx512icl (05/11/2026, R26 §6): 512 bytes on a 64-byte boundary. The threat list starts a cache line in every state
+// (with 440 bytes its place in the line changed from state to state and most 64-byte stores of the vector emission
+// split two lines), and the passers of a pawn event ([0 before, 1 after][white, black]) have their own place in the
+// line of the dirty piece and the pawns, instead of NnStack::v1PassW/B, 108 KB away. The layout depends on
+// USE_AVX512ICL, a build flag of the variant (universal/ubuild_lib.ps1, Makefile) and so the same in every
+// translation unit. Measured with the byte board on the Zen 4; neutral on Skylake-SP, so the other variants keep 440.
+#if defined(USE_AVX512ICL)
+struct alignas(64) NnState {
+    NnDirtyPiece  dp;            // 9 bytes
+    std::uint8_t  computed[2];    // accumulator of this state computed, per perspective (white, black)
+    std::uint8_t  idx;            // position in the stack (nn_stack_of); in the padding, same size
+    NnDirtyPawns  pawns;
+    std::uint64_t key;           // -DTRIUMV_VERIFY_NNSYNC: piece key after the move (synchronisation check)
+    std::uint64_t pass[2][2];    // passers [0 before, 1 after][white, black] of a pawn event
+    std::uint8_t  pad_[44];      // threats.list at offset 128
+    NnDirtyThreats threats;
+};
+static_assert(offsetof(NnState, threats) + offsetof(NnDirtyThreats, list) == 128, "NnState: list off its line");
+static_assert(sizeof(NnState) == 512, "NnState: 512 bytes");
+#else
 struct NnState {
     NnDirtyPiece  dp;            // 9 bytes
     std::uint8_t  computed[2];    // accumulator of this state computed, per perspective (white, black)
@@ -84,6 +104,7 @@ struct NnState {
     std::uint64_t key;           // -DTRIUMV_VERIFY_NNSYNC: piece key after the move (synchronisation check)
     NnDirtyThreats threats;
 };
+#endif
 static_assert(offsetof(NnState, pawns) == 16, "NnState: idx deve stare nel padding prima di `pawns`");
 
 struct NnStack {

@@ -167,21 +167,13 @@ if (-not $NoPgo) {
         if ($LASTEXITCODE -ne 0) { Fail "merge of profile $n" }
         $profs[$n] = "$PROF\v$n.profdata"
     }
-    if ($MultiTU) {
-        # With ThinLTO the linker imports functions across modules, also of different variants (shared copies of the
-        # standard library), and refuses modules with different profiles ("ProfileSummary: conflicting values",
-        # 09/10/2026). One profile for all: the engine functions have different names per variant (namespace), their
-        # counts stay theirs.
-        $all = @($train.Keys | ForEach-Object { "$PROF\v$_.profdata" })
-        & $PD merge -o "$PROF\tutte.profdata" @all
-        if ($LASTEXITCODE -ne 0) { Fail "merge of the single profile" }
-        foreach ($n in @($profs.Keys)) { $profs[$n] = "$PROF\tutte.profdata" }
-    }
+    # Every variant keeps its own profile (06/11/2026): with separate files each variant is linked alone and the native
+    # objects are joined afterwards (Build-Variant and Link-Universal in ubuild_lib.ps1). The single merged profile of
+    # before cost the AVX variants +5% instructions per node.
     Say "profiles: $(($profs.Keys | Sort-Object | ForEach-Object { $names[$_] }) -join ', ')"
 }
 
-# --- optimised builds and link (the lowest variant first: the shared copies of the standard library come from
-#     avx2-nopext) ------------------------------------------------------------------------------------------------
+# --- optimised builds and link ----------------------------------------------------------------------------------------
 Say "optimised builds"
 $exe = if ($Official) { "$Out\Triumviratus_${VER}_windows_universal.exe" } else { "$Out\Triumviratus_${VER}_${Day}_universal.exe" }
 if ($PosSolver) { $exe = $exe -replace "Triumviratus_${VER}_", "Triumviratus_${VER}_PosSolver_" }
@@ -190,8 +182,8 @@ if ($Only) {
     $exe = "$Out\Triumviratus_${VER}_${Day}_v$Only.exe"
     $sp1 = if ($profs.ContainsKey($Only)) { @{ n = $Only; mode = 'use'; as = $Only; prof = $profs[$Only] } }
            else { @{ n = $Only; mode = 'none'; as = $Only; prof = '' } }
-    $pobjs = Compile-Units @($sp1) -Standalone
-    Link $exe $pobjs[$Only]
+    $pobjs = Compile-Units @($sp1)
+    $null = Build-Variant $Only $pobjs[$Only] $exe
     $b = (Get-Bench $exe '' $OBJ).Nodes
     $vlines = @("{0,-12} bench {1,-8} {2}" -f $names[$Only], $b, $(if ($b -eq $ExpectedBench) { "ok" } else { "BENCH DIFFERS (expected $ExpectedBench)" }))
     Set-Content -Encoding utf8 "$Out\verifica.txt" $vlines
@@ -204,7 +196,9 @@ if ($MultiTU) {
     $pobjs = Compile-Units @(1..7 | ForEach-Object {
         if ($profs.ContainsKey($_)) { @{ n = $_; mode = 'use'; as = $_; prof = $profs[$_] } }
         else { @{ n = $_; mode = 'none'; as = $_; prof = '' } } })
-    Link $exe (@("$OBJ\entry.obj") + $pobjs[1] + $pobjs[2] + $pobjs[3] + $pobjs[4] + $pobjs[5] + $pobjs[6] + $pobjs[7])
+    $nat = @{}
+    foreach ($n in 1..7) { $nat[$n] = Build-Variant $n $pobjs[$n] "$OBJ\s$n.exe" }
+    Link-Universal $exe $nat
 } else {
     $ps = foreach ($n in 1..7) {
         if ($profs.ContainsKey($n)) { Start-Variant $n "$OBJ\p$n.obj" 'use' $n $profs[$n] }

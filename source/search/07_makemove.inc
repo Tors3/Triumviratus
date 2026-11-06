@@ -172,6 +172,13 @@ static inline void td_mailbox_verify(ThreadData &td, const char *where) {
     int expect = -1;
     for (int pc = P; pc <= k; pc++)
       if (get_bit(td.bitboards[pc], sq)) { expect = pc; break; }
+#if defined(USE_AVX512ICL)
+    if (td.pc8[sq] != expect) {
+      fprintf(stderr, "[MAILBOX] %s: sq=%d pc8=%d bitboards=%d\n", where, sq, td.pc8[sq], expect);
+      fflush(stderr);
+      abort();
+    }
+#endif
     if (td.piece_on[sq] != expect) {
       fprintf(stderr, "[MAILBOX] %s: sq=%d mailbox=%d bitboards=%d\n", where, sq,
               td.piece_on[sq], expect);
@@ -189,6 +196,12 @@ static inline void td_mailbox_verify(ThreadData &td, const char *where) {
 // here values are written, so distinct forward and backward passes are needed. They must be called
 // at the SAME THREE SITES as td_occ_update, or the mailbox gets out of step with the bitboards
 // and the ordering goes wrong silently (no crash, no different signature).
+// avx512icl (05/11/2026, R26 §6): every write of piece_on is repeated on the byte mailbox td.pc8 (threads.h).
+#if defined(USE_AVX512ICL)
+  #define TD_PC8(sq, v) (td.pc8[(sq)] = (std::int8_t)(v))
+#else
+  #define TD_PC8(sq, v) ((void)0)
+#endif
 static inline void td_mailbox_apply(ThreadData &td, int piece, int source, int target,
                                     int promoted, int captured_piece,
                                     int captured_square, int castling) {
@@ -203,13 +216,21 @@ static inline void td_mailbox_apply(ThreadData &td, int piece, int source, int t
     td.piece_on[rf] = -1;
     td.piece_on[target] = piece;
     td.piece_on[rt] = rook_pc;
+    TD_PC8(source, -1);
+    TD_PC8(rf, -1);
+    TD_PC8(target, piece);
+    TD_PC8(rt, rook_pc);
     return;
   }
   // AA3 (10/10/2026): branchless on the capture; without a victim the first write falls on the start square. The index
   // is chosen with a mask: with `?:` clang emits a branch so as not to read captured_square.
-  td.piece_on[source ^ ((source ^ captured_square) & -int(captured_piece != -1))] = -1;
+  const int victim_sq = source ^ ((source ^ captured_square) & -int(captured_piece != -1));
+  td.piece_on[victim_sq] = -1;
   td.piece_on[source] = -1;
   td.piece_on[target] = promoted ? promoted : piece;
+  TD_PC8(victim_sq, -1);
+  TD_PC8(source, -1);
+  TD_PC8(target, promoted ? promoted : piece);
 }
 
 static inline void td_mailbox_revert(ThreadData &td, int piece, int source, int target,
@@ -224,14 +245,22 @@ static inline void td_mailbox_revert(ThreadData &td, int piece, int source, int 
     td.piece_on[rt] = -1;
     td.piece_on[source] = piece;
     td.piece_on[rf] = rook_pc;
+    TD_PC8(target, -1);
+    TD_PC8(rt, -1);
+    TD_PC8(source, piece);
+    TD_PC8(rf, rook_pc);
     return;
   }
   // Mirrored order: target is emptied and THEN the victim is put back, so that when
   // captured_square == target (normal capture) the victim takes its place again.
   // AA3 (10/10/2026): branchless on the capture. Without a victim the third write puts -1 back on target.
+  const int victim_sq = target ^ ((target ^ captured_square) & -int(captured_piece != -1));
   td.piece_on[target] = -1;
   td.piece_on[source] = piece;
-  td.piece_on[target ^ ((target ^ captured_square) & -int(captured_piece != -1))] = captured_piece;
+  td.piece_on[victim_sq] = captured_piece;
+  TD_PC8(target, -1);
+  TD_PC8(source, piece);
+  TD_PC8(victim_sq, captured_piece);
 }
 
 // ============================================================================

@@ -26,7 +26,11 @@
 #endif
 
 // Ray from s1 through s2 to the edge (s2 included, s1 excluded); 0 if the squares are not aligned or coincide.
-static U64 nn_ray_pass[64][64];
+// Stored as [s2][s1] (05/11/2026, R26 §6, same values): the seers of one square (s2 fixed, the seer s1 varying:
+// nn_piece_threats) read one 512-byte row of the 32 KB table instead of a line in a different row each.
+// NN_RAY(s1, s2) is the ray from s1 through s2.
+alignas(64) static U64 nn_ray_pass[64][64];
+#define NN_RAY(s1, s2) nn_ray_pass[(s2)][(s1)]
 
 // (Tables of the graft blocks nn_pr_* and nn_ps_*, with nn_graft_tables_init: removed on 10/10/2026 with the blocks,
 // code in _backup/Triumviratus_8.0_pre_rimozione_graft_2026-10-10 and in the training repo,
@@ -41,7 +45,7 @@ static void nn_dirty_init() {
         r = get_rook_attacks(s1, 0) & (get_rook_attacks(s2, b1) | b2);
       else if (get_bishop_attacks(s1, 0) & b2)
         r = get_bishop_attacks(s1, 0) & (get_bishop_attacks(s2, b1) | b2);
-      nn_ray_pass[s1][s2] = r;
+      NN_RAY(s1, s2) = r;
     }
 }
 
@@ -68,6 +72,35 @@ struct NnLookMailbox {
   __m512i chunk(int c) const { return _mm512_loadu_si512(mb + 16 * c); }
 #endif
 };
+
+// Byte board, avx512icl only (05/11/2026, R26 §6, same tuples; without VBMI2 the 16-byte chunks cost more
+// instructions than they save, measured on the Xeon): the catch-up builds the board before the pending moves in one
+// register from the byte mailbox td.pc8 (one aligned line, written by the make) and keeps it in a 64-byte aligned
+// buffer written by one vector store per state. Before, 256 bytes of td.piece_on (int, five lines from offset 184 of
+// ThreadData, every 64-byte load across two) were copied, patched with scalar stores and read back at once by 64-byte
+// vector loads, which cannot take their data from the narrower stores and wait for them to reach L1. Every read of
+// the buffer is served by its single store.
+#if defined(USE_AVX512ICL) && defined(NN_THREATS_VECTOR)
+  #define NN_MB8
+struct NnLookBoard8 {
+  const std::int8_t *mb;
+  int operator()(int s) const { return mb[s]; }
+  __m512i board() const { return _mm512_load_si512(mb); }   // read by the vpcompressb emission only
+};
+// Mask of one square, 0 for NN_SQ_NONE (64).
+static inline __mmask64 nn_sq_mask(int sq) { return (__mmask64)((U64)(sq != NN_SQ_NONE) << (sq & 63)); }
+// The byte board before (undo) and after (redo) a move: the writes of nn_mb_undo and nn_mb_redo, in the same order.
+static inline __m512i nn_b8_undo(__m512i b, const NnDirtyPiece &dp) {
+  b = _mm512_mask_mov_epi8(b, nn_sq_mask(dp.to) | nn_sq_mask(dp.add_sq), _mm512_set1_epi8(-1));
+  b = _mm512_mask_mov_epi8(b, nn_sq_mask(dp.from), _mm512_set1_epi8((char)dp.pc));
+  return _mm512_mask_mov_epi8(b, nn_sq_mask(dp.remove_sq), _mm512_set1_epi8((char)dp.remove_pc));
+}
+static inline __m512i nn_b8_redo(__m512i b, const NnDirtyPiece &dp) {
+  b = _mm512_mask_mov_epi8(b, nn_sq_mask(dp.from) | nn_sq_mask(dp.remove_sq), _mm512_set1_epi8(-1));
+  b = _mm512_mask_mov_epi8(b, nn_sq_mask(dp.to), _mm512_set1_epi8((char)dp.pc));
+  return _mm512_mask_mov_epi8(b, nn_sq_mask(dp.add_sq), _mm512_set1_epi8((char)dp.add_pc));
+}
+#endif
 
 static inline void nn_add_threat(NnDirtyThreats *dts, bool add, int pc, int tpc, int pcSq, int tSq) {
   dts->list[dts->n++] = nn_threat(pc, tpc, pcSq, tSq, add);
@@ -101,6 +134,40 @@ static inline void nn_write_multi(const Look &look, U64 mask, std::uint32_t tmpl
     write += count_bits((U64)m);
   }
 }
+#if defined(NN_MB8)   // avx512icl: VBMI2 always there
+// Byte board with VBMI2 (avx512icl): the squares (0..63) and the pieces are compacted with the same 64-bit mask by
+// vpcompressb in registers, so the pieces come out in the order of the squares; then one widening and one store per
+// 16 tuples. A mask has at most 18 squares (8 knights, 8 line pieces, 2 pawns attacking one square), so the second
+// group is rare and the other two never run; their writes stay inside the spare entries of the list.
+template <int SqShift, int PcShift>
+static inline void nn_write_multi(const NnLookBoard8 &look, U64 mask, std::uint32_t tmpl, NnDirtyThreats *dts) {
+  if (!mask) return;
+  std::uint32_t *write = dts->list + dts->n;
+  const int cnt = count_bits(mask);
+  dts->n += cnt;
+  alignas(64) static constexpr std::int8_t iota[64] = {
+      0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+      44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+  const __m512i sq = _mm512_maskz_compress_epi8((__mmask64)mask, _mm512_load_si512(iota));
+  const __m512i pc = _mm512_maskz_compress_epi8((__mmask64)mask, look.board());
+  const __m512i template_v = _mm512_set1_epi32(int(tmpl));
+  const auto put = [&](__m128i s16, __m128i p16, std::uint32_t *w) {
+    const __m512i s = _mm512_slli_epi32(_mm512_cvtepu8_epi32(s16), SqShift);
+    const __m512i p = _mm512_slli_epi32(_mm512_cvtepu8_epi32(p16), PcShift);
+    _mm512_storeu_si512(w, _mm512_ternarylogic_epi32(template_v, s, p, 254 /* A | B | C */));
+  };
+  put(_mm512_castsi512_si128(sq), _mm512_castsi512_si128(pc), write);
+  if (cnt > 16) {
+    put(_mm512_extracti32x4_epi32(sq, 1), _mm512_extracti32x4_epi32(pc, 1), write + 16);
+    if (cnt > 32) {
+      put(_mm512_extracti32x4_epi32(sq, 2), _mm512_extracti32x4_epi32(pc, 2), write + 32);
+      if (cnt > 48)
+        put(_mm512_extracti32x4_epi32(sq, 3), _mm512_extracti32x4_epi32(pc, 3), write + 48);
+    }
+  }
+}
+#endif
 #endif
 
 // AA1 (10/10/2026, speed, same tuples): the slider attacks of the piece are those nn_piece_threats has already
@@ -145,7 +212,7 @@ static inline void nn_piece_threats(const NnTB &tb, const Look &look, int pc, bo
   if constexpr (Lines) {
     for (U64 rest = seers & ~skip_seers; rest; rest &= rest - 1) {
       const int from = get_ls1b_index(rest);
-      const U64 line = nn_ray_pass[from][s];
+      const U64 line = NN_RAY(from, s);
       const U64 behind = line & (diag | orth) & targets_any;
       if (!behind || (line & whole_move) == whole_move)
         continue;
@@ -257,7 +324,7 @@ static inline void nn_threat_steps(NnTB &tb, const Look &look, const NnDirtyPiec
       // then; knights and pawns are never on it). Nothing else changes: nnperft and nnueverify compare the
       // accumulators with a refresh. No line (a knight capture): `ray` is 0 and the piece on `to` cannot see `from`,
       // so nothing is skipped.
-      const U64 ray = nn_ray_pass[to][from];
+      const U64 ray = NN_RAY(to, from);
       nn_step_remove(tb, look, pc, from, dts, ray | (1ULL << to));
       nn_step_swap(tb, look, dp.remove_pc, arriving, to, dts, ray);
     }
@@ -466,30 +533,60 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
   tb.color[white] = td.occupancies[white];
   tb.color[black] = td.occupancies[black];
   tb.occ = td.occupancies[both];
+#if defined(NN_MB8)
+  alignas(64) std::int8_t mb8[64];
+  __m512i b8 = _mm512_load_si512(td.pc8);
+  for (int i = last - 1; i >= first; i--) {
+    nn_dp_toggle(tb, S.st[i].dp);
+    b8 = nn_b8_undo(b8, S.st[i].dp);
+  }
+  _mm512_store_si512(mb8, b8);
+#else
   alignas(64) int mb[64];
   std::memcpy(mb, td.piece_on, sizeof(mb));
   for (int i = last - 1; i >= first; i--) {
     nn_dp_toggle(tb, S.st[i].dp);
     nn_mb_undo(mb, S.st[i].dp);
   }
+#endif
   // R4 (10/10/2026): passers for PassedPawns v1, one state at a time (NnStack::v1PassW/B). Those of the state
   // first - 1 are already in the stack, except at the root (~0): tb is now its board.
+#if !defined(USE_AVX512ICL)
   U64 v1w = S.v1PassW[first - 1], v1b = S.v1PassB[first - 1];
   if (v1w == ~0ULL) {
     const U64 wp = tb.type[NN_PAWN] & tb.color[white], bp = tb.type[NN_PAWN] & tb.color[black];
     v1w = S.v1PassW[first - 1] = nn_passers(white, wp, bp);
     v1b = S.v1PassB[first - 1] = nn_passers(black, bp, wp);
   }
+#endif
   for (int i = first; i < last; i++) {
     NnState &st = S.st[i];
     nn_fill_pawns(st.pawns, st.dp, tb.type[NN_PAWN] & tb.color[white], tb.type[NN_PAWN] & tb.color[black]);
-    nn_threat_steps(tb, NnLookMailbox{mb}, st.dp, &st.threats);  // tb leaves in the state after the move
-#if defined(USE_AVX512)
+#if defined(NN_MB8)
+    nn_threat_steps(tb, NnLookBoard8{mb8}, st.dp, &st.threats);  // tb leaves in the state after the move
+    b8 = nn_b8_redo(b8, st.dp);
+    _mm512_store_si512(mb8, b8);
+#elif defined(USE_AVX512)
+    nn_threat_steps(tb, NnLookMailbox{mb}, st.dp, &st.threats);
     nn_mb_redo(mb, st.dp);
 #else
+    nn_threat_steps(tb, NnLookMailbox{mb}, st.dp, &st.threats);
     if (i + 1 < last)   // the local mailbox is not read after the last state (Houze Guo, 03/11/2026)
       nn_mb_redo(mb, st.dp);
 #endif
+#if defined(USE_AVX512ICL)
+    // (05/11/2026, R26 §6, avx512icl, same features) The passers only on a pawn event, before (from the pawns before the
+    // move, the board of the previous state) and after, in the state itself: no reads or writes of the two arrays at
+    // the far end of NnStack (about 108 KB past the states) on every catch-up.
+    if (st.pawns.any) {
+      const NnDirtyPawns &pw = st.pawns;
+      const U64 wp = tb.type[NN_PAWN] & tb.color[white], bp = tb.type[NN_PAWN] & tb.color[black];
+      st.pass[0][white] = nn_passers(white, pw.before[white], pw.before[black]);
+      st.pass[0][black] = nn_passers(black, pw.before[black], pw.before[white]);
+      st.pass[1][white] = nn_passers(white, wp, bp);
+      st.pass[1][black] = nn_passers(black, bp, wp);
+    }
+#else
     if (st.pawns.any) {  // R4: the passers change only with a pawn event
       const U64 wp = tb.type[NN_PAWN] & tb.color[white], bp = tb.type[NN_PAWN] & tb.color[black];
       v1w = nn_passers(white, wp, bp);
@@ -497,6 +594,7 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
     }
     S.v1PassW[i] = v1w;
     S.v1PassB[i] = v1b;
+#endif
   }
   S.ready = last;
 }

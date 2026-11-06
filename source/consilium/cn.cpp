@@ -63,6 +63,17 @@ static inline int CN_LSB(unsigned long long b) { unsigned long i; _BitScanForwar
     #define CN_LEAF
 #endif
 
+// Row pointer in one register (R26, 06/11/2026, speed, same values): on Intel cores an instruction whose memory operand
+// has an indexed address (base + index) is split into two uops at issue unless it is a two-operand read-modify-write,
+// which excludes every three-operand VEX/EVEX op such as vpaddw with a folded load. clang keeps a row of a table as
+// base + index (net.pkW1[idx]: base + 512 idx); the empty asm hands it over as one register, so the loads are [w + k].
+// AMD Zen does not split them: nothing changes there. MSVC has no GNU asm and needs nothing.
+#if defined(__clang__) || defined(__GNUC__)
+    #define CN_ONE_REG(p) __asm__("" : "+r"(p))
+#else
+    #define CN_ONE_REG(p) ((void)0)
+#endif
+
 // CN_W1 (block 8, 18/10/2026; the idea is A Tin Man's, 15/10/2026, measured on the previous inference): the int8 rows
 // (threats, pawn pairs, passed pawns) are stored with their bytes interleaved in blocks of 32 (byte 2j = element j,
 // byte 2j + 1 = element 16 + j). One 32-byte load then gives two int16 vectors: vpmaddubsw with (1, 0) pairs keeps the
@@ -358,6 +369,9 @@ inline int threat_index(int p, int o, int apc, int tpc, int fe, int te) {
 std::uint8_t  g_same[12][12];
 std::uint8_t  g_x[2][12];        // [persp][attacker]: attacker kind ac * 5 + at (0 for a king: never valid)
 std::int8_t   g_tk[2][12][12];   // [persp][attacker][target]: group kind x * 10 + slot, -1 = no feature
+// [persp][attacker << 4 | target]: group kind (bits 0-6, 127 = none), attacker kind (7-10), has a feature (11), same
+// type pair (12) (threat_row_pair).
+alignas(64) std::uint16_t g_kt[2][256];
 std::uint8_t  g_oo[2][2];        // [persp][mirror]: 56 ^ orient
 alignas(64) std::uint16_t g_thrG[128][64];   // [kind][from']: stored start of the group (kind 127: never valid)
 std::uint16_t g_thrStore[ROWS_THR];          // specification row -> stored row
@@ -381,6 +395,18 @@ void build_fast_threats() {
             }
         }
     }
+    // (05/11/2026, R26 §6) g_tk, g_x and g_same in one entry per (perspective, attacker << 4 | target), the byte the tuple
+    // already carries in bits 16-23 (nn_dirty.h). Codes 12-15 are never written: no feature.
+    for (int p = 0; p < 2; p++)
+        for (int pair = 0; pair < 256; pair++) {
+            const int a = pair >> 4, d = pair & 15;
+            if (a >= 12 || d >= 12) {
+                g_kt[p][pair] = 127;
+                continue;
+            }
+            const int k = g_tk[p][a][d];
+            g_kt[p][pair] = std::uint16_t((k < 0 ? 127 : k) | g_x[p][a] << 7 | int(k >= 0) << 11 | g_same[a][d] << 12);
+        }
 }
 
 // -DCN_ROWSTATS: how many times each threat row and each pawn-pair row is read (incremental updates and refreshes),
@@ -483,6 +509,15 @@ inline int threat_row(int p, int m, int apc, int tpc, int f, int t, int& valid) 
     return (g_thrG[k & 127][fo] + g_thrL[x][fo][to]) & -valid;
 }
 
+// The same row for the update loops of a move (05/11/2026, R26 §6, same rows): from the tuple's attacker/target byte
+// and the perspective's orientation xor `o` (g_oo, once per update), one entry of g_kt (group kind, attacker kind, has
+// a feature, same-type pair) instead of three tables, then the group start and the rank of `to`.
+inline int threat_row_pair(int p, int o, int pair, int f, int t, int& valid) {
+    const int e = g_kt[p][pair], fo = f ^ o, to = t ^ o, x = (e >> 7) & 15;
+    valid       = ((e >> 11) & 1) & (1 ^ (((e >> 12) & 1) & int(fo < to)));
+    return (g_thrG[e & 127][fo] + g_thrL[x][fo][to]) & -valid;
+}
+
 bool check_fast_threats() {
     for (int p = 0; p < 2; p++)
         for (int m = 0; m < 2; m++)
@@ -501,6 +536,9 @@ bool check_fast_threats() {
                             const int r   = threat_row(p, m, a, d, f, t, valid);
                             const int ref = threat_index(p, orient(p, m), a, d, f, t);
                             if (ref < 0 ? valid != 0 : (valid != 1 || r != g_thrStore[ref])) return false;
+                            int       valid2;
+                            const int r2 = threat_row_pair(p, g_oo[p][m], a << 4 | d, f, t, valid2);
+                            if (valid2 != valid || r2 != r) return false;
                         }
     return true;
 }
@@ -1051,14 +1089,19 @@ void pawn_init(const Net& net, Handle& h) {
 // The pawn vector of the board for perspective P (pawn-pair + passed-pawn rows summed from zero, PSQT included): from
 // the pawn cache, or computed and stored there. Direct mapped on a hash of the pawns, exact key. The rows depend only
 // on the pawns, the perspective and its orientation (never on the king bucket or the expert).
+// Slot of the pawn cache for these pawns and perspective (pm = p | 2 x king half, + 1).
+inline std::size_t pawn_slot(u64 wp, u64 bp, std::uint32_t pm) {
+    std::uint64_t k = wp * 0x9E3779B97F4A7C15ULL ^ (bp + 0x632BE59BD9B4E019ULL) * 0xC2B2AE3D27D4EB4FULL ^ pm;
+    k ^= k >> 29;
+    k *= 0xBF58476D1CE4E5B9ULL;
+    return std::size_t(k >> (64 - CN_PAWN_CACHE_LOG2));
+}
+
 const Acc& pawn_vec(const Net& net, Handle& h, const Board& b, const Persp& P, RowList& L) {
     if (h.pawnNet != net.contentHash) pawn_init(net, h);
     const u64           wp = b.bb[PAWN], bp = b.bb[PAWN + 6];
     const std::uint32_t pm = std::uint32_t(P.p | 2 * P.mo) + 1;
-    std::uint64_t       k  = wp * 0x9E3779B97F4A7C15ULL ^ (bp + 0x632BE59BD9B4E019ULL) * 0xC2B2AE3D27D4EB4FULL ^ pm;
-    k ^= k >> 29;
-    k *= 0xBF58476D1CE4E5B9ULL;
-    PawnCacheEntry& e = h.pawnc[k >> (64 - CN_PAWN_CACHE_LOG2)];
+    PawnCacheEntry&     e  = h.pawnc[pawn_slot(wp, bp, pm)];
     if (e.pm == pm && e.wp == wp && e.bp == bp) return e.acc;
     alignas(64) static const Acc zero{};
     active_pawns(b, P, L);
@@ -1100,19 +1143,20 @@ void move_threats(const NnStack& S, int i, const Persp* const PP[2], RowList* co
     CN_TIME(2);
     const NnDirtyThreats& th = S.st[i].threats;
     const int m0 = PP[0] ? PP[0]->mo : 0, m1 = PP[1] ? PP[1]->mo : 0;
+    const int o0 = g_oo[0][m0], o1 = g_oo[1][m1];
     for (std::uint32_t k = 0; k < th.n; k++) {
-        const std::uint32_t t   = th.list[k];
-        const int           apc = (t >> NN_THR_PC) & 15, tpc = (t >> NN_THR_TPC) & 15;
-        const int           f = (t >> NN_THR_PCSQ) & 255, to = (t >> NN_THR_TSQ) & 255;
+        const std::uint32_t t    = th.list[k];
+        const int           pair = (t >> NN_THR_TPC) & 255;   // attacker << 4 | target (NN_THR_PC = NN_THR_TPC + 4)
+        const int           f = t & 255, to = (t >> NN_THR_TSQ) & 255;
         const int           add = int((t >> 31) ^ (dir < 0));
         if (PP[0]) {
             int       valid;
-            const int r = threat_row(0, m0, apc, tpc, f, to, valid);
+            const int r = threat_row_pair(0, o0, pair, f, to, valid);
             LL[0]->pushT(r, valid, add);
         }
         if (PP[1]) {
             int       valid;
-            const int r = threat_row(1, m1, apc, tpc, f, to, valid);
+            const int r = threat_row_pair(1, o1, pair, f, to, valid);
             LL[1]->pushT(r, valid, add);
         }
     }
@@ -1150,7 +1194,13 @@ void move_pawns(const NnStack& S, int i, const Persp& P, RowList& L, int dir) {
                 L.pushP(ppRow[P.pid((cur[1] >> to) & 1, to)], 1 * dir);
             }
         }
+#if defined(USE_AVX512ICL)
+        // avx512icl: the passers before and after the move, from the state itself (nn_dirty.h).
+        const u64 bw = st.pass[0][0], aw = st.pass[1][0], bb = st.pass[0][1], ab = st.pass[1][1];
+        (void)S;
+#else
         const u64 bw = S.v1PassW[i - 1], aw = S.v1PassW[i], bb = S.v1PassB[i - 1], ab = S.v1PassB[i];
+#endif
         for (u64 x = bw & ~aw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), -1 * dir);
         for (u64 x = aw & ~bw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), 1 * dir);
         for (u64 x = bb & ~ab; x; x &= x - 1) L.pushS(P.pid(1, CN_LSB(x)), -1 * dir);
@@ -1228,9 +1278,11 @@ inline int l0_side(const Acc& a, std::uint8_t* out, std::int32_t* nz, int n, int
     const __m512i zero = _mm512_setzero_si512(), top = _mm512_set1_epi16(255);
     __m512i       idx  = _mm512_add_epi32(_mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
                                           _mm512_set1_epi32(firstGroup));
+    const std::int16_t* v = a.v;   // h.acc[top][side]: base + index without it (see CN_ONE_REG)
+    CN_ONE_REG(v);
     for (int j = 0; j < L1H; j += 64) {
-        __m512i x0 = _mm512_loadu_si512(a.v + j), x1 = _mm512_loadu_si512(a.v + j + 32);
-        __m512i y0 = _mm512_loadu_si512(a.v + L1H + j), y1 = _mm512_loadu_si512(a.v + L1H + j + 32);
+        __m512i x0 = _mm512_loadu_si512(v + j), x1 = _mm512_loadu_si512(v + j + 32);
+        __m512i y0 = _mm512_loadu_si512(v + L1H + j), y1 = _mm512_loadu_si512(v + L1H + j + 32);
         x0 = _mm512_slli_epi16(_mm512_min_epi16(_mm512_max_epi16(x0, zero), top), 7);
         x1 = _mm512_slli_epi16(_mm512_min_epi16(_mm512_max_epi16(x1, zero), top), 7);
         y0 = _mm512_min_epi16(y0, top);
@@ -1420,10 +1472,12 @@ struct NzIdxInit {
 // l0 of one side (32 values per step) and its nonzero 4-byte groups, appended to nz; see the AVX-512 version.
 inline int l0_side(const Acc& a, std::uint8_t* out, std::int32_t* nz, int n, int firstGroup) {
     const __m256i zero = _mm256_setzero_si256(), top = _mm256_set1_epi16(255);
+    const std::int16_t* v = a.v;   // h.acc[top][side]: base + index without it (see CN_ONE_REG)
+    CN_ONE_REG(v);
     for (int j = 0; j < L1H; j += 32) {
-        __m256i x0 = _mm256_loadu_si256((const __m256i*)(a.v + j)), x1 = _mm256_loadu_si256((const __m256i*)(a.v + j + 16));
-        __m256i y0 = _mm256_loadu_si256((const __m256i*)(a.v + L1H + j));
-        __m256i y1 = _mm256_loadu_si256((const __m256i*)(a.v + L1H + j + 16));
+        __m256i x0 = _mm256_loadu_si256((const __m256i*)(v + j)), x1 = _mm256_loadu_si256((const __m256i*)(v + j + 16));
+        __m256i y0 = _mm256_loadu_si256((const __m256i*)(v + L1H + j));
+        __m256i y1 = _mm256_loadu_si256((const __m256i*)(v + L1H + j + 16));
         x0 = _mm256_slli_epi16(_mm256_min_epi16(_mm256_max_epi16(x0, zero), top), 7);
         x1 = _mm256_slli_epi16(_mm256_min_epi16(_mm256_max_epi16(x1, zero), top), 7);
         y0 = _mm256_min_epi16(y0, top);
@@ -1597,6 +1651,7 @@ void pawn_king_compute(const Net& net, const Board& b, std::int32_t* out) {
     for (int k = 0; k < R; k++) h[k] = _mm512_load_si512(net.pkB1 + 32 * k);
     auto add = [&](int idx) {
         const std::int16_t* w = net.pkW1[idx];
+        CN_ONE_REG(w);
         for (int k = 0; k < R; k++) h[k] = _mm512_add_epi16(h[k], _mm512_load_si512(w + 32 * k));
     };
     for (u64 x = own; x; x &= x - 1) add(0 + (CN_LSB(x) ^ flip));
@@ -1674,6 +1729,7 @@ void pawn_king_compute(const Net& net, const Board& b, std::int32_t* out) {
     for (int k = 0; k < R; k++) h[k] = _mm256_load_si256(reinterpret_cast<const __m256i*>(net.pkB1 + 16 * k));
     auto add = [&](int idx) {
         const std::int16_t* w = net.pkW1[idx];
+        CN_ONE_REG(w);
         for (int k = 0; k < R; k++)
             h[k] = _mm256_add_epi16(h[k], _mm256_load_si256(reinterpret_cast<const __m256i*>(w + 16 * k)));
     };
@@ -2399,6 +2455,18 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
         from[p]    = c;
         refresh[p] = rb;
     }
+#if defined(USE_AVX512) && !defined(USE_AVX512ICL)
+    // King-cache entries of the refreshes ahead (R26, 06/11/2026, same values): kcache_rows first reads the entry's
+    // bitboards (the last 96 bytes), a line rarely in cache; asked for now, under the work of the other perspective.
+    // Xeon Skylake-SP, avx512: -0.45 / -0.44, -0.22 / -0.49, -0.46 / -0.39% cycles per node (three runs); the Zen 4
+    // (avx512icl) lost +0.7 / +1.2% with it, the AVX2 path 0 / +0.55%: avx512 and vnni512 only.
+    for (int p = 0; p < 2; p++)
+        if (refresh[p]) {
+            const KingCacheEntry& e = h.kcache[p][CN_LSB(b.bb[KING + 6 * p])][state_phase(S, top, b, p)];
+            CN_PREFETCH(e.bb);
+            CN_PREFETCH(e.bb + 8);
+        }
+#endif
 
     if (!refresh[0] && !refresh[1] && from[0] == top - 1 && from[1] == top - 1) {
         // The common case: one move from the parent, both perspectives; each threat tuple decoded once.

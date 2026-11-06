@@ -363,6 +363,10 @@ void copy_board_to_thread(ThreadData &td) {
   // Mailbox and partial keys: computed here in full, then maintained by make/unmake.
   for (int sq = 0; sq < 64; sq++)
     td.piece_on[sq] = -1;
+#if defined(USE_AVX512ICL)
+  for (int sq = 0; sq < 64; sq++)
+    td.pc8[sq] = -1;
+#endif
   td.pawn_key = 0;
   td.mm_key[0] = td.mm_key[1] = 0;
   td.np_key[white] = td.np_key[black] = 0;
@@ -371,6 +375,9 @@ void copy_board_to_thread(ThreadData &td) {
     while (bb) {
       const int sq = get_ls1b_index(bb);
       td.piece_on[sq] = pc;
+#if defined(USE_AVX512ICL)
+      td.pc8[sq] = (std::int8_t)pc;
+#endif
       const int type = pc % 6;
       if (type == P)
         td.pawn_key ^= piece_keys[pc][sq];
