@@ -51,6 +51,20 @@ layer stack.
 [network file](https://github.com/Tors3/Triumviratus-Networks/releases/tag/consilium-plebis) ·
 [recipe](https://github.com/Tors3/Triumviratus-Networks/tree/main/recipes/07_consilium-plebis).
 
+<details>
+<summary><b>The next network: future training direction (not in training now)</b></summary>
+
+No network is being trained now. This design comes from the lessons of Consilium Plebis: offline studies of what its
+experts, PSQT and pawn blocks contribute, judged on game results, and speed measurements of the engine (November
+2026). It has six experts with the queen as a boundary, rows of exactly 1024 bytes with the PSQT in a small table,
+a pawn-king block only in the pawn endgames and sixteen layer stacks.
+
+<p align="center"><img src="docs/networks/next_network_design.svg" alt="Design of the next network: six int8 HalfKA experts chosen per side by the opponent's material with the queen as a boundary, two 1024 accumulators without PSQT, a 24 KB piece-square table, a 128-unit pawn-king block active only in pawn endgames, sixteen layer stacks chosen by piece count and queens" width="100%"></p>
+
+[Details](docs/networks/NETWORKS.md#the-next-network--future-training-direction-not-in-training-now)
+
+</details>
+
 ---
 
 ## Triumviratus 8.0

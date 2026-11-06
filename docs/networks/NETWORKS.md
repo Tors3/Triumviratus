@@ -30,6 +30,30 @@ architecture keeps the number:
 **Every network file, with its complete recipe** (binpacks, trainer patches, commands, scripts), is in the companion
 repository **[Triumviratus-Networks](https://github.com/Tors3/Triumviratus-Networks)**.
 
+## The next network — future training direction (not in training now)
+
+No network is being trained now. This is the design the next training will follow, and it comes from the lessons of
+Consilium Plebis. The measures behind it are of two kinds:
+- **offline studies on the released network,** judged on the game result over 179,008 quiet positions of 8.1 games
+  (concordance: the share of position pairs with different results that the evaluation orders correctly);
+- **xperf counts of the engine's cost per node** on a Xeon (large pages) and a Zen 4 laptop (4 KB pages).
+
+<p align="center"><img src="next_network_design.svg" alt="Design of the next network" width="100%"></p>
+
+| part | Consilium Plebis | next network | why |
+|---|---|---|---|
+| king-relative experts | 8, by the opponent's non-pawn material | **6**, the queen as a boundary: bare or one minor, one rook, at most one rook with up to two minors, two rooks, lone queen, queen with more | the endgame experts are the distinct ones and stay apart; the middlegame experts were 94-99% alike; with the queen as a boundary a queen middlegame never changes expert, so the expert changes (each a refresh) fall by about half |
+| PSQT | 8 values at the end of every feature row (rows of 1088 bytes) | **a 24 KB piece-square table** per output bucket, outside the rows; rows of exactly 1024 bytes | the PSQT is half of today's evaluation, mostly material and piece-square values, which the table keeps; 1024-byte rows never cross a 4 KB page |
+| pawn-king subnetwork | 256 hidden, in every evaluation | **128 hidden**, active only with pawns and at most one minor on the board, its mean output elsewhere | only the pure pawn endgames use it; a larger block shows no gain |
+| layer stacks | 8, by piece count | **16**: piece count × queens on the board | free at run time; the 6 experts already carry each side's queen into the accumulators |
+| threats, pawn pairs, passed pawns, L1 / L2 / L3 | | unchanged (1024 / 32 / 32) | pawn pairs and passed pawns carry the pawn knowledge; L2 and L3 as in Stockfish |
+| training target | nnue-pytorch's score-to-probability map | **the map refitted on our data** (to study first) | the game results are more decisive than the map says |
+
+Measured on the released network, with routing-table copies of it (same engine, xperf, cycles per node): the six
+experts of this design together with the pawn-king gate cost **3.7% less in the middlegame and 3.2% less in the
+endgames on the Xeon**, and **5.3% / 3.0% less on the Zen 4**. The 1024-byte rows come on top. The size goes from
+256 MB to about 204 MB.
+
 ## Earlier networks, in brief
 
 The full record of each one — data, recipe, epoch-by-epoch measurements — is in the

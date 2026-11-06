@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1010" width="1500" height="1010"
+     font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img"
+     aria-label="Design of the next Triumviratus network (06/11/2026): shared threat, pawn-pair and passed-pawn inputs and an int8 HalfKA block split into six experts chosen per side by the opponent's material with the queen as a boundary; two 1024 accumulators with 1024-byte rows and no PSQT inside them; a 24 KB piece-square table outside the rows; clipped ReLU with pairwise product; a 128-unit pawn-king subnetwork active only in pawn endgames; sixteen layer stacks chosen by piece count and by the queens on the board">
+  <title>Next Triumviratus network &#8212; design of 06/11/2026</title>
+  <defs>
+    <style>
+      text        { fill: #E8ECF2; }
+      .dim        { fill: #95A1B3; }
+      .new        { fill: #F2C14E; font-weight: 700; }
+      .mono       { font-family: 'Cascadia Mono', Consolas, Menlo, monospace; }
+      .sec        { font-size: 12px; letter-spacing: .14em; fill: #95A1B3; font-weight: 600; }
+      .box        { fill: #182030; stroke: #2B3548; }
+      .exp        { fill: #1C2F4D; stroke: #3E6BAF; }
+      .exp-on     { fill: #27508C; stroke: #6A9BE0; }
+      .exp-q      { fill: #33264D; stroke: #8E6CCF; }
+      .tab        { fill: #16342B; stroke: #3FA07F; }
+      .pk         { fill: #2E1F40; stroke: #9B6BD6; }
+      .stk        { fill: #4A3412; stroke: #E0A040; }
+      .stk-soft   { fill: #261C10; stroke: #9C7230; }
+      .route      { fill: #3A1F1F; stroke: #D9755F; }
+      .arrow      { stroke: #5B6A82; stroke-width: 1.6; fill: none; }
+      .arrow-r    { stroke: #D9755F; stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+      .arrow-s    { stroke: #E0A040; stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+      .arrow-p    { stroke: #9B6BD6; stroke-width: 1.6; fill: none; }
+      .arrow-t    { stroke: #3FA07F; stroke-width: 1.6; fill: none; }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5B6A82"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D9755F"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E0A040"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9B6BD6"/></marker>
+    <marker id="t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3FA07F"/></marker>
+  </defs>
+
+  <rect width="1500" height="1010" fill="#0E131C"/>
+
+  <text x="40" y="48" font-size="24" font-weight="600">The next Triumviratus network · design of 06/11/2026</text>
+  <text x="40" y="74" font-size="14" class="dim">Six experts with the queen as a boundary, rows of exactly 1024 bytes, the PSQT in a small table, a pawn-king block only in the pawn endgames, sixteen layer stacks.</text>
+  <text x="40" y="96" font-size="13" class="dim"><tspan class="new">NEW</tspan> marks what changes from Consilium Plebis; everything else is as in 8.1. Future training direction, not in training now: it comes from the lessons of Consilium Plebis.</text>
+
+  <!-- ===================== 1. INPUTS ===================== -->
+  <text x="40" y="136" class="sec">1 · INPUTS (FOR EACH SIDE) · 199,632</text>
+
+  <rect x="40" y="152" width="340" height="40" rx="6" class="box"/>
+  <text x="56" y="177" font-size="14">Threats <tspan class="dim" font-size="12">· who attacks what · shared</tspan></text>
+  <text x="364" y="177" font-size="13" class="dim mono" text-anchor="end">59,808</text>
+
+  <rect x="40" y="202" width="340" height="300" rx="8" fill="none" stroke="#3E6BAF" stroke-dasharray="4 4"/>
+  <text x="56" y="226" font-size="14" font-weight="600">HalfKA × 6 experts <tspan class="new" font-size="11">NEW</tspan></text>
+  <text x="364" y="226" font-size="13" class="mono" text-anchor="end">6 × 22,528</text>
+  <text x="56" y="245" font-size="12" class="dim">king × piece × square · 32 king buckets · int8</text>
+  <text x="56" y="262" font-size="12" class="dim">chosen by the OPPONENT's material:</text>
+
+  <rect x="52"  y="274" width="156" height="44" rx="5" class="exp"/>
+  <text x="64" y="292" font-size="13" font-weight="600">E0</text><text x="64" y="309" font-size="11" class="dim">bare or one minor</text>
+  <rect x="216" y="274" width="156" height="44" rx="5" class="exp"/>
+  <text x="228" y="292" font-size="13" font-weight="600">E1</text><text x="228" y="309" font-size="11" class="dim">one rook</text>
+  <rect x="52"  y="324" width="156" height="44" rx="5" class="exp-on"/>
+  <text x="64" y="342" font-size="13" font-weight="600">E2</text><text x="196" y="342" font-size="11" class="new" text-anchor="end">active</text><text x="64" y="359" font-size="11" class="dim">≤ 1 rook + ≤ 2 minors</text>
+  <rect x="216" y="324" width="156" height="44" rx="5" class="exp"/>
+  <text x="228" y="342" font-size="13" font-weight="600">HV</text><text x="228" y="359" font-size="11" class="dim">two rooks, no queen</text>
+  <rect x="52"  y="374" width="156" height="44" rx="5" class="exp-q"/>
+  <text x="64" y="392" font-size="13" font-weight="600">LQ</text><text x="64" y="409" font-size="11" class="dim">lone queen</text>
+  <rect x="216" y="374" width="156" height="44" rx="5" class="exp-q"/>
+  <text x="228" y="392" font-size="13" font-weight="600">Q</text><text x="228" y="409" font-size="11" class="dim">queen + more</text>
+
+  <text x="56" y="438" font-size="12" class="dim">E0-E2: the endgame experts, kept apart</text>
+  <text x="56" y="455" font-size="12" class="dim">(the distinct ones: pawn and king planes)</text>
+  <text x="56" y="474" font-size="12" class="dim">rows: 1024 bytes, no PSQT, 4 per 4 KB page</text>
+  <text x="56" y="491" font-size="12" class="dim">one expert per side: the two may differ</text>
+
+  <rect x="40" y="512" width="340" height="34" rx="6" class="box"/>
+  <text x="56" y="534" font-size="14">PawnPair <tspan class="dim" font-size="12">· same / adjacent files · shared</tspan></text>
+  <text x="364" y="534" font-size="13" class="dim mono" text-anchor="end">4,560</text>
+  <rect x="40" y="554" width="340" height="34" rx="6" class="box"/>
+  <text x="56" y="576" font-size="14">PassedPawns <tspan class="dim" font-size="12">· ours · shared</tspan></text>
+  <text x="364" y="576" font-size="13" class="dim mono" text-anchor="end">96</text>
+
+  <!-- routing -->
+  <rect x="40" y="606" width="340" height="150" rx="8" class="route"/>
+  <text x="56" y="630" font-size="14" font-weight="600" fill="#F0A08C">Fixed routing table <tspan class="new" font-size="11">NEW</tspan></text>
+  <text x="56" y="651" font-size="12" class="dim">N = B = 3 · R = 5 · Q = 9; the queen is a boundary,</text>
+  <text x="56" y="668" font-size="12" class="dim">so a queen middlegame never changes expert</text>
+  <text x="56" y="690" font-size="12">expert jumps per legal capture</text>
+  <text x="364" y="690" font-size="13" class="mono" text-anchor="end">0.171 → 0.078</text>
+  <text x="56" y="709" font-size="12">in the search, per evaluation</text>
+  <text x="364" y="709" font-size="13" class="mono" text-anchor="end">0.188 → ~0.09</text>
+  <text x="56" y="730" font-size="12" class="dim">each jump is a refresh: about half of them gone</text>
+  <text x="56" y="747" font-size="12" class="dim">(the learned table of 8.1 never moved)</text>
+  <path d="M40,680 L22,680 L22,346 L49,346" class="arrow-r" marker-end="url(#r)"/>
+
+  <!-- ===================== 2. FEATURE TRANSFORMER ===================== -->
+  <text x="420" y="136" class="sec">2 · FEATURE TRANSFORMER</text>
+  <text x="420" y="160" font-size="12" class="dim">computed twice, from each side's point of view</text>
+  <text x="420" y="177" font-size="12" class="dim">(inputs relative to that side's king), same weights</text>
+  <path d="M380,346 C400,346 400,250 414,250 L418,250" class="arrow" marker-end="url(#a)"/>
+  <path d="M380,346 C400,346 400,352 414,352 L418,352" class="arrow" marker-end="url(#a)"/>
+  <rect x="420" y="210" width="210" height="80" rx="8" class="box"/>
+  <text x="525" y="236" font-size="12" class="dim" text-anchor="middle">accumulator · side to move</text>
+  <text x="525" y="264" font-size="20" font-weight="600" text-anchor="middle">1024</text>
+  <text x="525" y="282" font-size="11" class="new" text-anchor="middle">no PSQT inside</text>
+  <rect x="420" y="312" width="210" height="80" rx="8" class="box"/>
+  <text x="525" y="338" font-size="12" class="dim" text-anchor="middle">accumulator · opponent</text>
+  <text x="525" y="366" font-size="20" font-weight="600" text-anchor="middle">1024</text>
+  <text x="525" y="384" font-size="11" class="new" text-anchor="middle">no PSQT inside</text>
+  <text x="420" y="416" font-size="12" class="dim">updated incrementally: only the rows of the</text>
+  <text x="420" y="432" font-size="12" class="dim">pieces that moved; int8 rows of 1024 bytes</text>
+
+  <!-- PSQT table -->
+  <rect x="420" y="454" width="210" height="150" rx="8" class="tab"/>
+  <text x="436" y="478" font-size="14" font-weight="600" fill="#7FD9B6">PSQT table <tspan class="new" font-size="11">NEW</tspan></text>
+  <text x="436" y="498" font-size="12" class="dim">piece × square × 8 buckets</text>
+  <text x="614" y="518" font-size="13" class="mono" text-anchor="end">24 KB</text>
+  <text x="436" y="518" font-size="12" class="dim">outside the rows,</text>
+  <text x="436" y="535" font-size="12" class="dim">always in L1 / L2; only the</text>
+  <text x="436" y="552" font-size="12" class="dim">moved pieces update it</text>
+  <text x="436" y="574" font-size="12" class="dim">keeps the material and the</text>
+  <text x="436" y="591" font-size="12" class="dim">piece-square part of the PSQT</text>
+  <path d="M380,420 C400,420 400,520 414,520 L418,520" class="arrow-t" marker-end="url(#t)"/>
+
+  <!-- ===================== 3. ACTIVATION ===================== -->
+  <text x="670" y="136" class="sec">3 · ACTIVATION</text>
+  <path d="M630,250 L668,250" class="arrow" marker-end="url(#a)"/>
+  <path d="M630,352 L668,352" class="arrow" marker-end="url(#a)"/>
+  <rect x="670" y="210" width="170" height="80" rx="8" class="box"/>
+  <text x="755" y="238" font-size="12" class="dim" text-anchor="middle">clipped ReLU,</text>
+  <text x="755" y="254" font-size="12" class="dim" text-anchor="middle">pairwise product</text>
+  <text x="755" y="278" font-size="16" class="mono" text-anchor="middle">1024 → 512</text>
+  <rect x="670" y="312" width="170" height="80" rx="8" class="box"/>
+  <text x="755" y="340" font-size="12" class="dim" text-anchor="middle">clipped ReLU,</text>
+  <text x="755" y="356" font-size="12" class="dim" text-anchor="middle">pairwise product</text>
+  <text x="755" y="380" font-size="16" class="mono" text-anchor="middle">1024 → 512</text>
+  <path d="M840,250 C860,250 860,301 874,301" class="arrow"/>
+  <path d="M840,352 C860,352 860,301 874,301 L888,301" class="arrow" marker-end="url(#a)"/>
+  <rect x="890" y="281" width="110" height="40" rx="20" class="box"/>
+  <text x="945" y="306" font-size="13" class="mono" text-anchor="middle">concat 1024</text>
+  <path d="M1000,301 C1018,301 1018,218 1034,218 L1048,218" class="arrow" marker-end="url(#a)"/>
+
+  <!-- pawn-king -->
+  <rect x="670" y="454" width="340" height="190" rx="8" class="pk"/>
+  <text x="686" y="478" font-size="14" font-weight="600" fill="#C9A6F2">Pawn-king subnetwork <tspan class="new" font-size="11">NEW size, gated</tspan></text>
+  <text x="686" y="499" font-size="12" class="dim">own and enemy pawns, both kings,</text>
+  <text x="686" y="516" font-size="12" class="dim">from the side to move's view</text>
+  <text x="994" y="516" font-size="13" class="mono" text-anchor="end">256</text>
+  <text x="686" y="543" font-size="14" class="mono">256 → 128 → 32</text>
+  <text x="994" y="543" font-size="11" class="dim" text-anchor="end">(was 256 hidden)</text>
+  <text x="686" y="566" font-size="12">active only with pawns and at most one minor</text>
+  <text x="686" y="583" font-size="12" class="dim">(no rook or queen): 2-6% of the evaluations;</text>
+  <text x="686" y="600" font-size="12" class="dim">elsewhere its mean output, 32 constants</text>
+  <text x="686" y="622" font-size="12" class="dim">a larger block shows no gain (8..1024 hidden equal)</text>
+  <path d="M1010,520 C1030,520 1030,272 1048,272" class="arrow-p" marker-end="url(#p)"/>
+
+  <!-- ===================== 4. LAYER STACK ===================== -->
+  <text x="1050" y="136" class="sec">4 · LAYER STACK (1 OF 16)</text>
+  <rect x="1040" y="150" width="420" height="560" rx="10" fill="none" stroke="#E0A040" stroke-dasharray="5 4"/>
+  <text x="1250" y="174" font-size="13" fill="#F2C987" font-weight="600" text-anchor="middle">bucket: (pieces − 1) / 4 and queens yes / no <tspan class="new" font-size="11">NEW</tspan></text>
+
+  <rect x="1060" y="196" width="380" height="44" rx="6" class="stk"/>
+  <text x="1076" y="224" font-size="14" font-weight="600">fc_0 · sparse affine</text>
+  <text x="1426" y="224" font-size="14" class="mono" text-anchor="end">1024 → 32</text>
+  <path d="M1250,240 L1250,254" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="256" width="380" height="34" rx="6" class="pk"/>
+  <text x="1076" y="278" font-size="13">+ pawn-king output (or its mean)</text>
+  <text x="1426" y="278" font-size="13" class="mono" text-anchor="end">32</text>
+  <path d="M1250,290 L1250,304" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="306" width="186" height="40" rx="6" class="box"/>
+  <text x="1153" y="331" font-size="13" text-anchor="middle">squared CReLU · 32</text>
+  <rect x="1254" y="306" width="186" height="40" rx="6" class="box"/>
+  <text x="1347" y="331" font-size="13" text-anchor="middle">CReLU · 32</text>
+  <path d="M1250,346 L1250,366" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="368" width="380" height="44" rx="6" class="stk"/>
+  <text x="1076" y="396" font-size="14" font-weight="600">fc_1 · affine</text>
+  <text x="1426" y="396" font-size="14" class="mono" text-anchor="end">64 → 32</text>
+  <path d="M1250,412 L1250,430" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="432" width="186" height="40" rx="6" class="box"/>
+  <text x="1153" y="457" font-size="13" text-anchor="middle">squared CReLU · 32</text>
+  <rect x="1254" y="432" width="186" height="40" rx="6" class="box"/>
+  <text x="1347" y="457" font-size="13" text-anchor="middle">CReLU · 32</text>
+  <path d="M1250,472 L1250,490" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="492" width="380" height="44" rx="6" class="box"/>
+  <text x="1076" y="514" font-size="13">concat of both activation pairs</text>
+  <text x="1076" y="529" font-size="11" class="dim">the output also sees the fc_0 layer</text>
+  <text x="1426" y="520" font-size="14" class="mono" text-anchor="end">128</text>
+  <path d="M1250,536 L1250,554" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="556" width="380" height="44" rx="6" class="stk"/>
+  <text x="1076" y="584" font-size="14" font-weight="600">fc_2 · affine</text>
+  <text x="1426" y="584" font-size="14" class="mono" text-anchor="end">128 → 1</text>
+  <path d="M1250,600 L1250,618" class="arrow" marker-end="url(#a)"/>
+
+  <rect x="1060" y="620" width="380" height="40" rx="6" class="box"/>
+  <text x="1076" y="645" font-size="13">+ fc_0[30] − fc_0[31]</text>
+  <text x="1426" y="645" font-size="12" class="dim" text-anchor="end">skip from fc_0</text>
+  <text x="1250" y="684" font-size="12" class="dim" text-anchor="middle">16 stacks: 8 piece-count bands × queens yes / no</text>
+  <text x="1250" y="700" font-size="12" class="dim" text-anchor="middle">L2 / L3 = 32 / 32 as in 8.1 and Stockfish · ~1.1 MB in all</text>
+
+  <!-- selector -->
+  <rect x="690" y="672" width="300" height="38" rx="19" class="stk-soft"/>
+  <text x="840" y="696" font-size="14" fill="#F2C987" font-weight="600" text-anchor="middle">piece count · queens on the board</text>
+  <path d="M990,690 L1036,690" class="arrow-s" marker-end="url(#s)"/>
+  <path d="M700,710 L700,770 L640,770 L640,784" class="arrow-s" marker-end="url(#s)"/>
+  <text x="708" y="742" font-size="12" class="dim">the piece count also picks the PSQT bucket</text>
+
+  <!-- ===================== 5. OUTPUT ===================== -->
+  <text x="40" y="782" class="sec">5 · OUTPUT</text>
+  <rect x="420" y="786" width="370" height="56" rx="8" class="tab"/>
+  <text x="436" y="810" font-size="14" font-weight="600">PSQT term <tspan class="dim" font-weight="400" font-size="12">· from the 24 KB table</tspan></text>
+  <text x="436" y="830" font-size="12" class="dim">side to move − opponent, same bucket</text>
+  <path d="M525,604 L525,784" class="arrow-t" marker-end="url(#t)"/>
+  <text x="820" y="822" font-size="22" class="dim" text-anchor="middle">+</text>
+  <rect x="850" y="786" width="320" height="56" rx="8" class="stk"/>
+  <text x="866" y="810" font-size="14" font-weight="600">positional term</text>
+  <text x="866" y="830" font-size="12" class="dim">output of the layer stack</text>
+  <path d="M1250,710 C1250,750 1010,750 1010,770 L1010,784" class="arrow" marker-end="url(#a)"/>
+  <text x="1200" y="822" font-size="22" class="dim" text-anchor="middle">=</text>
+  <rect x="1230" y="786" width="230" height="56" rx="8" class="exp-on"/>
+  <text x="1345" y="810" font-size="16" font-weight="600" text-anchor="middle">evaluation</text>
+  <text x="1345" y="830" font-size="12" class="dim" text-anchor="middle">blend, then scaled by the engine</text>
+
+  <!-- footer: size and measured speed -->
+  <rect x="40" y="864" width="1420" height="122" rx="8" fill="#141B27" stroke="#2B3548"/>
+  <text x="58" y="888" font-size="13" font-weight="600">Size</text>
+  <text x="58" y="908" font-size="12" class="dim">HalfKA 6 × 22,528 rows ≈ 138 MB · threats ≈ 61 MB · pawns ≈ 5 MB</text>
+  <text x="58" y="926" font-size="12" class="dim">≈ 204 MB in all, against 256 MB for Consilium Plebis; every row 1024 bytes</text>
+  <text x="58" y="944" font-size="12" class="dim">(Consilium Plebis: 1088, one row in four across a page boundary)</text>
+  <text x="58" y="972" font-size="12" class="dim">Training: score-to-probability map refitted on our data (to study first).</text>
+
+  <text x="760" y="888" font-size="13" font-weight="600">Speed measured on today's network (xperf, cycles per node)</text>
+  <text x="760" y="908" font-size="12" class="dim">6 experts (routing of this design) + pawn-king gate, against 8.1:</text>
+  <text x="760" y="928" font-size="13" class="mono">Xeon (large pages)  −3.7% mg   −3.2% eg</text>
+  <text x="760" y="947" font-size="13" class="mono">Zen 4 (4 KB pages)  −5.3% mg   −3.0% eg</text>
+  <text x="760" y="972" font-size="12" class="dim">The 1024-byte rows without PSQT come on top; not measured yet.</text>
+</svg>
