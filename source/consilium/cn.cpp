@@ -1843,6 +1843,36 @@ inline std::size_t pk_index(const Board& b) {
     return std::size_t((key ^ (key >> 29)) & (PK_CACHE - 1));
 }
 
+// ---------------------------------------------------------------- PkGate (06/11/2026, the author's idea)
+// The pawn-king subnetwork runs only where the network uses it: positions with at most one minor piece on the board
+// and no rook or queen. Elsewhere it is replaced by its mean output on game positions (b2 + the mean of W2 h over
+// quiet positions of 8.1 games). Non-regression test passed (06/11/2026).
+// The mean belongs to one network: pk_gate_adopt turns the gate on only when the pawn-king weights hash to
+// PK_GATE_HASH (Consilium Plebis, 28/10/2026); with any other network the subnetwork runs everywhere, as before.
+constexpr std::uint64_t PK_GATE_HASH = 0x2A87E97CEEFA3F48ULL;   // FNV-1a of the pawn-king weights of Consilium Plebis
+alignas(64) constexpr std::int32_t PK_GATE_MEAN[L2] = {
+    -608,  -847, 466,  -275, -951, 2075, -1397, 1181, 1220,  414,  -448, 1036, -591, 1562, -16, -1019,
+    1009,  1630, 1466, 1392, 883,  379,  925,   -519, -1317, -267, -298, 936,  1270, -32,  -2402, -1303};
+bool g_pkGate = false;   // set at load by pk_gate_adopt
+std::uint64_t pk_weights_hash(const Net& net) {   // FNV-1a over pkB1, pkW1, pkB2, pkW2 in file order
+    std::uint64_t h   = 1469598103934665603ULL;
+    auto          eat = [&h](const void* p, std::size_t n) {
+        const unsigned char* c = static_cast<const unsigned char*>(p);
+        for (std::size_t i = 0; i < n; i++) h = (h ^ c[i]) * 1099511628211ULL;
+    };
+    eat(net.pkB1, sizeof(net.pkB1));
+    eat(net.pkW1, sizeof(net.pkW1));
+    eat(net.pkB2, sizeof(net.pkB2));
+    eat(net.pkW2, sizeof(net.pkW2));
+    return h;
+}
+// True where the gate replaces the subnetwork by its mean: a rook or a queen on the board, or two minors or more.
+inline bool pk_gate_skip(const Board& b) {
+    return g_pkGate && ((b.bb[ROOK] | b.bb[QUEEN] | b.bb[ROOK + 6] | b.bb[QUEEN + 6])
+                        || CN_POPCNT(b.bb[KNIGHT] | b.bb[BISHOP] | b.bb[KNIGHT + 6] | b.bb[BISHOP + 6]) > 1);
+}
+void pk_gate_adopt(const Net& net) { g_pkGate = pk_weights_hash(net) == PK_GATE_HASH; }
+
 // The subnetwork's outputs for the board, from the thread's cache (exact key) or computed and stored.
 const std::int32_t* pawn_king(const Net& net, Handle& h, const Board& b) {
 #ifdef CN_C2_PK_OFF
@@ -1851,6 +1881,8 @@ const std::int32_t* pawn_king(const Net& net, Handle& h, const Board& b) {
     alignas(64) static const std::int32_t zero[L2] = {};
     return zero;
 #endif
+    if (pk_gate_skip(b))   // PkGate: the mean output away from the pawn endgames
+        return PK_GATE_MEAN;
     if (h.pkNet != net.contentHash) {
         std::memset(static_cast<void*>(h.pkc), 0, sizeof(h.pkc));
         h.pkNet = net.contentHash;
@@ -2125,6 +2157,7 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 void adopt(const Net& net) {
     std::memcpy(g_router, net.router, sizeof(g_router));   // the make and Persp read this copy
     pk_measure(net);                                        // C2 signals (agent B): ranks and medians of pk outputs
+    pk_gate_adopt(net);                                     // PkGate: on only for the network its mean belongs to
 }
 
 bool load_file(const char* path, Net* net, std::string* err) {
@@ -2192,7 +2225,10 @@ Out evaluate_refresh(const Net& net, const Board& b, Acc acc[2]) {
     refresh_one(net, b, 0, acc[0]);
     refresh_one(net, b, 1, acc[1]);
     alignas(64) std::int32_t pk[L2];
-    pawn_king_compute(net, b, pk);
+    if (pk_gate_skip(b))
+        std::memcpy(pk, PK_GATE_MEAN, sizeof(pk));   // PkGate: the value the incremental path takes (nnueverify)
+    else
+        pawn_king_compute(net, b, pk);
     return CN_FORWARD(net, acc[b.stm], acc[b.stm ^ 1], bucket_of(b) CN_PK_ARG(pk));
 }
 
