@@ -108,7 +108,7 @@
   <path d="M820,340 C840,340 840,290 854,290 L868,290" class="arrow" marker-end="url(#a)"/>
   <rect x="870" y="270" width="110" height="40" rx="20" class="box"/>
   <text x="925" y="295" font-size="13" class="mono" text-anchor="middle">concat 1024</text>
-  <path d="M980,290 C998,290 998,192 1014,192 L1028,192" class="arrow" marker-end="url(#a)"/>
+  <path d="M980,290 L990,290 Q996,290 996,284 L996,198 Q996,192 1002,192 L1028,192" class="arrow" marker-end="url(#a)"/>
 
   <!-- ===== pawn-king subnetwork ===== -->
   <rect x="650" y="456" width="330" height="168" rx="8" class="verd-soft"/>
@@ -120,7 +120,7 @@
   <text x="666" y="566" font-size="12" class="dim">clipped ReLU between the two layers</text>
   <text x="666" y="590" font-size="12" class="dim">cached per thread by pawns and kings:</text>
   <text x="666" y="608" font-size="12" class="dim">computed only when that key is new</text>
-  <path d="M980,520 C1004,520 1004,247 1028,247" class="arrow-v" marker-end="url(#v)"/>
+  <path d="M980,480 L998,480 Q1004,480 1004,474 L1004,253 Q1004,247 1010,247 L1028,247" class="arrow-v" marker-end="url(#v)"/>
 
   <!-- ===== 4. LAYER STACK ===== -->
   <text x="1010" y="116" class="sec">4 · LAYER STACK (1 OF 8)</text>

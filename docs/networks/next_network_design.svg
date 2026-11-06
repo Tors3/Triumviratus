@@ -134,7 +134,7 @@
   <path d="M840,352 C860,352 860,301 874,301 L888,301" class="arrow" marker-end="url(#a)"/>
   <rect x="890" y="281" width="110" height="40" rx="20" class="box"/>
   <text x="945" y="306" font-size="13" class="mono" text-anchor="middle">concat 1024</text>
-  <path d="M1000,301 C1018,301 1018,218 1034,218 L1048,218" class="arrow" marker-end="url(#a)"/>
+  <path d="M1000,301 L1012,301 Q1018,301 1018,295 L1018,224 Q1018,218 1024,218 L1058,218" class="arrow" marker-end="url(#a)"/>
 
   <!-- pawn-king -->
   <rect x="670" y="454" width="340" height="190" rx="8" class="pk"/>
@@ -148,7 +148,7 @@
   <text x="686" y="583" font-size="12" class="dim">(no rook or queen): 2-6% of the evaluations;</text>
   <text x="686" y="600" font-size="12" class="dim">elsewhere its mean output, 32 constants</text>
   <text x="686" y="622" font-size="12" class="dim">a larger block shows no gain (8..1024 hidden equal)</text>
-  <path d="M1010,520 C1030,520 1030,272 1048,272" class="arrow-p" marker-end="url(#p)"/>
+  <path d="M1010,478 L1020,478 Q1026,478 1026,472 L1026,279 Q1026,273 1032,273 L1058,273" class="arrow-p" marker-end="url(#p)"/>
 
   <!-- ===================== 4. LAYER STACK ===================== -->
   <text x="1050" y="136" class="sec">4 · LAYER STACK (1 OF 16)</text>
