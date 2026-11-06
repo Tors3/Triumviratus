@@ -55,6 +55,9 @@ layer stack.
 
 ## Triumviratus 8.0
 
+<details>
+<summary><b>Consilium, the 8.0 network: four experts by material on the input layer</b></summary>
+
 **Consilium**, the 8.0 network, is a mixture-of-experts network: its largest layer, the king-relative HalfKA inputs,
 is split into **four experts, one per material band** (chosen by the number of pieces, on top of the usual king
 buckets); only one is active at a time, so the layer has four times the weights at almost the cost of one. To our
@@ -90,6 +93,8 @@ weights, rather than only in the small layers after it.
 - a **restructured search**, re-tuned by SPSA on Consilium, with the **causal reduction** of quiet moves;
 - faster code at an identical search tree, buffered UCI I/O and a high-resolution clock;
 - **Chess960** support, and **one executable for every x86-64 CPU**, from SSE4.1 to AVX-512.
+
+</details>
 
 </details>
 
