@@ -22,6 +22,17 @@
 ideas are shared and contributions are discussed: to join, just contact me ([@Tors3](https://github.com/Tors3) on
 GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 
+**Downloads of each release**
+
+[![8.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.1/total?label=v8.1)](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
+[![8.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0/total?label=v8.0)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0)
+[![8.0 Position Solver](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0-possolver/total?label=v8.0%20Position%20Solver)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0-possolver)
+[![7.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v7.0/total?label=v7.0)](https://github.com/Tors3/Triumviratus/releases/tag/v7.0)
+[![6.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v6.0/total?label=v6.0)](https://github.com/Tors3/Triumviratus/releases/tag/v6.0)
+[![5.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v5.1/total?label=v5.1)](https://github.com/Tors3/Triumviratus/releases/tag/v5.1)
+[![5.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v5.0/total?label=v5.0)](https://github.com/Tors3/Triumviratus/releases/tag/v5.0)
+[![4.2](https://img.shields.io/github/downloads/Tors3/Triumviratus/v4.2/total?label=v4.2)](https://github.com/Tors3/Triumviratus/releases/tag/v4.2)
+
 </div>
 
 ---
@@ -199,16 +210,6 @@ embedded. At start-up it picks the best of seven builds for the CPU (SSE4.1, AVX
 AVX-512, AVX-512 VNNI, AVX-512 VBMI2). The engine name is `Triumviratus - 8.1`. The same release has **Linux** builds
 (SSE4.1, AVX2 without PEXT, AVX2, AVX-512; statically linked, for any distribution). Builds for **Android** and
 **macOS** of 8.0 are in the [v8.0 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.0).
-
-Downloads of each release:
-[![8.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.1/total?label=v8.1)](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
-[![8.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0/total?label=v8.0)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0)
-[![8.0 Position Solver](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0-possolver/total?label=v8.0%20Position%20Solver)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0-possolver)
-[![7.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v7.0/total?label=v7.0)](https://github.com/Tors3/Triumviratus/releases/tag/v7.0)
-[![6.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v6.0/total?label=v6.0)](https://github.com/Tors3/Triumviratus/releases/tag/v6.0)
-[![5.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v5.1/total?label=v5.1)](https://github.com/Tors3/Triumviratus/releases/tag/v5.1)
-[![5.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v5.0/total?label=v5.0)](https://github.com/Tors3/Triumviratus/releases/tag/v5.0)
-[![4.2](https://img.shields.io/github/downloads/Tors3/Triumviratus/v4.2/total?label=v4.2)](https://github.com/Tors3/Triumviratus/releases/tag/v4.2)
 
 ## How to compile
 
