@@ -4,7 +4,7 @@
 
 # Triumviratus
 
-**A strong UCI chess engine in C++** · mixture-of-experts NNUE · SPSA-tuned alpha-beta search · Syzygy tablebases
+**A strong UCI chess engine in C++** · NNUE with material input buckets · SPSA-tuned alpha-beta search · Syzygy tablebases
 
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
 [![C++](https://img.shields.io/badge/language-C%2B%2B-00599C.svg)](source/)
