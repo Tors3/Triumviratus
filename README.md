@@ -26,7 +26,6 @@ GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 
 [![8.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.1/total?label=v8.1)](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
 [![8.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0/total?label=v8.0)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0)
-[![8.0 Position Solver](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0-possolver/total?label=v8.0%20Position%20Solver)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0-possolver)
 [![7.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v7.0/total?label=v7.0)](https://github.com/Tors3/Triumviratus/releases/tag/v7.0)
 [![6.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v6.0/total?label=v6.0)](https://github.com/Tors3/Triumviratus/releases/tag/v6.0)
 [![5.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v5.1/total?label=v5.1)](https://github.com/Tors3/Triumviratus/releases/tag/v5.1)
