@@ -253,11 +253,14 @@ by default. The UCI option `LargePages` (default 1) turns them off.
 <details>
 <summary><b>Position Solver, for the analysis of hard positions</b></summary>
 
-[Triumviratus 8.0 Position Solver](https://github.com/Tors3/Triumviratus/releases/tag/v8.0-possolver) is the same
+[Triumviratus 8.1 Position Solver](https://github.com/Tors3/Triumviratus/releases/tag/v8.1-possolver) is the same
 engine with search settings chosen for test positions (analysis mode always on, a two-line search that pauses in quiet
-positions, a preference for the most direct win). At 1 second per position it solves 153 of 183 on IQ4 and 157 of 200
-on Arasan 2026, against 145 and 137 for 8.0 (details in
-[DEVELOPMENT_8.0.md §49](docs/development/archive/DEVELOPMENT_8.0.md)). For games, use 8.1.
+positions, a preference for the most direct win). It is made for solving and analysing positions, not for games: for
+games, use 8.1. On Eduard Nemeth's "256 difficult positions 2023" at 10 s per position, Maurizio Platino measured 173
+solved with the Position Solver of 28 October, against 154 for ShashChess 42 and 146 for Stockfish 19. The
+[8.0 Position Solver](https://github.com/Tors3/Triumviratus/releases/tag/v8.0-possolver) solved 153 of 183 on IQ4 and
+157 of 200 on Arasan 2026 at 1 s per position, against 145 and 137 for 8.0 (details in
+[DEVELOPMENT_8.0.md §49](docs/development/archive/DEVELOPMENT_8.0.md)).
 
 </details>
 
