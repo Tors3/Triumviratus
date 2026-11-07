@@ -12,8 +12,14 @@
 #    .\build_variants.ps1 -Out D:\rel\zen4                    # every variant this CPU runs
 #    .\build_variants.ps1 -Out D:\rel\ultra7 -Variants avxvnni # only some of them
 #    .\build_variants.ps1 -Out D:\rel\t -NoPgo -Variants avx2  # quick check of the chain, no training
+#    .\build_variants.ps1 -Out D:\rel\vnni -Variants avxvnni -Sde C:\sde\sde.exe   # a variant this CPU lacks, in SDE
 #  Result in <Out>: Triumviratus_<ver>_<day|official>_<variant>.exe, profiles\v<n>.profdata, manifest.json,
 #  verifica.txt, SHA256SUMS.txt. Copy the whole folder to the machine that packs the universal executable.
+#
+#  -Sde <sde.exe> [-SdeChip -mtl] (07/11/2026): variants this CPU does not run are trained and benched inside Intel SDE
+#  emulating a CPU that has their instructions. The training is deterministic (fixed nodes), so the profile has the
+#  same counts as on a real CPU; only the time differs (about 25 times slower). Used for the avxvnni variant of the 8.1
+#  Position Solver. The manifest marks such variants (pgo_sde) and pack_universal.ps1 reports them.
 # =====================================================================================================================
 param(
     [Parameter(Mandatory = $true)][string]$Out,
@@ -35,7 +41,9 @@ param(
     [switch]$Tune,
     [switch]$NoStrictAliasing,
     [string]$Commit = "",                 # recorded in the manifest (build\release.ps1 passes it); empty = git of $SRC
-    [string]$ObjDir = ""                  # objects and raw profiles; empty = <Out>\..\_obj\<name of Out>
+    [string]$ObjDir = "",                 # objects and raw profiles; empty = <Out>\..\_obj\<name of Out>
+    [string]$Sde = "",                    # Intel SDE: variants this CPU does not run are trained and benched inside it
+    [string]$SdeChip = "-mtl"             # the CPU SDE emulates (-mtl Meteor Lake: AVX-VNNI without AVX-512)
 )
 $MultiTU = $true
 $ErrorActionPreference = "Stop"
@@ -75,7 +83,7 @@ if ($Variants.Count) {
         $n = if ($v -match '^\d$') { [int]$v } else { @($VariantNames.Keys | Where-Object { $VariantNames[$_] -eq $v })[0] }
         if (-not $n) { Fail "unknown variant '$v' (names: $(($VariantNames.Values | Sort-Object) -join ', '))" }
         # A profile recorded with other instructions is what this chain exists to avoid.
-        if (-not $can.Contains("$n")) { Fail "this CPU does not run $($VariantNames[$n]): its profile must be recorded on a CPU that does" }
+        if (-not $can.Contains("$n") -and -not $Sde) { Fail "this CPU does not run $($VariantNames[$n]): its profile must be recorded on a CPU that does (or give -Sde)" }
         $chosen += $n
     }
 } else {
@@ -100,7 +108,13 @@ if (-not $NoPgo) {
         Say "training $($VariantNames[$n]) ($Workers workers, $TrainPositions positions)"
         Remove-Item -Recurse -Force "$PROF\v$n" -ErrorAction SilentlyContinue; New-Item -ItemType Directory "$PROF\v$n" | Out-Null
         $env:LLVM_PROFILE_FILE = "$PROF\v$n\p_%p.profraw"
-        $p = Keep-Handle (Start-Process -FilePath $py -ArgumentList @("`"$U\pgo_train_det.py`"", "`"$OBJ\g$n.exe`"", '0',
+        $gexe = "$OBJ\g$n.exe"
+        if ($Sde -and -not $can.Contains("$n")) {
+            $gexe = "$OBJ\g${n}_sde.cmd"
+            Set-Content $gexe "@`"$Sde`" $SdeChip -- `"$OBJ\g$n.exe`"" -Encoding ascii
+            Say "  $($VariantNames[$n]) trained inside Intel SDE ($SdeChip)"
+        }
+        $p = Keep-Handle (Start-Process -FilePath $py -ArgumentList @("`"$U\pgo_train_det.py`"", "`"$gexe`"", '0',
                           "`"$U\pgo_positions.epd`"", "$TrainPositions", '--workers', "$Workers") -NoNewWindow -PassThru `
                           -WorkingDirectory $OBJ -RedirectStandardOutput "$OBJ\train$n.log" -RedirectStandardError "$OBJ\train$n.err")
         Remove-Item Env:LLVM_PROFILE_FILE -ErrorAction SilentlyContinue
@@ -158,16 +172,23 @@ $vlines = @("Triumviratus $VER, phase 1 (build_variants.ps1), $(Get-Date -Format
 $allOk = $true
 $vlist = @()
 foreach ($n in $chosen) {
-    $b = Get-Bench $exes[$n] '' $OBJ
+    $sdeRun = [bool]($Sde -and -not $can.Contains("$n"))
+    $bexe = $exes[$n]
+    if ($sdeRun) {
+        $bexe = "$OBJ\v${n}_sde.cmd"
+        Set-Content $bexe "@`"$Sde`" $SdeChip -- `"$($exes[$n])`"" -Encoding ascii
+    }
+    $b = Get-Bench $bexe '' $OBJ
     $ok = ($b.Nodes -eq $ExpectedBench) -and ($b.NetEmbedded -ne $false)
     if ($perft.ContainsKey($n) -and -not $perft[$n].ok) { $ok = $false }
     if (-not $ok) { $allOk = $false }
     $note = if ($b.NetEmbedded -eq $false) { "NETWORK FROM A FILE, NOT THE EMBEDDED ONE" }
             elseif ($b.Nodes -ne $ExpectedBench) { "BENCH DIFFERS (expected $ExpectedBench)" } else { "ok" }
-    $pg = if ($profs.ContainsKey($n)) { "PGO native" } else { "no PGO" }
+    $pg = if (-not $profs.ContainsKey($n)) { "no PGO" } elseif ($sdeRun) { "PGO SDE" } else { "PGO native" }
     $vlines += "{0,-12} bench {1,-9} {2,-11} {3}" -f $VariantNames[$n], $b.Nodes, $pg, $note
     $entry = [ordered]@{
         n = $n; name = $VariantNames[$n]; bench = $b.Nodes; ok = $ok; pgo = $profs.ContainsKey($n)
+        pgo_sde = ($sdeRun -and $profs.ContainsKey($n))
         exe = (Split-Path $exes[$n] -Leaf); exe_sha256 = (Get-Sha256 $exes[$n])
         profile = $(if ($profs.ContainsKey($n)) { "profiles/v$n.profdata" } else { $null })
         profile_sha256 = $(if ($profs.ContainsKey($n)) { Get-Sha256 $profs[$n] } else { $null })

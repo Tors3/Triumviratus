@@ -110,9 +110,11 @@ foreach ($n in 1..7) {
         if (-not $v) { continue }
         $runs = "$($i.m.cpu.runs)"
         $r = if ($runs) { $isaRank[[int]"$($runs[-1])"] } else { 98 }
+        if ($v.pgo_sde) { $r += 50 }   # (07/11/2026) a profile recorded inside Intel SDE only when no CPU recorded one
         if ($r -lt $bestRank) {
             $bestRank = $r
-            $pick[$n] = @{ path = Join-Path $i.dir ($v.profile -replace '/', '\'); host = $i.m.host; cpu = $i.m.cpu.name; bench = $v.bench }
+            $pick[$n] = @{ path = Join-Path $i.dir ($v.profile -replace '/', '\'); host = $i.m.host; cpu = $i.m.cpu.name; bench = $v.bench
+                           sde = [bool]$v.pgo_sde }
         }
     }
 }
@@ -155,7 +157,7 @@ $vlines = @("Triumviratus $VER universal, phase 2 (pack_universal.ps1), $(Get-Da
          "packed and checked on $env:COMPUTERNAME, CPU $($cpu.Name); here entry.cpp starts $($VariantNames[$cpu.Best])", "")
 $allOk = $true
 foreach ($r in $t.Rows) {
-    $pfrom = if ($pick.ContainsKey($r.n)) { "PGO from $($pick[$r.n].host)" } else { "no PGO" }
+    $pfrom = if (-not $pick.ContainsKey($r.n)) { "no PGO" } elseif ($pick[$r.n].sde) { "PGO from $($pick[$r.n].host) (Intel SDE)" } else { "PGO from $($pick[$r.n].host)" }
     if ($r.runnable) {
         if (-not $r.ok) { $allOk = $false }
         $vlines += "{0,-12} bench {1,-9} {2,-28} {3}" -f $r.name, $r.bench, $pfrom, $r.note
