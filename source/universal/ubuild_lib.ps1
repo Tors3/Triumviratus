@@ -329,8 +329,11 @@ function Link-Universal($exe, $nat) {
     Link $exe $objs -Extra $alt
 }
 # Parts every executable shares: fathom (C, ISA-independent), the entry point, the resources (icon and network).
+# fathom only with POPCNT, the floor of the universal executable (07/11/2026, issue #10): it was compiled with /arch:AVX2,
+# and tb_init runs at every start (syzygy_init in main), so on a CPU without AVX the executable stopped at once, sse41
+# variant included (Intel SDE -wsm: vmovdqa in the prologue of tb_init). The 8.0 universal has the same fault.
 function Build-CommonParts {
-    & $CXX /nologo /c /O2 /MT /arch:AVX2 /std:c11 -w "-I$SRC\fathom" "$SRC\fathom\tbprobe.c" "/Fo$OBJ\tbprobe.obj"
+    & $CXX /nologo /c /O2 /MT /clang:-mpopcnt /std:c11 -w "-I$SRC\fathom" "$SRC\fathom\tbprobe.c" "/Fo$OBJ\tbprobe.obj"
     if ($LASTEXITCODE -ne 0) { Fail "fathom" }
     & $CXX /nologo /c /std:c++17 /O2 /MT -w "$U\entry.cpp" "/Fo$OBJ\entry.obj"
     if ($LASTEXITCODE -ne 0) { Fail "entry.cpp" }

@@ -13,7 +13,7 @@
 // Syzygy tablebase probing (Fathom)
 #include "syzygy.h"
 
-// Startup banner
+// Startup line in a terminal (print_banner)
 #include "presentation.h"
 
 #include <string>
@@ -161,9 +161,10 @@ int main()
     // Detects whether we were launched by a GUI (stdin non-TTY) -> silent startup.
     g_startup_quiet = !STDIN_IS_TTY;
 
-    // Presentation banner (only in an interactive terminal, never towards a GUI)
-    // if (!g_startup_quiet)
-    //     ascii_art();
+    // Startup line "Triumviratus - 8.1 by Francesco Torsello" (06/11/2026, issue #10): only in an interactive
+    // terminal, never towards a GUI, and before the initialisation, so a hand-started engine shows at once that it runs.
+    if (!g_startup_quiet)
+        print_banner();
 
     // Initialize all bitboards and attack tables (silent)
     init_bitboards();
