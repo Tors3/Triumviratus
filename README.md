@@ -79,13 +79,13 @@ a pawn-king block only in the pawn endgames and sixteen layer stacks.
 ## Triumviratus 8.0
 
 <details>
-<summary><b>Consilium, the 8.0 network: four experts by material on the input layer</b></summary>
+<summary><b>Consilium, the 8.0 network: input buckets by material</b></summary>
 
-**Consilium**, the 8.0 network, is a mixture-of-experts network: its largest layer, the king-relative HalfKA inputs,
-is split into **four experts, one per material band** (chosen by the number of pieces, on top of the usual king
-buckets); only one is active at a time, so the layer has four times the weights at almost the cost of one. To our
-knowledge it is **the first engine with piece-count buckets on the input layer**. The idea is the author's own, from
-the mixture-of-experts models of language AI.
+**Consilium**, the 8.0 network, splits its largest layer, the king-relative HalfKA inputs, into **four input buckets
+by material** (chosen by the number of pieces, on top of the usual king buckets); only one is active at a time, so the
+layer has four times the weights at almost the cost of one. To our knowledge it is **the first engine with
+piece-count buckets on the input layer**. The idea is the author's own, taken from the mixture-of-experts models of
+language AI; in the project's notes and code each of these buckets is called an "expert".
 
 <p align="center"><img src="docs/networks/consilium_architecture.svg" alt="Consilium architecture: four HalfKA experts by material band, two 1024 accumulators, eight layer stacks chosen by piece count" width="100%"></p>
 
@@ -93,13 +93,14 @@ the mixture-of-experts models of language AI.
 [why it is new](docs/project/NOVELTIES.md#1-consilium-experts-by-material-on-the-first-layer)
 
 <details>
-<summary><b>What "mixture of experts" means here</b></summary>
+<summary><b>Input buckets and "experts"</b></summary>
 
-The experts are chosen by a fixed rule, the number of pieces on the board, not by a learned gate as in language
-models. In this sense other routing schemes of NNUE networks are also experts: king buckets on the input layer (chosen
-by king square) and output buckets or layer stacks after the accumulator (chosen by piece count). What is new in
-Consilium is not the routing itself but where piece count is used: on the input layer, which holds almost all the
-weights, rather than only in the small layers after it.
+The buckets are chosen by a fixed rule, the material on the board, not by a learned gate as in the mixture-of-experts
+models of language AI, where the idea came from; "expert" is the project's own name for each of them. Other routing
+schemes of NNUE networks work the same way: king buckets on the input layer (chosen by king square) and output buckets
+or layer stacks after the accumulator (chosen by piece count). What is new in Consilium is not the routing itself but
+where material is used: on the input layer, which holds almost all the weights, rather than only in the small layers
+after it.
 
 </details>
 
@@ -123,36 +124,43 @@ weights, rather than only in the small layers after it.
 
 ## Rating lists
 
-On **CCRL 40/15** Triumviratus 8.0 is **first** in the list of 30 October 2026, both on 4 CPUs (3650 ± 28; Stockfish
-18, 4 CPU: 3649) and among the single-CPU engines (3633 ± 21; Stockfish 19, 1 CPU: 3629). On **CCRL Blitz**
-Triumviratus 8.0 on one CPU (3784 ± 13) is **second** in the main table of 31 October 2026, behind Stockfish 19 on 8
-CPUs (3803); among the single-CPU versions it is behind Stockfish 19 on one CPU (3792 ± 11).
+On **CCRL 40/15** Triumviratus 8.0 shares **first place** on 4 CPUs with Stockfish 19 (both 3650) in the list of
+7 November 2026, and is **first** among the single-CPU engines (3635 ± 16; Stockfish 19, 1 CPU: 3629). On **CCRL
+Blitz** Triumviratus 8.0 on one CPU (3784 ± 13) is **second** in the main table, behind Stockfish 19 on 8 CPUs
+(3803); among the single-CPU versions it is behind Stockfish 19 on one CPU (3792 ± 11). On **CCRL 40/2 FRC**
+(Chess960) it is **second** (4104 ± 10), behind Stockfish 19 (4115).
 
-**CCRL 40/15** (40 moves in 15 minutes, with increment), list of 2026-10-30
+**CCRL 40/15** (40 moves in 15 minutes, with increment), list of 2026-11-07
 
 | version | rating | rank | games |
 |---|---:|---:|---:|
-| **Triumviratus 8.0** (4 CPU) | **3650** ± 28 | **1** | 214 |
-| **Triumviratus 8.0** (1 CPU) | **3633** ± 21 | **1** (single-CPU) | 392 |
+| **Triumviratus 8.0** (4 CPU) | **3650** ± 19 | **1–2** | 499 |
+| **Triumviratus 8.0** (1 CPU) | **3635** ± 16 | **1** (single-CPU) | 700 |
 | Triumviratus 6.0 (4 CPU) | 3632 ± 16 | | 718 |
 | Triumviratus 7.0 (4 CPU) | 3632 ± 53 | | 59 |
+| Triumviratus 7.0 (1 CPU) | 3607 ± 13 | | 1,166 |
 | Triumviratus 5.0 (4 CPU) | 3606 ± 15 | | 924 |
 | Triumviratus 6.0 (1 CPU) | 3606 ± 13 | | 1,018 |
-| Triumviratus 7.0 (1 CPU) | 3606 ± 13 | | 1,156 |
 | Triumviratus 5.0 (1 CPU) | 3572 ± 16 | | 717 |
 
-**CCRL Blitz** (2 min + 1 s), list of 2026-10-31
+**CCRL Blitz** (2 min + 1 s), list of 2026-11-07
 
 | version | rating | rank | games |
 |---|---:|---:|---:|
-| **Triumviratus 8.0** (1 CPU) | **3784** ± 13 | **2** | 1,573 |
+| **Triumviratus 8.0** (1 CPU) | **3784** ± 13 | **2** | 1,582 |
 | Triumviratus 7.0 (8 CPU) | 3780 ± 20 | | 1,106 |
-| Triumviratus 7.0 (1 CPU) | 3756 ± 12 | | 2,015 |
+| Triumviratus 7.0 (1 CPU) | 3755 ± 12 | | 2,015 |
 | Triumviratus 6.0 (1 CPU) | 3743 ± 12 | | 2,056 |
 | Triumviratus 4.2 (1 CPU) | 3666 ± 13 | | 1,518 |
 
+**CCRL 40/2 FRC** (Chess960, 40 moves in 2 minutes), list of 2026-11-01
+
+| version | rating | rank | games |
+|---|---:|---:|---:|
+| **Triumviratus 8.0** | **4104** ± 10 | **2** | 3,047 |
+
 <sub>The rank is the one in the main table of each list, which shows the best version of every engine (for the 1-CPU
-row, the single-CPU table); ranks are tie bands shared by the engines inside the interval. The two lists are not
+row, the single-CPU table); ranks are tie bands shared by the engines inside the interval. The lists are not
 comparable with each other.</sub>
 
 <details>
@@ -352,8 +360,8 @@ results: [CONTRIBUTING.md](docs/project/CONTRIBUTING.md).
 > Triumviratus in the files and in the credits of the program that contains them.
 >
 > **What is the project's own:**
-> - **the networks**: Consilium, a mixture of four experts chosen by material (architecture TRANN3), trained by the
->   project from random initialisation, and Consilium Plebis (TRANN4, eight experts per side), with no Stockfish
+> - **the networks**: Consilium, with four input buckets chosen by material (architecture TRANN3), trained by the
+>   project from random initialisation, and Consilium Plebis (TRANN4, eight input buckets per side), with no Stockfish
 >   network as seed or teacher
 >   ([`NETWORKS.md`](docs/networks/NETWORKS.md)), and the inference code that runs them, written from a specification;
 > - **the `PassedPawns` input block**, an original feature;
