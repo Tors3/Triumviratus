@@ -15,7 +15,7 @@
 
 <sub>in collaboration with Maurizio Platino</sub>
 
-**Current release: [Triumviratus 8.0](https://github.com/Tors3/Triumviratus/releases/tag/v8.0)** (October 2026) · `main`: development of 8.1
+**Current release: [Triumviratus 8.1](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)** (November 2026) · `main`: development after 8.1
 
 **Triumviratus is becoming a community project.** The project has a Discord server where the development is followed,
 ideas are shared and contributions are discussed: to join, just contact me ([@Tors3](https://github.com/Tors3) on
@@ -27,7 +27,7 @@ GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 
 <div align="center">
 
-[8.1](#triumviratus-81-in-development) · [8.0](#triumviratus-80) · [Rating lists](#rating-lists) · [Download](#download) · [What is new](docs/project/NOVELTIES.md) ·
+[8.1](#triumviratus-81) · [8.0](#triumviratus-80) · [Rating lists](#rating-lists) · [Download](#download) · [What is new](docs/project/NOVELTIES.md) ·
 [Networks](docs/networks/NETWORKS.md) · [Tests](docs/tests/) · [History](docs/project/HISTORY.md) ·
 [Credits](#credits) · [License](#license)
 
@@ -35,7 +35,16 @@ GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 
 ---
 
-## Triumviratus 8.1 (in development)
+## Triumviratus 8.1
+
+| opponent | games | conditions | Elo (Triumviratus 8.1) |
+|---|---:|---|---:|
+| **Triumviratus 8.0** | 2,508 | 15+0.15, UHO 2024, 1 thread, large pages | **+21.5 ± 6.7** |
+| **Stockfish 19** | 8,860 | 60+0.6, UHO 2024, 1 thread, large pages | **+0.3 ± 3.3** |
+
+All matches start from the UHO 2024 openings, with large pages enabled for both engines; without large pages
+Triumviratus, whose network is larger, loses more speed than Stockfish 19. Conditions and machines:
+[release notes](https://github.com/Tors3/Triumviratus/releases/tag/v8.1).
 
 8.1 brings a new network, **Consilium Plebis**, trained from 21 to 28 October 2026: **+10.3 ± 4.3 Elo over Consilium**
 with the same search at fixed nodes. Consilium chose its experts by the total piece count,
@@ -175,12 +184,11 @@ Reckless 0.10.0-dev. Games and details: [`docs/tests/`](docs/tests/) and
 
 ## Download
 
-From the [v8.0 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.0):
-`Triumviratus_8.0_windows_universal.exe`, one file for every x86-64 CPU with SSE4.1, with the network embedded. At
-start-up it picks the best of six builds for the CPU (SSE4.1 for CPUs without AVX2, AVX2 without PEXT, AVX2, AVX-512,
-AVX-512 VNNI, AVX-512 VBMI2). The engine name is `Triumviratus - 8.0`. The same release has builds for **Android**
-(arm64, with and without the dot-product instructions) and **macOS** (Apple Silicon and Intel), with the network
-embedded.
+From the [v8.1 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.1):
+`Triumviratus_8.1_windows_universal.exe`, one file for every x86-64 CPU with SSE4.1 and POPCNT, with the network
+embedded. At start-up it picks the best of seven builds for the CPU (SSE4.1, AVX2 without PEXT, AVX2, AVX-VNNI,
+AVX-512, AVX-512 VNNI, AVX-512 VBMI2). The engine name is `Triumviratus - 8.1`. Builds for **Android** and **macOS**
+of 8.0 are in the [v8.0 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.0).
 
 ## How to compile
 
@@ -229,7 +237,7 @@ by default. The UCI option `LargePages` (default 1) turns them off.
 engine with search settings chosen for test positions (analysis mode always on, a two-line search that pauses in quiet
 positions, a preference for the most direct win). At 1 second per position it solves 153 of 183 on IQ4 and 157 of 200
 on Arasan 2026, against 145 and 137 for 8.0 (details in
-[DEVELOPMENT_8.0.md §49](docs/development/archive/DEVELOPMENT_8.0.md)). For games, use 8.0.
+[DEVELOPMENT_8.0.md §49](docs/development/archive/DEVELOPMENT_8.0.md)). For games, use 8.1.
 
 </details>
 
@@ -293,9 +301,8 @@ where adopted, implemented in our own way and re-tuned on the project's own netw
 
 - **[Stockfish](https://github.com/official-stockfish/Stockfish)** (GPLv3): studied for the search. Up to 8.0 the
   engine contained Stockfish code: the NNUE inference ported from SFNNv16 and a search written in October 2026 on the
-  algorithmic base of Stockfish 19 (tag `v8.0`). 8.1 contains no Stockfish code: the inference is Consilium Plebis's
-  own and the search is written in the project's own form. Many numeric constants of the search still have the values
-  of Stockfish 19; they are being retuned by SPSA on the new network.
+  algorithmic base of Stockfish 19 (tag `v8.0`). In 8.1 the inference is Consilium Plebis's own and the search was
+  rewritten in the project's own code and order.
 - **[Pawnocchio](https://github.com/JonathanHallstrom/pawnocchio)**: the **`PawnPair`** input block (pairs of pawns on
   the same or adjacent files), **invented by Jonathan Hallström** and also used by Stormphrax and Viridithas; our
   implementation and weights are our own, the idea is his.
@@ -314,7 +321,7 @@ The open-source computer-chess community is what makes a project like this possi
 
 ## Contributing
 
-`main` holds the development of 8.1, merged from the working branch [`dev`](https://github.com/Tors3/Triumviratus/tree/dev);
+`main` holds the development after 8.1, merged from the working branch [`dev`](https://github.com/Tors3/Triumviratus/tree/dev);
 released versions are on the [Releases](https://github.com/Tors3/Triumviratus/releases) page. How to send code or test
 results: [CONTRIBUTING.md](docs/project/CONTRIBUTING.md).
 
@@ -353,17 +360,16 @@ results: [CONTRIBUTING.md](docs/project/CONTRIBUTING.md).
 > - **the search code of 8.1**, including the code that passes each move to the network (incremental updates of the
 >   accumulators and their caches), the transposition table and the move picker;
 > - **the rules added to time management**: the surprise rule, less time when behind on the clock, the defence rules;
-> - **per-expert search margins, the causal reduction** and the other techniques listed as new in
->   [`NOVELTIES.md`](docs/project/NOVELTIES.md);
+> - **the techniques listed as new** in [`NOVELTIES.md`](docs/project/NOVELTIES.md);
 > - **the measurement method**: every search change by SPRT, every speed change by hardware counters at an identical
 >   search tree, with the numbers published.
 >
 > **Where the rest comes from.** The board, the attack tables and the basic infrastructure descend from **BBC**;
 > Syzygy probing is **Fathom** and the legal move generator comes from **Zoomies** and **Surge** (MIT). Up to 8.0 the
 > NNUE inference was ported from Stockfish's SFNNv16 and the search was written on the algorithmic base of Stockfish
-> 19's search. In **8.1 no Stockfish code remains**: the inference and every part of the search are the project's own;
-> some numeric constants of the search still have Stockfish 19's values and will be retuned by SPSA when the training
-> of the next network ends. The `PawnPair` input block implements a feature designed by Jonathan Hallström for
+> 19's search. In 8.1 the inference was written again from a specification of our own and every block of the search
+> was rewritten in the project's own code and order, using the techniques common to the engines of today. The
+> `PawnPair` input block implements a feature designed by Jonathan Hallström for
 > Pawnocchio; the implementation and the weights are ours.
 
 </details>

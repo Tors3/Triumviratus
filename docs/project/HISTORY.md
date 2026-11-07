@@ -28,7 +28,7 @@ Details in the [`README`](../../README.md), [`DEVELOPMENT_8.0.md`](../developmen
 
 **Triumviratus 8.0 Position Solver** (October 2026) is a separate build of the same engine for analysing hard
 positions: analysis mode always on, a two-line search and a preference for the most direct win
-([`DEVELOPMENT_8.0.md` §49](../development/archive/DEVELOPMENT_8.0.md), [`NOVELTIES.md` §10](NOVELTIES.md)).
+([`DEVELOPMENT_8.0.md` §49](../development/archive/DEVELOPMENT_8.0.md), [`NOVELTIES.md` §7](NOVELTIES.md#7-analysis-build-position-solver)).
 
 ## Triumviratus 7.0
 
