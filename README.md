@@ -207,8 +207,8 @@ From the [v8.1 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
 `Triumviratus_8.1_windows_universal.exe`, one file for every x86-64 CPU with SSE4.1 and POPCNT, with the network
 embedded. At start-up it picks the best of seven builds for the CPU (SSE4.1, AVX2 without PEXT, AVX2, AVX-VNNI,
 AVX-512, AVX-512 VNNI, AVX-512 VBMI2). The engine name is `Triumviratus - 8.1`. The same release has **Linux** builds
-(SSE4.1, AVX2 without PEXT, AVX2, AVX-512; statically linked, for any distribution). Builds for **Android** and
-**macOS** of 8.0 are in the [v8.0 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.0).
+(SSE4.1, AVX2 without PEXT, AVX2, AVX-512; statically linked, for any distribution) and **macOS** builds (Apple
+Silicon and Intel). Builds for **Android** of 8.0 are in the [v8.0 release](https://github.com/Tors3/Triumviratus/releases/tag/v8.0).
 
 ## How to compile
 
