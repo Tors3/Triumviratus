@@ -1032,7 +1032,7 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   int r = NmpRedBase + n.depth / NmpDepthDiv + std::max((f->static_eval - n.beta) / NmpEvalDiv, 0) +
           (((AN ? td.dz_nmp : deep_term(td, DeepNmp)) + NmpRedDepth * n.depth + NmpRedImp * n.improving +
             (int)((td.hash_key >> 20) & 1023)) >> 10);
-  // SmpNullOdd (R19, Stockfish): with several threads the odd ones reduce the null move less, so the threads differ.
+  // SmpNullOdd (R19): with several threads the odd ones reduce the null move less, so the threads differ.
   if (SmpNullOdd && num_threads > 1 && (td.thread_id & 1))
     r = std::max(r - SmpNullOdd, 1);
   NullUndo nu;

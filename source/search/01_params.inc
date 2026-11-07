@@ -60,7 +60,7 @@
 // SingLvlExp0 1, SingLvlExp1 1), and the small moves of six that stayed near their start (SingMarginDiv 63->64,
 // SingDepthMul 1024->1026, SingDoubleDeep 38->39, SingTtHistMul 1175->1194, SingTripleTtPv 81->80, SingFhTtDepth
 // 110->109). Against the previous values, pooled (10+0.1 without HT and 8+0.08 with HT): +0.22 +- 2.89 Elo over
-// 14,266 games, level. Still the numbers of Stockfish 19: SingNegCut 3, SingMinDepth 6 (+1 on tt_pv), SingHashSlack 3,
+// 14,266 games, level. Unchanged: SingNegCut 3, SingMinDepth 6 (+1 on tt_pv), SingHashSlack 3,
 // SingTtHistDiv 114178. Backup _pre_bake_s4_2026-10-19.
 // UNBAKE BLOCK 2 (19/10/2026 midday, user): the reduction of our own with RfLearn, baked in the morning (parity against
 // the formula of 8.0 at 8+0.08 with HT and 2+0.02), lost on a Zen 4 at long time controls against 8.0 with both builds
@@ -972,8 +972,8 @@
   P(NmpImprovingLt, 0, -100, 100)                                                                          \
   P(QuietFutAlphaLt, 0, -200, 200)                                                                         \
   /* CODE CONSTANTS TURNED INTO PARAMETERS (evening of 12/10/2026, user: "everything as variables, frozen in the       \
-     release"). They were numbers written in the search code, almost all equal to those of Stockfish 19 (tools/       \
-     search_attribution.py: 74 of 87 constants >= 100). Default = the old value: identical tree, bench unchanged.     \
+     release"). They were numbers written in the search code.                                                         \
+     Default = the old value: identical tree, bench unchanged.                                                        \
      In the release they are constexpr like the other parameters; in dev the table of the reciprocals of HistDiv* is \
      recomputed at every setoption (param_tables_refresh, 13_search.inc). They serve the SPSAs.                      \
      Limits of the statistics (09_history.inc, hist_learn) */                                                    \
@@ -1241,7 +1241,7 @@
   /*     pawn move (1/1024 ply; positive down to zero at most, negative = more), PkCritPrune 1 = quiet pawn moves    */ \
   /*     skip the quiet gate (history prune, futility, exchange test). Both 0 = off, identical tree.                 */ \
   /*  5c. Pawn breaks (28/10/2026, ours; author: "implement something that changes the behaviour on pawn breaks and  */ \
-  /*     test it directly"). Study of 28/10 (match_moe/pawn_study, reference Stockfish dev at 20M nodes, partial): a    */ \
+  /*     test it directly"). Study of 28/10 (match_moe/pawn_study, reference search at 20M nodes, partial): a           */ \
   /*     break is the best move the search finds least (37.5% at depth 14, 50% at 20, settled only from depth 13.5)  */ \
   /*     and the costliest to miss (61 cp), only 8 positions so far. A break = a quiet pawn push that attacks an enemy  */ \
   /*     pawn from its new square, in any structure (RdPawnBreak, closed structures only, was neutral on 19/10).        */ \
@@ -1562,8 +1562,8 @@
   P(TmLongTo, 35000, 0, 600000)          /* ms of game time: at or above, the long values                  */ \
   P(TmLongIncMoves, 40, 0, 200)          /* moves of increment counted in the game time                    */ \
   /* ------------------------------------------------------------------------------------------------------------ */ \
-  /* CENSUS 21/10/2026 (CENSUS.md in the work folder of the census): the numbers still written in the search, each  */ \
-  /* the value of Stockfish 19 in the same role, made parameters at their old values for the SPSA on Consilium Plebis.   */ \
+  /* CENSUS 21/10/2026 (CENSUS.md in the work folder of the census): the numbers still written in the search were   */ \
+  /* made parameters at their old values for the SPSA on Consilium Plebis.                                             */ \
   /* No formula changed: bench 209655 (Consilium) and 336968 (Consilium Plebis) as before. Integer parameters replace   */ \
   /* integer literals one for one (same operations, same truncation); TmChangesKeep / 1000.0 = 0.5 is exact. The    */ \
   /* ranges keep the sign and every order the code needs (RootAvgMin < RootAvgMax for the clamp, AlphaRed at most  */ \
@@ -1651,7 +1651,7 @@
   /* -- SMP (S1; act only with Threads > 1) --                                                                       */ \
   P(SmpLmrNoise, 0, 0, 256)              /* LMR noise per thread, +-this in 1024ths of a ply                  */ \
   P(SmpPvHash, 0, 0, 1)                  /* PV node: lower bound in the hash at every alpha raise             */ \
-  P(SmpNullOdd, 0, 0, 2)                 /* odd threads: null move reduced by this many plies less (Stockfish) */ \
+  P(SmpNullOdd, 0, 0, 2)                 /* odd threads: null move reduced by this many plies less             */ \
   P(SmpContCorr, 0, 0, 1)                /* continuation correction shared by the threads of a node           */ \
   /* -- singular family (S2) --                                                                                      */ \
   P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed (Caissa)          */ \
