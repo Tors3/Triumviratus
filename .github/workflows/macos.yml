@@ -64,7 +64,7 @@ jobs:
               flavours.append(("possolver", b, "PosSolver_"))
           stamp = f"{day}_" if day else ""
           inc = []
-          for target, runner, suffix in (("macos-arm", "macos-14", "macos_arm"), ("macos-x86", os.environ["INTEL"], "macos_x86")):
+          for target, runner, suffix in (("macos-arm", "macos-15", "macos_arm"), ("macos-x86", os.environ["INTEL"], "macos_x86")):
               for fl, bench, tag in flavours:
                   extra = "-DTRIUMV_RELEASE -ffp-contract=off"   # as the Windows build: no fused multiply-add, same bench
                   extra += f" -DTRIUMV_RELEASE_DAY={day}" if day else " -DTRIUMV_OFFICIAL"
