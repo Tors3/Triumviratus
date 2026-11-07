@@ -268,8 +268,8 @@ positions at long time controls and against other engines on his own machine, an
 the cloud GPUs on which the networks are trained. Maurizio has been a fundamental asset for this project: without
 Maurizio, the fast development that started with version 4 would never have been possible.
 
-**Mark Tang** is an important tester and collaborator of the project. He tested almost every 8.0 pre-release
-extensively, in matches and on tactical test suites such as IQ4, and his reports shaped the release. His remark that
+**Mark Tang** is an important tester and collaborator of the project, for his testing and reports during development.
+He tested almost every 8.0 pre-release extensively, in matches and on tactical test suites such as IQ4, and his reports shaped the release. His remark that
 Stoofvlees answers very quickly between two moves started the line of thought that led to the surprise rule of 8.0's
 time management. Many thanks to him.
 
