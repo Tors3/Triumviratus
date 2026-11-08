@@ -48,7 +48,7 @@ comes from the lessons of Consilium Plebis. The measures behind it are of two ki
 | pawn-king subnetwork | 256 hidden, in every evaluation | **128 hidden**, active only with pawns and at most one minor on the board, its mean output elsewhere | only the pure pawn endgames use it; a larger block shows no gain |
 | layer stacks | 8, by piece count | **32**: piece count × which side has a queen (none, the opponent only, the side to move only, both) | free at run time; the experts carry the opponent's queen into each accumulator, the stacks see which side has one (32 rather than 16 decided on 08/11 as the safer choice for strength); about 2.1 MB in all |
 | threats, pawn pairs, passed pawns, L1 / L2 / L3 | | unchanged (1024 / 32 / 32) | pawn pairs and passed pawns carry the pawn knowledge; L2 and L3 as in Stockfish |
-| training target | nnue-pytorch's score-to-probability map | **the map refitted on our data** (to study first) | the game results are more decisive than the map says |
+| training target | nnue-pytorch's score-to-probability map | **unchanged** (studied on 08/11) | with offset and scale both free, the best map on our data is within about 0.2% of the current one in cross-entropy: not worth a change of the network's scale |
 
 Measured on the released network, with routing-table copies of it (same engine, xperf, cycles per node): the six
 experts of this design together with the pawn-king gate cost **3.7% less in the middlegame and 3.2% less in the
