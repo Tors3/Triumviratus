@@ -175,29 +175,25 @@ row, the single-CPU table); ranks are tie bands shared by the engines inside the
 comparable with each other.</sub>
 
 <details>
-<summary><b>Our matches and test suites for the 8.0 release</b></summary>
+<summary><b>Our matches and test suites for the 8.1 release</b></summary>
 
-1 thread per engine; ± is the 95% interval on complete opening pairs (pentanomial).
+Our own matches of 8.1 (against 8.0 and Stockfish 19) are in the [8.1 section](#triumviratus-81) above.
 
-| opponent | games | conditions | +W =D −L | Elo (Triumviratus) |
-|---|---:|---|---|---:|
-| **Triumviratus 7.0** | 4,000 | 5+0.05, UHO 2024 | +1773 =1864 −363 | **+128.0 ± 5.6** |
-| **Triumviratus 7.0** | 400 (stopped) | 20+0.2, UHO 2024 | +177 =189 −34 | **+129.9 ± 15.7** |
-| **Stockfish 18** | 600 | 133+1 (CCRL Blitz), TopGM openings | +20 =568 −12 | **+4.6 ± 5.0** |
-| **Stockfish 18** | 2,000 | 40+0.4, UHO 2024 | +530 =1082 −388 | **+24.7 ± 7.2** |
+| opponent | tester | games | conditions | +W =D −L | Elo (Triumviratus) |
+|---|---|---:|---|---|---:|
+| **ShashChess 42** | Maurizio Platino | 400 | 60+1, 1 thread, AVT2026d openings | +5 =391 −4 | **+1 ± 5** |
 
-Games of the UHO match in [`docs/tests/games`](docs/tests/games).
+<sub>The 8.1 pre-release of 4 November 2026 against ShashChess 42, both with default settings and their universal
+executables, 256 MB hash, each opening played with both colours; 391 draws. ± as reported by the tester's GUI
+(TorsGUI).</sub>
 
 | suite | tester | result |
 |---|---|---|
-| IQ4 (183 positions, 1 s, 1 thread) | Maurizio Platino | **155 / 183**, second of six |
-| IQ4 (183 positions, 1 s) | Mark Tang | 145 / 183, highest among the engines tested |
-| ENET 2026 (110 positions) | Maurizio Platino | 89 / 110 |
+| 256 difficult positions 2023 (Eduard Nemeth), 10 s | Maurizio Platino | **173 / 256** with the Position Solver of 28 October (ShashChess 42: 154, Stockfish 19: 146) |
 
-Other engines: Andres (EveAnn)'s gauntlet of the 11 October pre-release scored **62.8%, +91.2 ± 9.4** against fifteen
-engines (1,500 games); Maurizio Platino measured **+94 ± 16** against Stormphrax 8.0.0 and **+25.5 ± 14.6** against
-Reckless 0.10.0-dev. Games and details: [`docs/tests/`](docs/tests/) and
-[Triumviratus-Testing](https://github.com/Tors3/Triumviratus-Testing).
+The tables of the 8.0 release (our matches against 7.0 and Stockfish 18, IQ4, ENET 2026, the testers' matches) are
+archived in [`docs/tests/`](docs/tests/README.md#80-release-the-readme-summary-archived). Games and details:
+[`docs/tests/`](docs/tests/) and [Triumviratus-Testing](https://github.com/Tors3/Triumviratus-Testing).
 
 </details>
 

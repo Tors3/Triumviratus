@@ -5,6 +5,43 @@ and test suites run by other testers.
 For Maurizio Platino's matches, the complete game records (PGN) and the GUI crosstables are in
 **[Tors3/Triumviratus-Testing](https://github.com/Tors3/Triumviratus-Testing)**.
 
+## Maurizio Platino — 8.1 prerelease against ShashChess 42
+
+| Date | Opponent | Triumviratus build | Games | +W =D −L | Score | Elo (Triumviratus) |
+|---|---|---|---:|---|---:|---:|
+| 2026-11-07 | **ShashChess 42** | 8.1 prerelease (2026-11-04) | 400 | +5 =391 −4 | **50.1%** | **+1 ± 5** |
+
+<sub>TorsGUI · 1 min + 1 s · 1 thread and 256 MB hash per engine · both engines with default settings and their
+universal executables · openings `AVT2026d.pgn`, each played with both colours · 296 of the 400 games ended by
+adjudication. ± is the 95% interval as reported by TorsGUI. The summary of the match (no games) is in
+Triumviratus-Testing.</sub>
+
+The two engines are level: 391 of the 400 games were drawn, and the nine decisive games split five to four.
+
+## 8.0 release: the README summary (archived)
+
+The summary of the 8.0 release as it stood in the main README until the 8.1 release. 1 thread per engine; ± is the
+95% interval on complete opening pairs (pentanomial).
+
+| opponent | games | conditions | +W =D −L | Elo (Triumviratus) |
+|---|---:|---|---|---:|
+| **Triumviratus 7.0** | 4,000 | 5+0.05, UHO 2024 | +1773 =1864 −363 | **+128.0 ± 5.6** |
+| **Triumviratus 7.0** | 400 (stopped) | 20+0.2, UHO 2024 | +177 =189 −34 | **+129.9 ± 15.7** |
+| **Stockfish 18** | 600 | 133+1 (CCRL Blitz), TopGM openings | +20 =568 −12 | **+4.6 ± 5.0** |
+| **Stockfish 18** | 2,000 | 40+0.4, UHO 2024 | +530 =1082 −388 | **+24.7 ± 7.2** |
+
+Games of the UHO match in [`games/`](games/).
+
+| suite | tester | result |
+|---|---|---|
+| IQ4 (183 positions, 1 s, 1 thread) | Maurizio Platino | **155 / 183**, second of six |
+| IQ4 (183 positions, 1 s) | Mark Tang | 145 / 183, highest among the engines tested |
+| ENET 2026 (110 positions) | Maurizio Platino | 89 / 110 |
+
+Other engines: Andres (EveAnn)'s gauntlet of the 11 October pre-release scored **62.8%, +91.2 ± 9.4** against fifteen
+engines (1,500 games); Maurizio Platino measured **+94 ± 16** against Stormphrax 8.0.0 and **+25.5 ± 14.6** against
+Reckless 0.10.0-dev. The details of every row are in the sections below.
+
 ## The project's own matches — 8.0 against Stockfish 18
 
 The release 8.0 against Stockfish 18 with an unbalanced book, played on the project's test machine (2× Xeon Gold
