@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1010" width="1500" height="1010"
      font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img"
-     aria-label="Design of the next Triumviratus network (06/11/2026): shared threat, pawn-pair and passed-pawn inputs and an int8 HalfKA block split into six experts chosen per side by the opponent's material with the queen as a boundary; two 1024 accumulators with 1024-byte rows and no PSQT inside them; a 24 KB piece-square table outside the rows; clipped ReLU with pairwise product; a 128-unit pawn-king subnetwork active only in pawn endgames; sixteen layer stacks chosen by piece count and by the queens on the board">
+     aria-label="Design of the next Triumviratus network (06/11/2026): shared threat, pawn-pair and passed-pawn inputs and an int8 HalfKA block split into six experts chosen per side by the opponent's material with the queen as a boundary; two 1024 accumulators with 1024-byte rows and no PSQT inside them; a 24 KB piece-square table outside the rows; clipped ReLU with pairwise product; a 128-unit pawn-king subnetwork active only in pawn endgames; 32 layer stacks chosen by piece count and by which side has a queen">
   <title>Lex Hortensia (TRANN5) &#8212; the next Triumviratus network &#8212; design of 06/11/2026</title>
   <defs>
     <style>
@@ -35,7 +35,7 @@
   <rect width="1500" height="1010" fill="#0E131C"/>
 
   <text x="40" y="48" font-size="24" font-weight="600">Lex Hortensia · the next Triumviratus network (TRANN5) · design of 06/11/2026</text>
-  <text x="40" y="74" font-size="14" class="dim">Six experts with the queen as a boundary, rows of exactly 1024 bytes, the PSQT in a small table, a pawn-king block only in the pawn endgames, sixteen layer stacks.</text>
+  <text x="40" y="74" font-size="14" class="dim">Six experts with the queen as a boundary, rows of exactly 1024 bytes, the PSQT in a small table, a pawn-king block only in the pawn endgames, 32 layer stacks.</text>
   <text x="40" y="96" font-size="13" class="dim"><tspan class="new">NEW</tspan> marks what changes from Consilium Plebis; everything else is as in 8.1. Future training direction, not in training now: it comes from the lessons of Consilium Plebis.</text>
 
   <!-- ===================== 1. INPUTS ===================== -->
@@ -151,9 +151,9 @@
   <path d="M1010,478 L1020,478 Q1026,478 1026,472 L1026,279 Q1026,273 1032,273 L1058,273" class="arrow-p" marker-end="url(#p)"/>
 
   <!-- ===================== 4. LAYER STACK ===================== -->
-  <text x="1050" y="136" class="sec">4 · LAYER STACK (1 OF 16)</text>
+  <text x="1050" y="136" class="sec">4 · LAYER STACK (1 OF 32)</text>
   <rect x="1040" y="150" width="420" height="560" rx="10" fill="none" stroke="#E0A040" stroke-dasharray="5 4"/>
-  <text x="1250" y="174" font-size="13" fill="#F2C987" font-weight="600" text-anchor="middle">bucket: (pieces − 1) / 4 and queens yes / no <tspan class="new" font-size="11">NEW</tspan></text>
+  <text x="1250" y="174" font-size="13" fill="#F2C987" font-weight="600" text-anchor="middle">bucket: (pieces − 1) / 4 and which side has a queen <tspan class="new" font-size="11">NEW</tspan></text>
 
   <rect x="1060" y="196" width="380" height="44" rx="6" class="stk"/>
   <text x="1076" y="224" font-size="14" font-weight="600">fc_0 · sparse affine</text>
@@ -196,12 +196,12 @@
   <rect x="1060" y="620" width="380" height="40" rx="6" class="box"/>
   <text x="1076" y="645" font-size="13">+ fc_0[30] − fc_0[31]</text>
   <text x="1426" y="645" font-size="12" class="dim" text-anchor="end">skip from fc_0</text>
-  <text x="1250" y="684" font-size="12" class="dim" text-anchor="middle">16 stacks: 8 piece-count bands × queens yes / no</text>
-  <text x="1250" y="700" font-size="12" class="dim" text-anchor="middle">L2 / L3 = 32 / 32 as in 8.1 and Stockfish · ~1.1 MB in all</text>
+  <text x="1250" y="684" font-size="12" class="dim" text-anchor="middle">32 stacks: 8 piece-count bands × 4 queen states</text>
+  <text x="1250" y="700" font-size="12" class="dim" text-anchor="middle">L2 / L3 = 32 / 32 as in 8.1 and Stockfish · ~2.1 MB in all</text>
 
   <!-- selector -->
   <rect x="690" y="672" width="300" height="38" rx="19" class="stk-soft"/>
-  <text x="840" y="696" font-size="14" fill="#F2C987" font-weight="600" text-anchor="middle">piece count · queens on the board</text>
+  <text x="840" y="696" font-size="14" fill="#F2C987" font-weight="600" text-anchor="middle">piece count · each side's queen</text>
   <path d="M990,690 L1036,690" class="arrow-s" marker-end="url(#s)"/>
   <path d="M700,710 L700,770 L640,770 L640,784" class="arrow-s" marker-end="url(#s)"/>
   <text x="708" y="742" font-size="12" class="dim">the piece count also picks the PSQT bucket</text>

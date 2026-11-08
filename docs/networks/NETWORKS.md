@@ -24,7 +24,7 @@ architecture keeps the number:
 | `TRANN2` | `legio-septima` | 7.0 | SFNNv16 + `PassedPawns` |
 | `TRANN3` | Consilium | 8.0 | TRANN2 with the HalfKA block split into four experts by total piece count |
 | `TRANN4` | Consilium Plebis | 8.1 | int8 HalfKA split into eight experts per side, chosen by the opponent's non-pawn material, plus a pawn-king subnetwork |
-| `TRANN5` | Lex Hortensia, the next network (designed, not in training) | after 8.1 | six experts per side with the queen as a boundary, 1024-byte rows with the PSQT in a small table, a gated pawn-king block, sixteen layer stacks |
+| `TRANN5` | Lex Hortensia, the next network (designed, not in training) | after 8.1 | six experts per side with the queen as a boundary, 1024-byte rows with the PSQT in a small table, a gated pawn-king block, 32 layer stacks |
 
 ---
 
@@ -46,7 +46,7 @@ comes from the lessons of Consilium Plebis. The measures behind it are of two ki
 | king-relative experts | 8, by the opponent's non-pawn material | **6**, the queen as a boundary: bare or one minor, one rook, at most one rook with up to two minors, two rooks, lone queen, queen with more | the endgame experts are the distinct ones and stay apart; the middlegame experts were 94-99% alike; with the queen as a boundary a queen middlegame never changes expert, so the expert changes (each a refresh) fall by about half |
 | PSQT | 8 values at the end of every feature row (rows of 1088 bytes) | **a 24 KB piece-square table** per output bucket, outside the rows; rows of exactly 1024 bytes | the PSQT is half of today's evaluation, mostly material and piece-square values, which the table keeps; 1024-byte rows never cross a 4 KB page |
 | pawn-king subnetwork | 256 hidden, in every evaluation | **128 hidden**, active only with pawns and at most one minor on the board, its mean output elsewhere | only the pure pawn endgames use it; a larger block shows no gain |
-| layer stacks | 8, by piece count | **16**: piece count × queens on the board | free at run time; the 6 experts already carry each side's queen into the accumulators |
+| layer stacks | 8, by piece count | **32**: piece count × which side has a queen (none, the opponent only, the side to move only, both) | free at run time; the experts carry the opponent's queen into each accumulator, the stacks see which side has one (32 rather than 16 decided on 08/11 as the safer choice for strength); about 2.1 MB in all |
 | threats, pawn pairs, passed pawns, L1 / L2 / L3 | | unchanged (1024 / 32 / 32) | pawn pairs and passed pawns carry the pawn knowledge; L2 and L3 as in Stockfish |
 | training target | nnue-pytorch's score-to-probability map | **the map refitted on our data** (to study first) | the game results are more decisive than the map says |
 

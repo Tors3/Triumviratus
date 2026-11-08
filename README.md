@@ -77,9 +77,9 @@ layer stack.
 No network is being trained now. This design, **Lex Hortensia** (architecture `TRANN5`), comes from the lessons of Consilium Plebis: offline studies of what its
 experts, PSQT and pawn blocks contribute, judged on game results, and speed measurements of the engine (November
 2026). It has six experts with the queen as a boundary, rows of exactly 1024 bytes with the PSQT in a small table,
-a pawn-king block only in the pawn endgames and sixteen layer stacks.
+a pawn-king block only in the pawn endgames and 32 layer stacks.
 
-<p align="center"><img src="docs/networks/next_network_design.svg" alt="Design of the next network: six int8 HalfKA experts chosen per side by the opponent's material with the queen as a boundary, two 1024 accumulators without PSQT, a 24 KB piece-square table, a 128-unit pawn-king block active only in pawn endgames, sixteen layer stacks chosen by piece count and queens" width="100%"></p>
+<p align="center"><img src="docs/networks/next_network_design.svg" alt="Design of the next network: six int8 HalfKA experts chosen per side by the opponent's material with the queen as a boundary, two 1024 accumulators without PSQT, a 24 KB piece-square table, a 128-unit pawn-king block active only in pawn endgames, 32 layer stacks chosen by piece count and by which side has a queen" width="100%"></p>
 
 [Details](docs/networks/NETWORKS.md#the-next-network--future-training-direction-not-in-training-now)
 
