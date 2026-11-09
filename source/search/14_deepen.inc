@@ -43,6 +43,8 @@ struct ClockState {
   bool   expected = false;          // this search starts from the expected position
   bool   surprise = false;          // there was an expected reply and the opponent played another one
   double start_clock = 0;           // clock at the first move of the game (TmSurpriseClock)
+  // ContemptOpp (01_params.inc): the opponent's errors and blows in this game, read from our own scores.
+  int    opp_err = 0, opp_blow = 0;
 };
 static ClockState g_clock;
 
@@ -82,6 +84,22 @@ static void clock_memory_reset() {
   g_clock.expected = false;
   g_clock.surprise = false;
   g_clock.start_clock = 0;
+  g_clock.opp_err = g_clock.opp_blow = 0;
+}
+
+// ContemptOpp (09/11/2026, ours, OFF; 01_params.inc): the opponent is judged from our own scores. A search has just
+// closed with `score`; the previous move closed with g_clock.prev_best. The difference, in printed centipawns, is what
+// the opponent's reply (and one more search of ours) did to the game: +ContemptOppStep or more counts as an error of
+// the opponent, -ContemptOppStep or less as a blow. Only while the previous score was within +-150 centipawns, so a
+// game already decided adds nothing. Called before the new score replaces the previous one.
+static void opp_judge(int score) {
+  if (!g_clock.have_prev || g_clock.prev_best == -infinity || val_decided(score) || val_decided(g_clock.prev_best))
+    return;
+  if (std::abs(units_to_print_cp(g_clock.prev_best)) > 150)
+    return;
+  const int d = units_to_print_cp(score) - units_to_print_cp(g_clock.prev_best);
+  g_clock.opp_err += d >= ContemptOppStep;
+  g_clock.opp_blow += d <= -ContemptOppStep;
 }
 
 int clock_hard_limit() { return g_clock.maximum; }
@@ -642,6 +660,18 @@ static void deepen(ThreadData &td) {
   if (ContemptAhead && g_clock.have_prev && g_clock.prev_best != -infinity && g_clock.prev_best >= ContemptAheadFrom &&
       !val_decided(g_clock.prev_best))
     td.contempt_ahead = ContemptAhead;
+  // ContemptOpp (09/11/2026, ours, OFF): in a game where the opponent has erred ContemptOppFrom times, a draw is worth
+  // -ContemptOpp for the root side while the previous move closed at ContemptOppMin centipawns or more (below it a
+  // draw is welcome: in our games the same count went with more losses there). Fixed for the whole search, like the
+  // two values above.
+  td.contempt_opp = 0;
+  if (ContemptOpp && g_clock.have_prev && g_clock.prev_best != -infinity && !val_decided(g_clock.prev_best) &&
+      g_clock.opp_err >= ContemptOppFrom && units_to_print_cp(g_clock.prev_best) >= ContemptOppMin)
+    td.contempt_opp = ContemptOpp;
+#ifdef TRIUMV_OPPERR_STATS
+  if (td.thread_id == 0)
+    printf("info string opperr errors %d blows %d contempt %d\n", g_clock.opp_err, g_clock.opp_blow, td.contempt_opp);
+#endif
   // C2ConvRoot (the author's idea, 21/10/2026 evening): the conversion push decided once here, from the root's static
   // evaluation and exact pawn-king effect (mode 2 decides again at every iteration, below).
   td.c2_conv_root = 0;

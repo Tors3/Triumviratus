@@ -102,7 +102,9 @@ static inline int contempt(const ThreadData &td) {
   // DrawDefend (13/10/2026): when behind, a draw is worth +draw_defend for the root side (see 01_params.inc).
   // ContemptAhead (R19 §5, 03/11/2026, off at 0): the twin of DrawDefend, when ahead a draw is worth -contempt_ahead for
   // the root side (14_deepen.inc sets it from the score the previous move closed with).
-  const int c = Contempt - (DrawDefend ? td.draw_defend : 0) + (ContemptAhead ? td.contempt_ahead : 0);
+  // ContemptOpp (09/11/2026, off at 0): the same against an opponent that has been erring (14_deepen.inc).
+  const int c = Contempt - (DrawDefend ? td.draw_defend : 0) + (ContemptAhead ? td.contempt_ahead : 0) +
+                (ContemptOpp ? td.contempt_opp : 0);
   return c ? (td.side == td.root_side ? -c : c) : 0;
 }
 

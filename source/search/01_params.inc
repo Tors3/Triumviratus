@@ -1731,7 +1731,20 @@
   P(TmMsBase, -721, -3000, 3000)         /* /100 moves: the addition at score 0 */ \
   P(TmMsRise, 1772, 0, 6000)             /* /100 moves more per 100 cp of |score|, up to 100 cp */ \
   P(TmMsFall, 782, 0, 6000)              /* /100 moves fewer per 100 cp, from 100 to 300 cp */ \
-  P(TmMsTail, 298, 0, 6000)              /* /100 moves fewer per 100 cp, from 300 to 700 cp */
+  P(TmMsTail, 298, 0, 6000)              /* /100 moves fewer per 100 cp, from 300 to 700 cp */ \
+  /* ContemptOpp: the opponent judged from our own scores (opp_judge, 14_deepen.inc). An error is a rise of our     */ \
+  /* score by ContemptOppStep printed centipawns from one of our moves to the next, counted while the score is      */ \
+  /* within +-150. For rating lists, not self-play; the measurement before any test is in the 9.0 audit notes.      */ \
+  P(ContemptOpp, 0, 0, 200)              /* draw worth -this for the root side (0 = off, identical tree) */ \
+  P(ContemptOppStep, 15, 5, 200)         /* printed centipawns: a rise of this size is an error of the opponent */ \
+  P(ContemptOppFrom, 2, 1, 20)           /* errors in the game from which the draw value applies */ \
+  P(ContemptOppMin, 10, -200, 500)       /* printed centipawns: only while the previous move closed at this or more */ \
+  /* EvalOrd: a deep node without a hash move has only the histories to choose its first move. Before the move loop  */ \
+  /* every legal move gets a quiescence search of its child and the best one is handed out first, in the place of   */ \
+  /* the missing hash move (eval_first_move, 13_search.inc). Nothing else changes: the node's hash view stays empty, */ \
+  /* so the reductions and the "no hash move" terms are the same. From depth EvalOrdDepth (after the shallower      */ \
+  /* search of a node without a hash move), not in check, not at the root, not in an exclusion search.             */ \
+  P(EvalOrdDepth, 0, 0, 24)              /* 0 = off, identical tree */
 
 // OWN ORDERING FORM (OrdOwn, OrdMapNo/OrdMapMask, OrdOwnTact, OrdRedK, OqGood/OtGood and the Oq/Ot/Oe weights):
 // REMOVED 22/10/2026 (user). Fitted on a move-ordering oracle of 597k nodes it ordered better than the inherited

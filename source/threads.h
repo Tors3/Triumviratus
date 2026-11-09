@@ -182,6 +182,7 @@ struct alignas(128) ThreadData {
     int  smp_aff_lo = 0, smp_aff_hi = -1;
     int  draw_defend;                 // DrawDefend: draw value for the root colour in this search
     int  contempt_ahead;              // ContemptAhead (R19): draw value against the root colour in this search
+    int  contempt_opp = 0;            // ContemptOpp: the same, against an opponent that has been erring
     int  asp_prev_best = 0;           // AspStable (R19): best root move of the previous iteration
     int  asp_stable = 0;              //   iterations in a row with that best move
     void* st_cont_corr = nullptr;     // SmpContCorr (R19): the shared continuation-correction table of the node's copy

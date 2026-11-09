@@ -2016,11 +2016,96 @@ static inline void soften_fail_high(NodeState &n) {
   n.best = x < 0 ? -q : q;
 }
 
+// EvalOrd (09/11/2026, ours, OFF; 01_params.inc): the first move of a deep node without a hash move, chosen by a
+// quiescence search of every child. The window of each child is open below and closed at the best value so far, so
+// the best child is exact and the others are only shown to be no better. The moves come from an ordinary queue, so
+// legality and the order of equal values are those of the loop.
+// -DTRIUMV_EVALORD_STATS (measurement build, one thread): per depth, how many nodes qualify, how they end and what
+// the choice costs. With the environment variable TRIUMV_EO_SHADOW=<depth> and EvalOrdDepth 0 the choice is computed
+// from that depth but not used, so the same build tells how often it names the move that cuts.
+#ifdef TRIUMV_EVALORD_STATS
+static struct EvalOrdStats {
+  enum { D = 25 };
+  unsigned long long nodes[D] = {}, cuts[D] = {}, first[D] = {}, pick_cut[D] = {}, pick_first[D] = {}, cut_idx[D] = {},
+                     spent[D] = {}, sub[D] = {};
+  int shadow = 0;
+  EvalOrdStats() {
+    if (const char *e = getenv("TRIUMV_EO_SHADOW"))
+      shadow = atoi(e);
+  }
+  ~EvalOrdStats() {
+    for (int d = 0; d < D; d++)
+      if (nodes[d])
+        fprintf(stderr, "evalord: depth %2d nodes %llu cut %llu first-move cut %llu pick=cut %llu pick=first %llu "
+                        "cut-index-sum %llu prepass-nodes %llu subtree-nodes %llu\n",
+                d, nodes[d], cuts[d], first[d], pick_cut[d], pick_first[d], cut_idx[d], spent[d], sub[d]);
+  }
+} g_eo;
+#endif
+
+static int eval_first_move(ThreadData &td, NodeFrame *f, const NodeState &n) {
+  MoveQueue q;
+  queue_start(q, td, f, 0, n.depth, QK_MAIN);
+  MoveSafety s;
+  s.ready = false;
+  q.checks = &s.checks;
+  int best = -infinity, pick = 0, m;
+  while ((m = queue_next(q)) != 0) {
+    const bool gen_legal = queue_move_legal(q, m);
+    if (!gen_legal && !legal_before(td, s, m))
+      continue;
+    const bool gives = checks_before(td, s, m);
+    UndoInfo u;
+    if (!step_in(td, f, m, u, gen_legal))
+      continue;
+    f[1].in_check = gives;
+    const int v = -quiesce(td, f + 1, -infinity, -best, false);
+    step_out(td, m, u);
+    if (v > best)
+      best = v, pick = m;
+  }
+  return pick;
+}
+
 template <bool AN>
 static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int us = td.side;
+  // EvalOrd: the choice stands in for the hash move in the queue only; n.h.move stays empty.
+  int eo_move = 0;
+#ifdef TRIUMV_EVALORD_STATS
+  const int eo_from = EvalOrdDepth ? (int)EvalOrdDepth : g_eo.shadow;
+  const bool eo_node = eo_from && !n.h.move && n.depth >= eo_from && !n.in_check && !n.excluded && !n.root;
+  const int eo_d = std::min(n.depth, (int)EvalOrdStats::D - 1);
+  const U64 eo_n0 = td.nodes;
+  int eo_first = 0;
+  if (eo_node) {
+    eo_move = eval_first_move(td, f, n);
+    g_eo.nodes[eo_d]++;
+    g_eo.spent[eo_d] += td.nodes - eo_n0;
+  }
+  const int eo_pick = eo_move;
+  if (!EvalOrdDepth)
+    eo_move = 0;   // shadow: computed, not used
+  struct EoClose {   // the fate of the node, written when the loop ends in any way
+    const NodeState &n; const U64 n1; const ThreadData &td; const bool on; const int d, pick; const int &first;
+    ~EoClose() {
+      if (!on) return;
+      g_eo.sub[d] += td.nodes - n1;
+      if (n.best >= n.beta && n.best_move) {
+        g_eo.cuts[d]++;
+        g_eo.first[d] += n.best_move == first;
+        g_eo.pick_cut[d] += n.best_move == pick;
+        g_eo.cut_idx[d] += n.moves;
+      }
+      g_eo.pick_first[d] += pick == first;
+    }
+  } eo_close{n, td.nodes, td, eo_node, eo_d, eo_pick, eo_first};
+#else
+  if (EvalOrdDepth && !n.h.move && n.depth >= EvalOrdDepth && !n.in_check && !n.excluded && !n.root)
+    eo_move = eval_first_move(td, f, n);
+#endif
   MoveQueue q;
-  queue_start(q, td, f, n.h.move, n.depth, n.in_check ? QK_EVADE : QK_MAIN);
+  queue_start(q, td, f, n.h.move ? n.h.move : eo_move, n.depth, n.in_check ? QK_EVADE : QK_MAIN);
   MoveSafety s;
   s.ready = false;
   q.checks = &s.checks;
@@ -2072,6 +2157,10 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
         continue;
     }
     f->move_count = ++n.moves;
+#ifdef TRIUMV_EVALORD_STATS
+    if (n.moves == 1)
+      eo_first = m;
+#endif
     // "info currmove" at the root (like 7.0: main thread only, only after 3 s, corrected on 16/10/2026): the GUIs show the
     // move being examined. Lost with the rewrite of 04/10, reported by Maurizio Platino on 12/10/2026 (Fritz 18).
     // The time keeps it out of bench and short games; at the root the loop runs few times, zero cost.

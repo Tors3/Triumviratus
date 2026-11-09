@@ -445,6 +445,7 @@ void search_position_mt(int depth) {
 
   ThreadData *bt = g_limits.depth ? &thread_data[0] : pick_thread();
   RootLine &line = bt->root[0];
+  opp_judge(line.score);   // ContemptOpp: before the new score replaces the previous one
   g_clock.prev_best = line.score;
   g_clock.prev_avg = line.avg_score;
   g_clock.have_prev = true;
