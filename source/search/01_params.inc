@@ -130,7 +130,7 @@
 // nodes, -0.55 ply of seldepth; from 2 upward the cap is rarely reached). Bench 325747 (before 460041).
 // To be checked at long TC in the A/B of the release 20261011 against the public 20261010 (30 s / 20 s).
 // BAKE INSUFMATERIAL (11/10/2026 night, user): draw by insufficient material after a capture (rule
-// in Stormphrax, Berserk, Viridithas, Caissa, Coda; our code, rewritten on 15/10; agent AE, §42).
+// common in other engines; our code, rewritten on 15/10; agent AE, §42).
 // SPRT 8+0.08 on the endgame book endgame_12_18 without draw adjudication, tm28, two runs pooled (aeinsuf_eg_8
 // + aeinsuf_eg_8b): +1.13 +- 1.56 Elo over 17,162 games (LLR +0.97; socket 0 +0.77, socket 1 +1.50). First run
 // +1.47 +- 2.39 over 7,000, then the user: "another 10,000 and then bake". At fixed depth the tree does not grow (nodes
@@ -285,6 +285,22 @@
   P(AspFhRed, 1, 0, 3)                                                                                    \
   P(AspLoKeep, 0, 0, 1024)                                                                                \
   P(AspFhStep, 0, 0, 3)                  /* 02/11, ours, off: plies given back per fail low (0 = all)       */ \
+  /* SacScan (08/11/2026, the author's idea; sac_scan in 14_deepen.inc): after each iteration from SacScanFrom the   */ \
+  /* main thread searches up to SacScanMax root sacrifices (static exchange below -SacScanSee) one at a time, with   */ \
+  /* the full window, SacScanRed plies shallower, while the scans take less than SacScanPct % of the search time.    */ \
+  /* Off in games until its own SPRT; on in the Pos Solver. SacScanDraw (09/11/2026, the author's idea): only when   */ \
+  /* the best line is level, within SacScanDraw printed centipawns of 0 (0 = any score); the form for the SPRT in   */ \
+  /* games, with SacScan 1.                                                                                         */ \
+  P(SacScan, PSV(0, 1), 0, 1)                                                                             \
+  P(SacScanDraw, PSV(10, 0), 0, 1000)                                                                     \
+  P(SacScanFrom, 8, 1, 64)                                                                                \
+  P(SacScanRed, 2, 0, 16)                                                                                 \
+  P(SacScanMax, 4, 1, 16)                                                                                 \
+  P(SacScanSee, 300, 0, 2000)                                                                             \
+  P(SacScanPct, PSV(10, 50), 1, 100)                                                                      \
+  P(SacScanChecks, PSV(1, 0), 0, 1)      /* only the sacrifices that give check (Pos Solver: all)           */ \
+  P(SacScanVerify, 1, 0, 1)              /* a non-mating sacrifice is promoted only after a full-depth search */ \
+  P(SacScanFlights, PSV(1, 8), 0, 8)     /* only if the opponent king has at most this many safe squares     */ \
   /* BLOCK 5 - threads, lazy SMP (15_threads.inc, 14_deepen.inc). Defaults give the old behaviour.              */ \
   /*   SmpVoteBase, SmpVoteScore  share of a thread in the final vote: (score - lowest + base) x weight / 1024   */ \
   /*   SmpVoteDepth               ours, off: support added per completed ply                                     */ \
@@ -581,6 +597,17 @@
   P(QuietHistBase, -277, -4000, 8000)                                                                        \
   P(QuietFutQuad, 1, -64, 128)                                                                            \
   P(QuietSeeLin, 4, -60, 120)                                                                             \
+  /* Futility by move class (09/11/2026, ours, OFF; SPRT pending). The quiet gate asks one margin of every quiet    */ \
+  /* move of a node, yet two classes of quiet moves differ. A "working" move takes a piece away from a lesser enemy */ \
+  /* attacker, or newly attacks an enemy piece of greater value, and lands on a square no lesser enemy piece        */ \
+  /* attacks; the other quiet moves do neither. Evaluation units, as QuietFutBase.                                  */ \
+  /*  FutThrSpare  margin added for a working move (it is searched closer to alpha)                                 */ \
+  /*  FutThrPlain  margin taken from the other quiet moves                                                          */ \
+  /*  FutThrHang   further margin taken from them while one of our pieces is attacked by a lesser enemy piece       */ \
+  /* All 0: the old gate, identical tree.                                                                           */ \
+  P(FutThrSpare, 0, 0, 400)                                                                                \
+  P(FutThrPlain, 0, 0, 200)                                                                                \
+  P(FutThrHang, 0, 0, 400)                                                                                 \
   /* estensioni */                                                                                        \
   P(SingMarginBase, 76, 20, 150)                                                                          \
   P(SingMarginTtPv, 70, 0, 200)                                                                           \
@@ -918,7 +945,7 @@
   /* CLEANUP evening of 11/10/2026 (user: "clean the code if we are sure about removing things, documenting the      \
      attempt"): CLOSED and off options, removed with their branch; with the options off the tree was identical (bench \
      325747 before and after). Code in _backup/Triumviratus_8.0_pre_pulizia_2026-10-11. Attempts and measurements:    \
-     - AspDecisive (agent AE, PlentyChess/Viridithas: aspiration fail high decided without reducing the               \
+     - AspDecisive (agent AE, a known idea: aspiration fail high decided without reducing the                         \
        depth): +0.7 at 7,000 games UHO 8+0.08, flat.                                                                   \
      - ExclClean (AE: in the singular verification node no history from the eval difference and no razoring, RFP,    \
        ProbCut and hash cutoff): =3 -0.39 +- 3.46 over 10,764, flat.                                                   \
@@ -1404,6 +1431,16 @@
                                          /* BAKED 20/10 at 500 (user): +2.35 +- 4.21 over 5,758 (10+0.1 noHT), ~1% of moves */ \
   P(TmTransPlies, 4, 1, 12)              /* PV moves whose captures are counted */ \
   P(TmTransRest, 0, 0, 500)              /* /1000: time given back by the other moves (keeps self-play level) */ \
+  /* TmCplx (09/11/2026, OFF; a known idea in our form). The root's static evaluation and the score of the           */ \
+  /* search disagree: the position holds more than the network sees, so the move gets more time; when they agree it */ \
+  /* gets less. gap = |score - static| in printed centipawns, counted in full from iteration TmCplxDepth on and cut  */ \
+  /* at TmCplxCap; the time is multiplied by (TmCplxBase + TmCplxScale * gap / TmCplxCap) / 1000. TmCplxScale 0 =    */ \
+  /* off, identical timing. TmCplxBase is to be set so that the mean factor is 1 (the measurement build prints it):  */ \
+  /* a time lever is compared at equal total time.                                                                  */ \
+  P(TmCplxScale, 0, 0, 1500)             /* /1000: weight of the gap (0 = off) */ \
+  P(TmCplxBase, 750, 300, 1000)          /* /1000: factor with no gap */ \
+  P(TmCplxCap, 80, 20, 400)              /* printed centipawns: the gap counts up to here */ \
+  P(TmCplxDepth, 16, 4, 40)              /* iteration from which the gap counts in full */ \
   /* C2 ideas outside the search loop (21/10/2026, agent B). Read only by Consilium Plebis builds (-DTRIUMV_C2): without   */ \
   /*  it the options exist and do nothing. Every lever at default = identical behaviour (C2 bench 329525 ep19, 336968 ep22). */ \
   /*  OFF by default; SPRT pending for each. Code: 06_nndirty.inc (C2 signals), 09_history.inc (corrections),        */ \
@@ -1654,7 +1691,7 @@
   P(SmpNullOdd, 0, 0, 2)                 /* odd threads: null move reduced by this many plies less             */ \
   P(SmpContCorr, 0, 0, 1)                /* continuation correction shared by the threads of a node           */ \
   /* -- singular family (S2) --                                                                                      */ \
-  P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed (Caissa)          */ \
+  P(SingExact, 0, 0, 256)                /* exact hash bound: singular margin units removed                   */ \
   P(SingDropHash, 0, 0, 1)               /* exclusion value above the hash value: no LMR bonus, no negative extension (R23) */ \
   /* -- move-count family (S3, B11) --                                                                               */ \
   P(ImpAdjCap, 160, 16, 1024)            /* continuous improvement: static - static two plies back, clamped to +-this */ \
@@ -1662,7 +1699,7 @@
   P(ImpSlopeRfp, 0, -1024, 1024)         /*   reverse-futility margin minus this * adj / 64                   */ \
   P(ImpSlopeNmp, 0, -1024, 1024)         /*   null-move floor minus this * adj / 64                           */ \
   /* -- correction learning (S4) --                                                                                  */ \
-  P(CorrRepLearn, 0, 0, 2048)            /* reachable repetition below the draw: corrections learn toward the draw, /1024 (Integral, Viridithas) */ \
+  P(CorrRepLearn, 0, 0, 2048)            /* reachable repetition below the draw: corrections learn toward the draw, /1024 */ \
   /* -- when the histories learn (B2, B10) --                                                                        */ \
   P(EvalDiffShallow, 0, 0, 32)           /* evaluation-change lesson only below this depth or without a hash entry */ \
   P(HashCutEarlyParent, 0, 0, 32)        /* hash-cut reward only when the parent's move came before this number */ \
@@ -1670,12 +1707,15 @@
   P(QsSeeHist, 0, -4096, 4096)           /* quiescence exchange threshold moves by capture history * this / 65536 */ \
   P(QsSeeCorr, 2048, 0, 32768)           /* and drops by |correction| * this / 1024, at most 256 (baked 03/11) */ \
   /* -- single rules (B4-B15, 33) --                                                                                 */ \
-  P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus (Viridithas) */ \
+  P(ProbCutAdapt, 0, 0, 1024)            /* ProbCut: plies off the verification per this units of quiescence surplus */ \
   P(ProbCutAdaptRise, 512, 0, 1024)      /*   the short verification's beta rises by ProbCutAdapt * this / 1024 per ply off (R23) */ \
-  P(LmrGives, 0, -4096, 4096)            /* reduction of a move that gives check, 1024ths of a ply off (Alexandria) */ \
+  /* -- 09/11/2026, known ideas in our form, OFF; SPRT pending --                                                   */ \
+  P(ProbCutMiss, 0, 0, 1)                /* a capture the ProbCut searched and found below beta is handed out with the losing captures */ \
+  P(ResTrustWon, 0, 0, 1)                /* a reduced search that returns a decided win is not searched again */ \
+  P(LmrGives, 0, -4096, 4096)            /* reduction of a move that gives check, 1024ths of a ply off */ \
   P(AspStable, 0, 0, 16)                 /* aspiration delta minus this per iteration with the same best move, up to 7 */ \
-  P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this (Stormphrax, PlentyChess) */ \
-  P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 (Stormphrax) */ \
+  P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this */ \
+  P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 */ \
   P(ContemptAhead, 0, 0, 200)            /* draw worth -this for the root side when the last move closed ahead (lists) */ \
   P(ContemptAheadFrom, 100, 0, 1000)     /*   from this root score                                            */
 
@@ -1794,12 +1834,11 @@ static bool g_eval_off           = false;    // NPS diagnostics: material-only e
 // test_suites\arasan2026.epd, solved at 250k/500k/1M/2M nodes. The measurements and the choice of the preset are below,
 // next to kAnDefault.
 //
-// Origin of the ideas. "Depth instead of pruning" in analysis is inspired by (not ported from) the GoldDigger of
-// ShashChess (amchess): here it is built with our Deep* levers (14_deepen.inc), our code. AnGold instead is the
-// mechanism of the GoldDigger itself (idea of ShashChess/amchess), rewritten by us on our search: see
-// gd_root_setup in 14_deepen.inc. AnCrystal is inspired by Crystal (an engine made to remove the blind
-// spots of aggressive pruning; here: no pruning along the principal variation), others' idea and our code. The quiet checks in the first ply of quiescence (AnQsChecks), the
-// SMP threads with reduced pruning (AnSmp) and the early mate hunt (AnHunt) are ours.
+// Origin of the ideas (the engines they come from are in the README credits). "Depth instead of pruning" in analysis
+// is built with our Deep* levers (14_deepen.inc), our code. AnGold is a known analysis mechanism, rewritten by us on
+// our search: see gd_root_setup in 14_deepen.inc. AnCrystal removes the blind spots of aggressive pruning (here: no
+// pruning along the principal variation), others' idea and our code. The quiet checks in the first ply of quiescence
+// (AnQsChecks), the SMP threads with reduced pruning (AnSmp) and the early mate hunt (AnHunt) are ours.
 // ---------------------------------------------------------------------------
 enum AnalysisBits {
   AN_EXT = 1,        // wider margins of the double/triple extensions (DeepExt 60, DeepSing -30)
@@ -1808,8 +1847,8 @@ enum AnalysisBits {
   AN_SMP = 8,        // odd helper threads with the wider Deep* preset (menopot)
   AN_CRYSTAL = 16,   // no pruning on the previous principal variation in the first plies
   AN_HUNT = 32,      // hunt_mate from root depth 8 instead of 16
-  AN_GOLD = 64,      // GoldDigger (ShashChess) on our search
-  // Pos Solver (14/10/2026, ideas of Crystal by Joseph Ellis, our code; measurements in POS_SOLVER.md):
+  AN_GOLD = 64,      // the known root "heat" mechanism, on our search
+  // Pos Solver (14/10/2026, others' ideas, our code; measurements in POS_SOLVER.md):
   AN_KDANGER = 128,  // side to move's king in danger: no pruning before the moves; opponent's king in danger
                      // near the root (ply <= 6): no LMR (only negative reductions)
   AN_CYCLE = 256,    // repetition coming: no pruning before the moves and no LMR (fortresses, perpetuals)
@@ -1818,7 +1857,7 @@ enum AnalysisBits {
   AN_ROOTALT = 1024, // root: the two chasers of the previous iteration without positive LMR
   AN_KEEPDEPTH = 2048, // in PV nodes at ply <= kAnKeepPly no "depth -= 3" after alpha rises (the following siblings
                        // stay at full depth: a sacrifice ordered late is not searched shorter)
-  // Ideas of Crystal (Joseph Ellis), our code:
+  // Others' ideas, our code:
   AN_LMPNEAR = 4096,   // no move-count pruning (quiet moves off) in PV nodes and at ply <= 2
   AN_CAPTLMR = 8192,   // captures without positive LMR, except in cut nodes whose parent was not at its first move
   AN_NMPZUG = 16384,   // cautious null move: from root depth 11, for the root's opponent, only with

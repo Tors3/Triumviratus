@@ -394,15 +394,15 @@ static void set_thread_optimism(ThreadData &td, int avg) {
 // ANALYSIS MODE (09/10/2026; options and origin of the ideas in search/01_params.inc).
 // ---------------------------------------------------------------------------
 
-// GoldDigger (AnGold). Mechanism of ShashChess (amchess), build -DGOLD_DIGGER, read in the public source: the root
+// AnGold. A known analysis mechanism, read in a public source (credits in the README): the root
 // is classified (Shashin style from the win probability of the evaluation: defence/"Petrosian" <= 24%,
 // balance/"Capablanca" ~50%, attack/"Tal" 80-89%, clear advantage >= 95%) and marked with three static facts (a
 // possible capture with a piece worth more than the captured one, a pawn beyond the middle of the board, a king attacked with
 // weight > 5). From there: more cautious razoring, node futility margin (our RFP) x1.5 or x1.2, null move
 // skipped when the tactical heat reaches 4 (gd_skip_null, 13_search.inc), reductions at 97% or 103% and small tweaks
 // per style, aspiration window narrower in balance and wider in attack. Our code on our
-// search; not ported: fortresses, move-count threshold per style, and everything ShashChess does even without
-// GoldDigger. Static once per search, style recomputed at every iteration with the score of the previous iteration.
+// search; not ported: fortresses, move-count threshold per style, and everything the original does outside this
+// mechanism. Static once per search, style recomputed at every iteration with the score of the previous iteration.
 struct GdRoot { bool sacrificial, near_promo, king_danger, many_moves; };
 
 static GdRoot gd_root_facts(ThreadData &td) {
@@ -481,6 +481,116 @@ static void an_iteration(ThreadData &td, bool plain = false) {   // plain: AnQDe
     td.lt_nmp_verify_depth = kAnNmpVerify;
   td.hunt_from = (on && (td.an_bits & AN_HUNT)) ? kAnHuntFrom : HuntDepth;
   td.crystal_ply = (on && (td.an_bits & AN_CRYSTAL)) ? std::max(2, td.root_depth / 2) : -1;
+}
+
+// SacScan (08/11/2026, the author's idea: "look at all the sacrifices first, at the first node only"). A root sacrifice
+// searched among the other moves sees the window of the best line: after it every node of ours is a piece or more
+// below alpha, and razoring, reverse futility, futility and the move count cut the quiet moves that carry the attack.
+// The case that started it: 8/6Qp/p5pP/P2n4/8/5p2/p2K1P2/1k2Bb2 w, mate in 10 with 1.Qa1+ Kxa1 2.Kc1 and a bishop
+// manoeuvre; 8.1 shows 0.00 at depth 68 after 40 s, and finds the mate in 2 s when Qa1+ is the only root move.
+// After a completed iteration the main thread searches the root moves after the lines just searched whose static
+// exchange loses more than SacScanSee, at most SacScanMax of them, one at a time with the full window and SacScanRed
+// plies less, while the time of the scans stays below SacScanPct % of the search so far. With SacScanChecks only the
+// sacrifices that give check are scanned; without it they come first and the others take turns from one iteration to
+// the next. A sacrifice that beats the best line goes to the head of the list, so the next iteration searches it first
+// with its own aspiration window; unless its score is a mate, it is searched again at the full depth of the iteration
+// first and promoted only if it still beats the best line (SacScanVerify). Otherwise its line and the order of the list
+// are restored: the normal search keeps its order, only the hash entries of the scan remain. Returns true when a
+// sacrifice was promoted.
+// History of the form (08/11/2026): (1) the first SacScanMax sacrifices of the list: here four queen moves into
+// attacked squares, and Qa1+ was never scanned; (2) checks first, then the others in turn, promotion without
+// verification: SPRT sacscan8 at 8+0.08 stopped at -14.4 +- 16.8 / 362 (the scans of quiet sacrifices cost time, and a
+// sacrifice promoted at the reduced depth could be played unverified when the time ran out); (3) checks only and
+// verified promotion: SPRT sacscan8b stopped at -11.1 +- 13.2 / 658, the cost measured above; (4) this form, with
+// SacScanFlights.
+template <bool AN>
+static bool sac_scan(ThreadData &td, NodeFrame *root, int from, int &spent_ms, int &turn) {
+  const int best = td.root[0].score;
+  if (best == -infinity || td.root[0].upper || td.root[0].lower || best >= MATE_FLOOR)
+    return false;
+  // SacScanDraw (09/11/2026, the author's idea): only where the engine is about to call the position level (the mate
+  // in 10 above was 0.00 at depth 68), so that a scan cannot cost a game the best line already wins. With SacScan 1 and
+  // SacScanDraw 10 (study build, 1 thread) the mate in 10 was found in 1.0 s at depth 30 (478k nodes). Measured on
+  // 72,812 moves of a SacScan SPRT (UHO book): 16.4% within +-0.10 printed, 10.2% at 0.00 exactly.
+  if (SacScanDraw && std::abs(units_to_print_cp(best)) > SacScanDraw)
+    return false;
+  // SacScanFlights: only against a king with at most SacScanFlights safe squares (empty or holding one of our pieces,
+  // and not attacked by us). Measured 08/11 on 1,200 positions of 8.1 games at 250 ms: 45% of the roots have a checking
+  // sacrifice, the scans took 3.9% of the nodes and promoted 2 moves; the opponent king has no safe square in 2.3% of
+  // the roots and at most one in 14% (the mate in 10 above: none).
+  if (SacScanFlights < 8) {
+    const int us = td.side, them = us ^ 1;
+    const int ksq = get_ls1b_index(td.bitboards[them == white ? K : k]);
+    int safe = 0;
+    for (U64 b = king_attacks[ksq] & ~td.occupancies[them]; b; b &= b - 1)
+      safe += !td_is_square_attacked(td, get_ls1b_index(b), us);
+    if (safe > SacScanFlights)
+      return false;
+  }
+  // The candidates: sacrifices that give check first (they start most attacks on the king and are few), then the
+  // others, taken in turn from one iteration to the next (`turn`), so that every sacrifice is scanned sooner or later.
+  int chk[256], other[256], n_chk = 0, n_other = 0;
+  MoveSafety s;
+  s.ready = false;
+  for (int i = from; i < td.root_count; i++) {
+    const int m = td.root[i].pv[0];
+    if (see_holds(td, m, -SacScanSee))
+      continue;
+    if (checks_before(td, s, m))
+      chk[n_chk++] = m;
+    else if (!SacScanChecks)
+      other[n_other++] = m;
+  }
+  int pick[256], n_pick = 0;
+  for (int k = 0; k < n_chk && n_pick < SacScanMax; k++)
+    pick[n_pick++] = chk[k];
+  for (int k = 0; k < n_other && n_pick < SacScanMax; k++)
+    pick[n_pick++] = other[(turn + k) % n_other];
+  if (n_other)
+    turn = (turn + std::max(1, (int)SacScanMax - n_chk)) % n_other;
+  for (int k = 0; k < n_pick; k++) {
+    if (stop_threads.load(std::memory_order_relaxed))
+      return false;
+    const int now = get_time_ms();
+    if ((long long)(now - g_limits.start_ms) * SacScanPct < 100LL * spent_ms)
+      return false;
+    const int m = pick[k];
+    int i = from;
+    while (i < td.root_count && td.root[i].pv[0] != m)
+      i++;
+    if (i == td.root_count)
+      continue;
+    std::swap(td.root[from], td.root[i]);
+    const RootLine saved = td.root[from];
+    td.pv_idx = from;
+    td.pv_last = from + 1;
+    memcpy(td.last_pv, saved.prev_pv, sizeof(int) * saved.prev_pv_len);
+    td.last_pv_len = saved.prev_pv_len;
+    td.sel_depth = 0;
+    td.root_delta = 2 * infinity;
+    set_thread_optimism(td, saved.avg_score == -infinity ? 0 : saved.avg_score);
+    nn_root_sync(td);
+    int v = explore<AN>(td, root, -infinity, infinity, std::max(1, td.root_depth - SacScanRed), false, true);
+    // SacScanVerify: a sacrifice that looks better without mating is searched again at the full depth before it can
+    // replace the best line (the scan's own hash entries make this second search cheaper).
+    if (SacScanVerify && SacScanRed && v > td.root[0].score && v < MATE_FLOOR &&
+        !stop_threads.load(std::memory_order_relaxed)) {
+      td.sel_depth = 0;
+      v = explore<AN>(td, root, -infinity, infinity, td.root_depth, false, true);
+    }
+    spent_ms += get_time_ms() - now;
+    const RootLine &got = td.root[from];
+    if (!stop_threads.load(std::memory_order_relaxed) && got.score == v && !got.upper && !got.lower &&
+        v > td.root[0].score) {
+      std::rotate(td.root, td.root + from, td.root + from + 1);   // the sacrifice first, the others one place down
+      td.pv_idx = 0;
+      return true;
+    }
+    td.root[from] = saved;
+    std::swap(td.root[from], td.root[i]);
+  }
+  td.pv_idx = 0;
+  return false;
 }
 
 static void deepen(ThreadData &td) {
@@ -571,6 +681,7 @@ static void deepen(ThreadData &td) {
   double time_red = 1;
   int last_best_depth = 0, last_best_score = -infinity;
   int last_best_pv[max_ply + 4], last_best_len = 0;
+  int sac_ms = 0, sac_turn = 0;   // SacScan: time of the scans in this search, turn of the non-check sacrifices
 
   fill_with(&td.low_ply_hist[0][0], (size_t)LOW_PLY_SIZE * QH_SIZE, LowPlyFill);
   for (int c = 0; c < 2; c++)
@@ -745,6 +856,14 @@ static void deepen(ThreadData &td) {
       settle_lines(td, 0, lines);
     }
     td.pv_idx = 0;
+    // SacScan: the sacrifices after the lines of this iteration, each with a window of its own (see sac_scan). A
+    // promoted sacrifice becomes the best line now (score for the time manager, printed line) and is searched first
+    // by the next iteration.
+    if (SacScan && main && !direct_swapped && td.root_depth >= SacScanFrom && !stop_threads.load(std::memory_order_relaxed) &&
+        (td.an_bits ? sac_scan<true>(td, root, iter_lines, sac_ms, sac_turn) : sac_scan<false>(td, root, iter_lines, sac_ms, sac_turn))) {
+      best = td.root[0].score;
+      report_lines(td, td.root_depth);
+    }
     if (!stop_threads.load(std::memory_order_relaxed) && td.root[0].score != -infinity) {   // AnShQuiet
       quiet_hist[2] = quiet_hist[1];
       quiet_hist[1] = quiet_hist[0];
@@ -853,6 +972,26 @@ static void deepen(ThreadData &td) {
         if (TmDefendFade && g_clock.start_clock > 0)
           extra *= std::min(1.0, mine / (TmDefendFade / 1000.0 * g_clock.start_clock));
         total_time *= 1 + extra;
+      }
+      // TmCplx (09/11/2026, OFF at TmCplxScale 0; 01_params.inc): more time while the score of the search and the
+      // root's static evaluation disagree, less while they agree. No factor in check (no static evaluation) or with a
+      // decided score. -DTRIUMV_TMCPLX_STATS prints the mean factor at exit, to set TmCplxBase for a mean of 1.
+      if (TmCplxScale && root->static_eval != VAL_NONE && !val_decided(best) && !val_decided(root->static_eval)) {
+        const int gap = std::abs(units_to_print_cp(best) - units_to_print_cp(root->static_eval));
+        const int c = std::min(gap * std::min(td.root_depth, (int)TmCplxDepth) / TmCplxDepth, (int)TmCplxCap);
+        const double factor = (TmCplxBase + (double)TmCplxScale * c / TmCplxCap) / 1000.0;
+        total_time *= factor;
+#ifdef TRIUMV_TMCPLX_STATS
+        static struct TmCplxStats {
+          double sum = 0, gaps = 0;
+          unsigned long long n = 0;
+          ~TmCplxStats() {
+            if (n)
+              fprintf(stderr, "tmcplx: %llu decisions, mean factor %.4f, mean gap %.1f cp\n", n, sum / n, gaps / n);
+          }
+        } st;
+        st.sum += factor, st.gaps += gap, st.n++;
+#endif
       }
       // TmTrans (20/10/2026, ours, 0 = off): the captures in the first TmTransPlies moves of the principal variation
       // take the game into another expert of the network (another material band). Such trades are hard to undo, so

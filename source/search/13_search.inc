@@ -38,6 +38,7 @@ struct NodeState {
   int  eval, eval_raw, signal;
   int  signal_x;                  // experimental corrections in the evaluation only, not in the selectivity (CorrExpertW)
   int  prev_to;
+  int  pc_miss[4], pc_miss_n;     // ProbCutMiss: captures the node's ProbCut searched and found below beta
   int  excluded;
   int  prior_red;
   HashView h;
@@ -485,7 +486,7 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
       !(((1ULL << move_from(m)) | (1ULL << move_to(m))) & n.causal))
     r += CausalRed;
   // R19 terms (03/11/2026, 01_params.inc; 0 = the reduction above). In 1024ths of a ply, positive = more reduction.
-  //  LmrGives       a move that gives check is reduced less (Alexandria);
+  //  LmrGives       a move that gives check is reduced less;
   //  SmpLmrNoise    with several threads, a small pseudo-random term per thread and node count, so the threads do not
   //                 search the same tree.
   // Closed negative and removed on 04/11/2026 (archive _archivio/leve_negative_2026-11-04): SingGapRed, LmrCaptOfs,
@@ -508,16 +509,16 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
 // in the release, where the parameters are constants. deep_term stays for DeepHist and DeepTtPv.
 static inline int deep_term(const ThreadData &td, int offset) { return offset * td.deep_w / 1024; }
 
-// Crystal (AnCrystal, analysis mode): is the node on the principal variation of the previous iteration, near
+// AnCrystal (analysis mode): is the node on the principal variation of the previous iteration, near
 // the root? In games crystal_ply = -1 and the test is always false.
 static inline bool crystal_node(const ThreadData &td, const NodeFrame *f) {
   return f->ply <= td.crystal_ply && f->follow_pv;
 }
 
-// King in danger (AnKingDanger, Pos Solver, 14/10/2026; idea of Crystal, our code): at least 3 of the squares around
+// King in danger (AnKingDanger, Pos Solver, 14/10/2026; others' idea, our code): at least 3 of the squares around
 // the king of side `s` are attacked by the opponent. Up to 8 attack tests: computed only in analysis with the
 // component on.
-// AnNmpZug: at most 5 legal moves, as in Crystal. First version with the pseudo-legal ones (night of 14/10/2026): it
+// AnNmpZug: at most 5 legal moves. First version with the pseudo-legal ones (night of 14/10/2026): it
 // almost never fired (1 position out of 383 with a different search). Called only out of check (null move), where
 // legal_before holds.
 // The same count serves the endgame rule NmpFewMoves (18/10/2026) with its own limit.
@@ -546,7 +547,7 @@ static bool king_in_danger(ThreadData &td, int s) {
   return false;
 }
 
-// GoldDigger (AnGold, idea of ShashChess/amchess, our code): the null move is skipped when the tactical "heat"
+// AnGold (others' idea, our code): the null move is skipped when the tactical "heat"
 // reaches 4. The root part (king in danger or possible sacrifice +10, clearly winning position +2,
 // attack +2, advanced pawn +2, more than 30 legal moves +1) is in td.gd_heat; here are added the non-pawn
 // material of the side to move (> 2000, +1) and the depth (> 8 and > 12, +1 each). In games gd_heat = -1000.
@@ -591,7 +592,7 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
     n.rep_seen = true;   // CorrRepLearn
     n.alpha = draw_score(td);
     if (n.alpha >= n.beta) {
-      // CorrRepLearn (R19 S4.1, Integral, Viridithas; off at 0): most nodes that reach a repetition close here, before
+      // CorrRepLearn (R19 S4.1; off at 0): most nodes that reach a repetition close here, before
       // their evaluation, so the lesson is taken here: the corrected static evaluation, when below the draw, is taught
       // toward it (one network evaluation, only for these nodes and only with the lever on).
       if (CorrRepLearn && !f->in_check) {
@@ -677,7 +678,7 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
 //   3. learning: a quiet hash move that fails high is rewarded, the previous move is penalized if it came early;
 //   4. guards: no cutoff close to the fifty-move rule (HashFiftyGuard); from depth HashVerify the child of the hash
 //      move, if it is in the table, must agree with the cutoff;
-//   5. the returned value: a lower bound is pulled toward beta (HashDamp, ours after an idea seen in Coda);
+//   5. the returned value: a lower bound is pulled toward beta (HashDamp, ours after a known idea);
 //   6. an entry deep enough whose bound contradicts the window loses a ply above depth HashWeaken.
 // Defaults = the 8.0 tree.
 // --------------------------------------------------------------------------
@@ -716,7 +717,7 @@ static int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
   const HashView &h = n.h;
   const int need = n.depth - (h.value <= n.beta ? HashLowSlack : 0);
   const bool deep = h.depth > need;
-  // HashNearMiss (an entry one ply short that cuts beyond a margin, seen in Coda): off. Removed on 05/10/2026 (-6.7 +-
+  // HashNearMiss (an entry one ply short that cuts beyond a margin, a known idea): off. Removed on 05/10/2026 (-6.7 +-
   // 10.6 over 1,142 games at 20+0.2) and put back off on 12/10 for a second look; 0 = old tree.
   if (HashNearMiss && !deep && !n.pv && !n.cut && !n.excluded && h.depth == need && td.fifty < 90 &&
       h.bound == BOUND_UP && val_known(h.value) && !val_decided(h.value) && h.value + HashNearMiss <= n.alpha)
@@ -1066,6 +1067,7 @@ static int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
   if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
     return NO_VALUE;
+  PCMISS_STAT(g_pcmiss.probes++);
   MoveQueue q;
   queue_start(q, td, f, n.h.move, n.depth, QK_CUTS);
   q.cut_threshold = cut_beta - f->static_eval;
@@ -1083,7 +1085,7 @@ static int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
       continue;
     f[1].in_check = gives;
     int v = -quiesce(td, f + 1, -cut_beta, -cut_beta + 1, false);
-    // ProbCutAdapt (R19 B4, Viridithas): the further the quiescence value sits above the raised beta, the
+    // ProbCutAdapt (R19 B4): the further the quiescence value sits above the raised beta, the
     // shorter the verification, one ply per ProbCutAdapt units of surplus, up to 3; a short verification that does
     // not hold is repeated at the usual depth. 0 = the usual depth only. Corrected 04/11/2026 (R23): the short
     // verification searches against a beta raised by ProbCutAdaptRise/1024 of ProbCutAdapt per ply removed, so a
@@ -1104,8 +1106,16 @@ static int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
         v = -explore<AN>(td, f + 1, -cut_beta, -cut_beta + 1, cut_depth, !n.cut, false);
     }
     step_out(td, m, u);
-    if (v < cut_beta)
+    PCMISS_STAT(g_pcmiss.tried++);
+    PCMISS_STAT(g_pcmiss.recorded += v < n.beta);
+    if (v < cut_beta) {
+      // ProbCutMiss (09/11/2026, OFF; a known idea in our form): the value returned is an upper bound of the capture;
+      // below the node's own beta, the capture has been shown not to cut here, and the move loop hands it out with
+      // the losing captures instead of among the first moves.
+      if (ProbCutMiss && v < n.beta && n.pc_miss_n < 4)
+        n.pc_miss[n.pc_miss_n++] = m;
       continue;
+    }
     hash_write(td, v, f->tt_pv, BOUND_LOW, verified + ProbCutHashDepth, m, n.eval_raw);
     if (!val_decided(v)) {
       PL_RULE(5);
@@ -1124,7 +1134,7 @@ static int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
     return v;
   n.improving |= f->static_eval >= n.beta;
   // A node without a hash move, off the previous line and not an all node, is searched one ply shallower. IirShortTt
-  // (R19 B7, Stormphrax, PlentyChess; 0 = off): also when the hash entry is shallower than the node by more than that.
+  // (R19 B7; 0 = off): also when the hash entry is shallower than the node by more than that.
   if (!f->follow_pv && !n.all && n.depth >= IirDepth &&
       (!n.h.move || (IirShortTt && n.h.depth + IirShortTt < n.depth)))
     n.depth--;
@@ -1149,6 +1159,51 @@ static int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
 // the move is skipped when the evaluation plus a margin on that depth stays at or below alpha (futility, which also
 // raises the node's best value to the margin), or when the exchange test fails by more than a margin quadratic in
 // the corrected depth.
+// Futility by move class (FutThr*, 01_params.inc; 09/11/2026, ours, OFF). Two questions about a quiet move, answered
+// from the queue's maps when score_quiets has written them and from the move's own squares otherwise (the hash move
+// comes before the maps), with the same answer either way.
+//  - quiet_hangs: one of our pieces (knight, bishop, rook, queen) is attacked by a lesser enemy piece.
+//  - quiet_works: the move lands on a square no lesser enemy piece attacks, and either leaves a square where a lesser
+//    piece attacked it or newly attacks an enemy piece of greater value (a pawn any piece, a knight or a bishop a
+//    rook or the queen, a rook the queen). Kings and promotions never count.
+static inline bool quiet_hangs(const ThreadData &td, const MoveQueue &q) {
+  if (q.thr_ready)
+    return q.thr_hang;
+  const int off = td.side == white ? 0 : 6;
+  for (int pt = N; pt <= Q; pt++)
+    for (U64 bb = td.bitboards[pt + off]; bb; bb &= bb - 1)
+      if (square_menaced(td, get_ls1b_index(bb), pt))
+        return true;
+  return false;
+}
+static inline bool quiet_works(const ThreadData &td, const MoveQueue &q, int m) {
+  const int pt = kPieceKind[move_piece(m)], from = move_from(m), to = move_to(m);
+  if (pt == K || get_move_promoted(m))
+    return false;
+  if (pt != P) {   // nothing is lesser than a pawn
+    if (q.thr_ready ? (q.thr_lesser[pt] >> to) & 1 : square_menaced(td, to, pt))
+      return false;
+    if (q.thr_ready ? (q.thr_lesser[pt] >> from) & 1 : square_menaced(td, from, pt))
+      return true;
+  }
+  const int us = td.side, eoff = us == white ? 6 : 0;
+  const U64 occ = td.occupancies[both], gone = occ ^ (1ULL << from);
+  const U64 eq = td.bitboards[Q + eoff], erq = eq | td.bitboards[R + eoff];
+  U64 now, before;
+  if (pt == P) {
+    const U64 big = erq | td.bitboards[N + eoff] | td.bitboards[B + eoff];
+    now = pawn_attacks[us][to] & big, before = pawn_attacks[us][from] & big;
+  } else if (pt == N)
+    now = knight_attacks[to] & erq, before = knight_attacks[from] & erq;
+  else if (pt == B)
+    now = get_bishop_attacks(to, gone) & erq, before = get_bishop_attacks(from, occ) & erq;
+  else if (pt == R)
+    now = get_rook_attacks(to, gone) & eq, before = get_rook_attacks(from, occ) & eq;
+  else
+    return false;
+  return (now & ~before) != 0;
+}
+
 template <bool AN>
 static bool quiet_gate(ThreadData &td, NodeFrame *f, NodeState &n, MoveQueue &q, int m, int red_depth, int ctx) {
   const int us = td.side, pc = move_piece(m), to = move_to(m);
@@ -1183,12 +1238,47 @@ static bool quiet_gate(ThreadData &td, NodeFrame *f, NodeState &n, MoveQueue &q,
   if (g_c2_node)   // C2 idea 1 (21/10/2026, agent A): the margin per Consilium Plebis expert. OFF by default; SPRT pending
     fut += c2_tab[C2T_FUT][n.c2e];
   fut += FutCut * n.cut - FutAll * n.all;   // node type (28/10/2026, ours, OFF; see above)
-  // CorrAbsFut (R19 B14, Stormphrax; off at 0): a large correction says the network misjudges this kind of
+  // CorrAbsFut (R19 B14; off at 0): a large correction says the network misjudges this kind of
   // position, so the futility margin widens by |correction| (evaluation units) x CorrAbsFut / 1024.
   if (CorrAbsFut)
     fut += (int)((long long)std::abs(n.signal) / CorrEvalDiv * CorrAbsFut / 1024);
   PL_SET(pl_fut, fut - n.alpha);
-  if (!n.in_check && red_depth < QuietFutMaxDepth && fut <= n.alpha) {
+  // Futility by move class (FutThr*, 01_params.inc; OFF at 0): a working move is asked FutThrSpare less, the other
+  // quiet moves FutThrPlain more, and FutThrHang more again while one of our pieces is attacked by a lesser one. The
+  // node's best value rises only to the smaller of the two margins, so it never passes the margin without the class.
+  int fut_test = fut;
+  if ((FutThrSpare | FutThrPlain | FutThrHang) && !n.in_check && red_depth < QuietFutMaxDepth)
+    fut_test += quiet_works(td, q, m) ? FutThrSpare
+                                      : -(FutThrPlain + (FutThrHang && quiet_hangs(td, q) ? FutThrHang : 0));
+#ifdef TRIUMV_VERIFY_FUTTHR
+  // Check and count (measurement build, one thread): the maps and the squares must agree, and how much of the gate's
+  // work the class changes. Printed at exit.
+  if ((FutThrSpare | FutThrPlain | FutThrHang) && !n.in_check && red_depth < QuietFutMaxDepth) {
+    static struct FutThrStats {
+      unsigned long long seen = 0, works = 0, hang = 0, spared = 0, added = 0, cut_old = 0;
+      ~FutThrStats() {
+        fprintf(stderr, "futthr: quiet moves at the futility test %llu, working %llu, with a piece hanging %llu, "
+                        "pruned by the old margin %llu, spared by the class %llu, pruned only by the class %llu\n",
+                seen, works, hang, cut_old, spared, added);
+      }
+    } st;
+    const bool w = quiet_works(td, q, m), h = quiet_hangs(td, q);
+    if (q.thr_ready) {
+      MoveQueue slow = q;
+      slow.thr_ready = false;
+      if (quiet_works(td, slow, m) != w || quiet_hangs(td, slow) != h) {
+        printf("info string FUTTHR WRONG: move %d maps %d/%d squares %d/%d\n", m, (int)w, (int)h,
+               (int)quiet_works(td, slow, m), (int)quiet_hangs(td, slow));
+        fflush(stdout);
+        abort();
+      }
+    }
+    st.seen++, st.works += w, st.hang += h, st.cut_old += fut <= n.alpha;
+    st.spared += fut <= n.alpha && fut_test > n.alpha, st.added += fut > n.alpha && fut_test <= n.alpha;
+  }
+#endif
+  if (!n.in_check && red_depth < QuietFutMaxDepth && fut_test <= n.alpha) {
+    fut = std::min(fut, fut_test);
     if (n.best <= fut && !val_decided(n.best) && !val_won(fut))
       n.best = fut;
     PL_RULE(14);
@@ -1888,6 +1978,8 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
                     ? (C2ConvRoot ? (us == td.root_side ? td.c2_conv_root : -td.c2_conv_root) : c2_conv_side(td, f, n))
                     : 0;
   q.c2_conv = c2_conv;
+  q.pc_miss = n.pc_miss;   // ProbCutMiss: the captures the ProbCut of this node found below beta
+  q.pc_miss_n = n.pc_miss_n;
   const bool c2_conv_red = c2_conv && C2ConvRed, c2_pk_red = (C2PkRed | C2PkVol) != 0;   // once per node
   int c2_pk_here = INT_MIN;   // C2PkRed/C2PkVol: pawn-king skip of the node, read at its first pawn or king move
   int red_window = -1, red_window_term = 0, red_window_ours = 0;   // see red_entry_v80; ours: per 1024 of root_delta
@@ -1995,11 +2087,11 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
     const bool sing_skipped = ext == SING_SKIPPED;
     if (sing_skipped)
       ext = 0;
-    // LDSE (ours, 05/10/2026; the idea is in Stormphrax): at low depth, where the singular search is not
+    // LDSE (ours, 05/10/2026, after a known idea): at low depth, where the singular search is not
     // tried, the hash move with a lower or exact bound is extended by one ply if the static evaluation is below
     // alpha by LdseMargin. The hash says that move held a value, the eval says the position is bad:
     // the node rests on it, and near the horizon one more ply decides whether that value was true.
-    // LdseMode (bits): 1 = cut nodes only, 2 = lower bound only, not exact (Stormphrax
+    // LdseMode (bits): 1 = cut nodes only, 2 = lower bound only, not exact (the known
     // form), 4 = not with entries from quiescence only.
     // LdseMax (05/10/2026): with Ldse on, every cut node along a line can extend again, and the depth
     // drops by one ply every two instead of one per ply. At fixed depth the tree stays the same in the typical
@@ -2222,7 +2314,9 @@ static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
           new_depth += (d < new_depth && margin > ResKp * u) - (margin < ResKm * u);
         } else
           new_depth += (d < new_depth && value > n.best + DeeperMargin) - (value < n.best + ShallowerMargin);
-        if (new_depth > d)
+        // ResTrustWon (09/11/2026, OFF; a known idea in our form): a decided win found by the reduced search is a line
+        // that exists, whatever the depth: it is not searched again.
+        if (new_depth > d && !(ResTrustWon && val_won(value)))
           value = -explore<AN>(td, f + 1, -(n.alpha + 1), -n.alpha, new_depth, !n.cut, false);
         on_research(td, f, n, pc, to, value > n.alpha, full_depth - d);   // what the re-search found decides
       }
@@ -2391,7 +2485,7 @@ static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
 #endif
   if (!n.in_check && !(n.best_move && get_move_capture(n.best_move)) && dir_ok && learn_ok)
     on_eval_error(td, f, n);   // 13_learn.inc
-  // CorrRepLearn (R19 S4.1, Integral, Viridithas; off at 0): a repetition was in reach and the corrected static
+  // CorrRepLearn (R19 S4.1; off at 0): a repetition was in reach and the corrected static
   // evaluation is below the draw: the corrections also learn toward the draw, the line can hold it.
   if (CorrRepLearn && n.rep_seen && !n.in_check && !n.excluded && f->static_eval < contempt(td))
     on_eval_toward(td, f, n, contempt(td), CorrRepLearn);
@@ -2428,6 +2522,7 @@ static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth,
   n.best_move = 0;
   n.best_ctx = 0;
   n.moves = 0;
+  n.pc_miss_n = 0;
   n.cap_value = infinity;
   n.n_quiets = n.n_tacts = 0;
   n.best_score = INT_MIN;

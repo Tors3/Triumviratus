@@ -331,6 +331,14 @@ where adopted, implemented in our own way and re-tuned on the project's own netw
 - **[Berserk](https://github.com/jhonnold/berserk)**, **[Obsidian](https://github.com/gab8192/Obsidian)**,
   **[Ethereal](https://github.com/AndyGrant/Ethereal)**, **[Stormphrax](https://github.com/Ciekce/Stormphrax)**,
   **[Viridithas](https://github.com/cosmobobak/viridithas)**: search, pruning and ordering refinements.
+- **[PlentyChess](https://github.com/Yoshie2000/PlentyChess)**: internal iterative reduction with a shallow hash
+  entry, the aspiration fail-high rule, and the handling of captures the ProbCut has refuted.
+- **[Integral](https://github.com/aronpetko/integral)**: corrections that learn toward the draw near a repetition.
+- **Coda**: the draw by insufficient material after a capture, and the hash-cut refinements.
+- **[ShashChess](https://github.com/amchess/ShashChess)** by Andrea Manzo: the root classification by style behind
+  the `AnGold` analysis mode of the Pos Solver.
+- **Crystal** by Joseph Ellis: the analysis ideas behind `AnCrystal`, `AnKingDanger` and the other Pos Solver components
+  that remove the blind spots of aggressive pruning.
 
 The **`PassedPawns`** input block (one input per passed pawn) is an original feature of this project.
 

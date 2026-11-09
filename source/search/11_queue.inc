@@ -90,6 +90,15 @@ struct MoveQueue {
   // as the ordering; valid when menace_ready.
   bool          menace_ready;
   U64           menace[6];
+  // Futility by move class (FutThr*, 01_params.inc): the squares where our piece of each type is attacked by a lesser
+  // enemy piece, and whether one of our pieces stands on such a square. Written by score_quiets from the same maps as
+  // the ordering, only with a FutThr lever on; valid when thr_ready.
+  bool          thr_ready, thr_hang;
+  U64           thr_lesser[6];
+  // ProbCutMiss (01_params.inc): the captures the node's ProbCut searched and found below beta, set by move_loop
+  // (pc_miss_n = 0 otherwise); queue_next hands them out with the losing captures.
+  const int    *pc_miss;
+  int           pc_miss_n;
   // (08/10/2026) Boundary between good and bad quiet moves, known after sorting (quiet_split >= 0), or -1 (the list
   // is walked comparing each score).
   int           quiet_split;
@@ -103,6 +112,21 @@ struct MoveQueue {
   int           ex, good_capt, good_quiet;
   int           c2_conv;         // C2 idea 3: the side to move is ahead (+1) or behind (-1), set by move_loop; else 0
 };
+
+// -DTRIUMV_PCMISS_STATS (measurement build, one thread): how much ProbCutMiss touches. Printed at exit.
+#ifdef TRIUMV_PCMISS_STATS
+static struct PcMissStats {
+  unsigned long long probes = 0, tried = 0, recorded = 0, demoted = 0;
+  ~PcMissStats() {
+    if (probes)
+      fprintf(stderr, "pcmiss: ProbCut calls %llu, captures searched %llu, found below beta %llu, handed out with "
+                      "the losers %llu\n", probes, tried, recorded, demoted);
+  }
+} g_pcmiss;
+  #define PCMISS_STAT(x) (x)
+#else
+  #define PCMISS_STAT(x) ((void)0)
+#endif
 
 // ThreatHist: threat context of a quiet move, from the node's maps when they exist, otherwise from its two squares.
 static inline int quiet_ctx(const MoveQueue &q, int m) {
@@ -382,6 +406,8 @@ static void queue_start(MoveQueue &q, ThreadData &td, NodeFrame *f, int hash_mov
   q.n_lose = q.cur_lose = 0;
   q.opp_ready = false;
   q.menace_ready = false;
+  q.thr_ready = false;
+  q.pc_miss_n = 0;
   q.quiet_split = -1;
   q.lgen.ready = false;
   q.rank_ok = false;
@@ -575,6 +601,14 @@ static void score_quiets(MoveQueue &q, const int *mv, int *sc, int n) {
     for (int k = P; k <= K; k++) q.menace[k] = lesser[k];
     q.menace[P] = by_pawn;
     q.menace_ready = true;
+  }
+  // Futility by move class (FutThr*): the same maps for the quiet gate, and whether one of our pieces is attacked by
+  // a lesser one.
+  if (FutThrSpare | FutThrPlain | FutThrHang) {
+    for (int k = P; k <= K; k++) q.thr_lesser[k] = lesser[k];
+    q.thr_hang = (((td.bitboards[N + us_off] | td.bitboards[B + us_off]) & lesser[N]) |
+                  (td.bitboards[R + us_off] & lesser[R]) | (td.bitboards[Q + us_off] & lesser[Q])) != 0;
+    q.thr_ready = true;
   }
 
   LmpChkCtx local_checks;
@@ -1152,8 +1186,12 @@ static int queue_next(MoveQueue &q) {
     case QS_TACT_WIN:
       while (q.cur < q.n_tact) {
         const ScoredMove sm = q.list[q.cur++];
+        // ProbCutMiss: a capture the ProbCut of this node already searched and found below beta goes with the losers.
+        bool missed = false;
+        for (int k = 0; ProbCutMiss && k < q.pc_miss_n; k++) missed |= q.pc_miss[k] == sm.move;
+        PCMISS_STAT(g_pcmiss.demoted += missed);
         // D. Good capture: SEE >= -score x StGood / (19 x 1024); StGood = 1024 is the old -score/19, same truncation.
-        if (see_holds(td, sm.move, (int)(-(long long)sm.score * q.good_capt / 19456))) {
+        if (!missed && see_holds(td, sm.move, (int)(-(long long)sm.score * q.good_capt / 19456))) {
           if (q.cur < q.n_tact)
             queue_prefetch(q, q.list[q.cur].move);
           return sm.move;

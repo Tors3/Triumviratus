@@ -471,7 +471,7 @@ static inline int hist_amount(int e, int depth, int mul, int sub, int cap) {
 // (the attack that costs material even on a defended square): for a pawn a pawn, for a knight or bishop a pawn, for a
 // rook a minor piece or a pawn, for a queen also a rook. The king and promotions have no context. The maps are the
 // ones score_quiets already builds (MoveQueue::menace); a single move (hash move, evasions) asks the squares.
-// Origin: indexing the quiet history by threats is a known idea (other engines, e.g. Ethereal). Ours: the
+// Origin: indexing the quiet history by threats is a known idea in other engines. Ours: the
 // lower-value context, the factored form and the weights.
 //
 // Factored form: the flat table (index key) receives every update; three correction tables, one per context, learn

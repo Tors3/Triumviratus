@@ -121,7 +121,7 @@ def run_worker(worker_id, exe, positions, times, total_searches, t0,
     send(f"setoption name Threads value {threads}")
     # If PGO_BULLET_NET is set, route eval through the BULLET path so the PGO profile
     # covers the bullet hot code (head/apply_col/update). Without it the profile only
-    # sees the SFNNv10 path and PGO gives ~0 on the bullet path (5.0 ships bullet).
+    # sees the older network path and PGO gives ~0 on the bullet path (5.0 ships bullet).
     # Unset for 4.x -> unchanged behaviour.
     _bnet = os.environ.get("PGO_BULLET_NET")
     if _bnet:

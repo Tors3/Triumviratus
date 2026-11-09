@@ -3,7 +3,7 @@
   "version": "9.0",
   "clang_min": "23.1.4",
   "bench": 219552,
-  "bench_possolver": null,
+  "bench_possolver": 1286991,
   "network": {
     "file": "nn-lex-hortensia.nnue",
     "url": "",

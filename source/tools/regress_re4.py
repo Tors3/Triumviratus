@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for the 37. Re4?? blunder (CCRL Blitz gauntlet, game 149, Triumviratus 8.0 - Halogen 16, 2026).
+"""Regression test for the 37. Re4?? blunder (CCRL Blitz gauntlet of Triumviratus 8.0, game 149, 2026).
 
 Cause found on 28/10/2026: the Zobrist keys (random.cpp/zobrist.cpp, inherited from BBC) had GF(2) rank 32, so the
 64-bit position key carried only 32 bits of entropy and the transposition table returned entries of other positions
