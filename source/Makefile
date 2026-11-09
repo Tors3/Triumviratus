@@ -60,7 +60,8 @@ OBJS := $(CPP_SRCS:.cpp=.o) $(C_SRCS:.c=.o)
 # Consilium Plebis is the only network of 8.1 (26/10/2026: the Consilium engine was removed from this source; the last
 # source with both is _backup/Triumviratus_8.1_pre_rimozione_c1_2026-10-26). The default network is nn-consilium-plebis.nnue (nn-consilium2.nnue until 28/10/2026),
 # as CN_DEFAULT_NET_FILE. -DTRIUMV_C2 is still passed for scripts that test for it; the code no longer reads it.
-NET_NAME ?= nn-consilium-plebis.nnue
+# 9.0 (09/11/2026): the inference reads TRANN5 files only (Lex Hortensia); the default network is nn-lex-hortensia.nnue.
+NET_NAME ?= nn-lex-hortensia.nnue
 C2_DEF := -DTRIUMV_C2
 ifneq (,$(wildcard $(NET_NAME)))
   EMBED_DEF :=

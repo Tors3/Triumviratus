@@ -17,9 +17,9 @@
 
 // Define version information
 #ifdef TRIUMV_POS_SOLVER
-#define VERSION " - 8.1 Pos Solver"   // analysis build (search/01_params.inc, PSV)
+#define VERSION " - 9.0 dev Pos Solver"   // analysis build (search/01_params.inc, PSV)
 #else
-#define VERSION " - 8.1"
+#define VERSION " - 9.0 dev"
 #endif
 #define AUTHOR "Francesco Torsello"
 #define NAME "Triumviratus"

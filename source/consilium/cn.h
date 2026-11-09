@@ -30,15 +30,21 @@
 
 namespace cn {
 
-// ---------------------------------------------------------------- network shape (specification, sec. 1-2)
-constexpr int L1 = 1024, L1H = L1 / 2, L2 = 32, L3 = 32, NPSQT = 8, NBUCKETS = 8;
-// Consilium Plebis (21/10/2026; docs/rete/ARCHITETTURA_CONSILIUM2_2026-10-21.md): 8 experts chosen per perspective by
-// the routing table of the network (non-pawn material signature), HalfKA rows in int8, and the pawn-king subnetwork
-// added to the l1 outputs. The Consilium (8.0) network, 4 experts by piece count and int16 HalfKA, was removed on
-// 26/10/2026 (last source with it: _backup/Triumviratus_8.1_pre_rimozione_c1_2026-10-26).
-constexpr int NEXPERTS = 8;
+// ---------------------------------------------------------------- network shape: TRANN5, Lex Hortensia
+// TRANN5 (07/11/2026, docs/TRANN5_FORMAT.md): the Consilium Plebis inference with the changes of the Lex Hortensia
+// design. Six HalfKA experts per perspective with the queen as a boundary (routing table of the file); feature rows of
+// exactly 1024 bytes (no PSQT tail: 16 cache lines, never across a 4 KB page) and accumulators without PSQT sums; the
+// PSQT from a piece-square table per output bucket (12 x 64 x 8 int32, 24 KB), kept per stack state from the moved
+// pieces; 32 layer stacks (piece-count bucket x which sides have a queen, 08/11/2026); the pawn-king subnetwork with 128 hidden
+// units, run only with no rook or queen and at most one minor on the board (the gate mean of the file elsewhere).
+// The Consilium Plebis (TRANN4) inference is in the 8.1 source.
+// Speed (Xeon Skylake-SP, xperf, deterministic PGO, cycles per node against 8.1 with Consilium Plebis, lab_90 of
+// 07/11/2026, the same network built at load from the Consilium Plebis file): -3.0% middlegame / -3.2% endgames with
+// large pages, -2.0% / -3.8% without.
+constexpr int L1 = 1024, L1H = L1 / 2, L2 = 32, L3 = 32, NPSQT = 8, NBUCKETS = 32;
+constexpr int NEXPERTS = 6;
 constexpr int ROUTER_SIG = 54, ROUTER_CELLS = ROUTER_SIG * ROUTER_SIG;   // cell = sig(own) * 54 + sig(opponent)
-constexpr int PK_INPUTS = 256, PK_H = 256, PK_ACTIVE = 18;              // pawn-king subnetwork
+constexpr int PK_INPUTS = 256, PK_H = 128, PK_ACTIVE = 18;              // pawn-king subnetwork
 // Entries per thread (power of two), 192 bytes each: 8192 = 1.5 MB, more than the L2 of most processors.
 // -DCN_PK_CACHE_LOG2=11 (384 KB) or 12 (768 KB) to measure; only the hit rate changes, never a value.
 #ifndef CN_PK_CACHE_LOG2
@@ -47,8 +53,7 @@ constexpr int PK_INPUTS = 256, PK_H = 256, PK_ACTIVE = 18;              // pawn-
 constexpr int PK_CACHE = 1 << CN_PK_CACHE_LOG2;
 constexpr int ROWS_THR = 59808, ROWS_HKA = NEXPERTS * 32 * 704, ROWS_PP = 4560, ROWS_PAS = 96;
 constexpr int HKA_PHASE_ROWS = 32 * 704;
-constexpr int ROW16 = L1 + 32;   // int16 row: 2048 bytes of weights + 64 bytes (8 int32 PSQT + padding)
-constexpr int ROW8  = L1 + 64;   // int8 row: 1024 bytes of weights + 64 bytes
+constexpr int ROW8 = L1;   // int8 feature row: exactly 1024 bytes
 
 // One output bucket. w1 is kept in two layouts: the file one (scalar path) and grouped by 4 inputs for the sparse
 // SIMD product: w1g[g][o][k] = w1[o][4 l0_group(g) + k], in the order the SIMD forward stores l0 (cn.cpp).
@@ -66,9 +71,7 @@ struct alignas(64) Stack {
 // All weights in one block of fixed size: it can be copied byte for byte (shared memory between processes).
 struct alignas(64) Net {
     std::int16_t ftBias[L1];
-    // Each feature row holds its 1024 weights and, right after them, its 8 PSQT values (int32), padded to a whole
-    // number of 64-byte lines: the PSQT values arrive with the row instead of from a table of their own (that
-    // second line per row was ~4% of the engine in the 17/10 profile).
+    // Each feature row holds its 1024 int8 weights and nothing else (TRANN5).
     // (Widening the int8 blocks to int16 at load, one add per register instead of two, was measured on 17/10: +60%
     // L3 misses, -10% speed in the middlegame.)
     std::int8_t  wHka[ROWS_HKA][ROW8];   // int8 like the threat rows (trained inside +-127/256)
@@ -77,12 +80,19 @@ struct alignas(64) Net {
     std::int8_t  wPas[ROWS_PAS][ROW8];
     Stack        stack[NBUCKETS];
     std::uint8_t router[ROUTER_CELLS];                // cell -> expert (section RTB1 of the file)
-    alignas(64) std::int16_t pkB1[PK_H];              // pawn-king subnetwork (section PKN1)
+    alignas(64) std::int16_t pkB1[PK_H];              // pawn-king subnetwork (section PKN2)
     alignas(64) std::int16_t pkW1[PK_INPUTS][PK_H];   // one row per input
     alignas(64) std::int32_t pkB2[L2];
     alignas(64) std::int8_t  pkW2[L2][PK_H];
     alignas(64) std::int8_t  pkW2g[PK_H / 4][L2][4];  // SIMD product: pkW2g[g][o][k] = pkW2[o][4g + k]
+    alignas(64) std::int32_t pkGateMean[L2];          // the outputs where the gate is closed (section PKN2)
+    // PSQT table (section PST1): White's view, [engine piece][engine square][output bucket]; pieces 12-15 and square
+    // 64 are zero rows, so that an absent piece or square of a move adds nothing without a branch.
+    alignas(64) std::int32_t pst[16][65][NPSQT];
     std::uint64_t contentHash;   // FNV-1a of the file bytes, names the shared-memory copy
+    // Every l1 weight of every stack within +-63 (set at load): two u8 x s8 pair sums then fit one int16, and the
+    // sparse first layer without VNNI adds two groups before vpmaddwd (cn.cpp, CN_W1_PAIR).
+    std::uint8_t  w1Pair;
 };
 
 // Reads a .nnue file (or an image of one in memory) into `net`. On failure returns false with a reason in `err`.
@@ -92,7 +102,7 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 // calls it; a process that maps a copy loaded by another process (the Linux file alias of shared_net.h) must call it.
 void adopt(const Net& net);
 
-// PassedScale (26/10/2026): percent applied at load time to the PassedPawns rows (weights and PSQT); 100 = the file
+// PassedScale (26/10/2026): percent applied at load time to the PassedPawns rows; 100 = the file
 // as it is. Read by the next load_*: the bridge reloads the network when the option changes.
 void set_passed_scale(int pct);
 int  passed_scale();
@@ -105,18 +115,23 @@ struct Board {
     int                  stm;   // 0 white, 1 black
 };
 
-// Accumulator of one perspective: 1024 sums and the 8 PSQT sums.
+// Accumulator of one perspective: the 1024 sums (32 cache lines; the PSQT is kept apart, Handle::psq).
 struct alignas(64) Acc {
     std::int16_t v[L1];
-    std::int32_t psqt[NPSQT];
 };
 
 // Refresh cache entry, one per (perspective, king square, phase): bias + HalfKA rows of the pieces it last saw, and
 // those pieces. A refresh brings it to the board with only the pieces that changed, then adds the threat, pawn-pair
 // and passed-pawn rows of the board.
+// (TRANN5 lab, 08/11/2026) The pieces as a byte mailbox (0-11, 0xFF = empty): one 64-byte compare finds the squares
+// that changed, and the entry is 33 cache lines instead of 34. -DCN_KC_BB: the twelve bitboards of 8.1.
 struct alignas(64) KingCacheEntry {
     Acc           acc;
+#ifdef CN_KC_BB
     std::uint64_t bb[12];
+#else
+    alignas(64) std::uint8_t mb[64];
+#endif
 };
 
 // Per-thread state: the dirty stack the engine writes, one accumulator per stack state and perspective (bit 1 of
@@ -165,6 +180,8 @@ struct alignas(64) Handle {
     const std::int32_t* pkLast;
     int           pkStale;
     alignas(64) std::int32_t x1[L2];  // l1 sums of the last evaluate (pawn-king outputs included): pk_effect
+    // PSQT per stack state, White's view, all output buckets (valid when bit 2 of computed[0] is set).
+    alignas(64) std::int32_t psq[NN_STACK_SIZE][NPSQT];
     alignas(64) unsigned char scratch[4 * 50 * 1024];
 };
 
@@ -183,7 +200,7 @@ bool same_accumulators(const Handle& h, const Acc acc[2]);       // nnueverify: 
 void prefetch_move(const Net& net, const std::uint64_t* bb, int phase, int pc, int from, int toPc, int to, int capPc,
                    int capSq);
 
-extern int g_bucket_override;     // EvalBucketOverride probe: -1 normal, 0..7 forces the output bucket
+extern int g_bucket_override;     // EvalBucketOverride probe: -1 normal, 0..31 forces the layer stack
 // Routing table of the last network loaded (copied at load: the make and Persp read it without the Net).
 extern std::uint8_t g_router[ROUTER_CELLS];
 // SmpRouteShift (21/10/2026): a second table with every expert shifted by a number of material classes, built by the

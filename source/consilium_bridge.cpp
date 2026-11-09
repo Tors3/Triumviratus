@@ -107,7 +107,8 @@ class NnBoard {
 }  // namespace cnb
 
     // Default network file (28/10/2026, author: "nn-consilium-plebis"; nn-consilium2.nnue before).
-    #define CN_DEFAULT_NET_FILE "nn-consilium-plebis.nnue"
+    // TRANN5 lab (07/11/2026): the Lex Hortensia test file of tools/make_t5.py (untrained, speed work only).
+    #define CN_DEFAULT_NET_FILE "nn-lex-hortensia.nnue"
 
 // GCC and clang builds from the Makefile (Linux, Android, MinGW): the default network is embedded with incbin when it
 // sits at the build root (the Makefile sets NNUE_EMBEDDING_OFF otherwise). incbin.h is Dale Weiler's public-domain

@@ -22,6 +22,9 @@
 #include <type_traits>
 #include <new>
 #include <vector>
+#ifdef CN_LOADTIME
+    #include <chrono>
+#endif
 
 #include "../nn_attacks.h"
 
@@ -162,6 +165,16 @@ static inline int CN_LSB(unsigned long long b) { unsigned long i; _BitScanForwar
 #else
     #define CN_SQ512(a) _mm512_mullo_epi32(a, a)
     #define CN_SQ256(a) _mm256_mullo_epi32(a, a)
+#endif
+// Paired groups of the sparse first layer without VNNI (TRANN5 lab, 08/11/2026; -DCN_NO_W1_PAIR turns it off). Without
+// VNNI a group of four inputs is vpmaddubsw (u8 x s8 pairs into int16), vpmaddwd with ones (into int32) and vpaddd per
+// register. vpmaddubsw of an input <= 127 and a weight within +-63 is at most 2 * 127 * 63 = 16002 in absolute value,
+// so the int16 outputs of two groups can be added before a single vpmaddwd: 10 operations per two groups and register
+// instead of 12, 6 multiplications instead of 8. The same integer sums, but only when every |w1| <= 63 (Net::w1Pair,
+// checked at load): it needs a trainer that keeps the l1 weights there.
+#if !defined(CN_NO_W1_PAIR) && ((defined(USE_AVX512) && !defined(USE_VNNI)) \
+                                || (defined(USE_AVX2) && !defined(USE_AVX512) && !defined(USE_AVXVNNI)))
+    #define CN_W1_PAIR 1
 #endif
 #ifndef CN_DOT_CHAINS
     #if defined(USE_VNNI) && !defined(USE_AVXVNNI)
@@ -617,32 +630,25 @@ u64 passers(int c, u64 own, u64 opp) {
     #define CN_PREFETCH_HALF(w) ((void)0)
 #endif
 
-// (28/10/2026, speed, same rows) Consilium Plebis has no int16 rows (HalfKA is int8 like the other blocks), so the int16
-// counts are the constant 0 and every loop over them disappears at compile time (push16 was removed: nothing called
-// it); and the removed-row list starts one cache line off the 8 KB distance from the added one (a8[i] and s8[i] fell in
-// the same L1 set, 4K aliasing between the stores of push and the loads of the sums). xperf on the Xeon (deterministic
-// PGO, avx512, 3 rounds): -0.31% cycles per node in the middlegame, -0.5% in endgames.
+// Every row is int8 (TRANN5: HalfKA, threats, pawn pairs, passed pawns). The removed-row list starts one cache line off
+// the 8 KB distance from the added one (28/10/2026: a8[i] and s8[i] fell in the same L1 set, 4K aliasing between the
+// stores of push and the loads of the sums; -0.31% / -0.5% cycles per node on the Xeon).
 struct RowList {
-    static constexpr int CAP16 = 1, CAP8 = 1024;
+    static constexpr int CAP8 = 1024;
     const Net* net;
-    static constexpr int n16a = 0, n16s = 0;
     int n8a = 0, n8s = 0;
-    const std::int16_t* a16[CAP16];
-    const std::int16_t* s16[CAP16];
     const std::int8_t*  a8[CAP8];
     const std::int8_t*  pad8[8];
     const std::int8_t*  s8[CAP8];
     explicit RowList(const Net* n) : net(n) {}
     // A row added (add = 1) or removed (add = 0) without a branch on the sign: written in both lists, only the right
-    // counter moves. The PSQT values are read from the row tails (ROW16, ROW8).
-    // The first line of the row and its PSQT line are requested here, as soon as the row is known: the rest of the row
-    // is sequential and the hardware streamer brings it. (A separate pass over the lists afterwards cost eight loops
-    // of variable length, 4.4% of the branch misses of the engine on 17/10; every line of every row saturated the
-    // miss buffers.)
+    // counter moves.
+    // The first line of the row is requested here, as soon as the row is known: the rest of the row is sequential and
+    // the hardware streamer brings it. (A separate pass over the lists afterwards cost eight loops of variable length,
+    // 4.4% of the branch misses of the engine on 17/10; every line of every row saturated the miss buffers.)
     void push8(const std::int8_t* w, int add) {
         CN_PREFETCH(w);
         CN_PREFETCH_HALF(w);
-        CN_PREFETCH(w + L1);
         a8[n8a] = w;
         s8[n8s] = w;
         n8a += add;
@@ -654,13 +660,22 @@ struct RowList {
         const std::int8_t* w = net->wThr[r];   // r is the stored row (threat groups)
         CN_PREFETCH(w);
         CN_PREFETCH_HALF(w);
-        CN_PREFETCH(w + L1);
         a8[n8a] = w;
         s8[n8s] = w;
         n8a += add & valid;
         n8s += (1 - add) & valid;
     }
     void pushH(int r, int sign) { push8(net->wHka[r], sign > 0); }
+    // A HalfKA row only if valid (the mailbox form of kcache_rows), without a branch, as pushT.
+    void pushHv(int r, int valid, int add) {
+        const std::int8_t* w = net->wHka[r];
+        CN_PREFETCH(w);
+        CN_PREFETCH_HALF(w);
+        a8[n8a] = w;
+        s8[n8s] = w;
+        n8a += add & valid;
+        n8s += (1 - add) & valid;
+    }
     void pushP(int r, int sign) { CN_PPHIT(r); push8(net->wPP[r], sign > 0); }
     void pushS(int r, int sign) { push8(net->wPas[r], sign > 0); }
 };
@@ -723,33 +738,78 @@ inline int state_phase(const NnStack& S, int i, const Board& b, int p) {
 #endif
 }
 
-void apply_psqt(const RowList& L, const std::int32_t* src, std::int32_t* dst) {
-#if defined(USE_AVX2) || defined(USE_AVX512)
-    __m256i t = _mm256_loadu_si256((const __m256i*)src);
-    for (int i = 0; i < L.n16a; i++) t = _mm256_add_epi32(t, _mm256_load_si256((const __m256i*)(L.a16[i] + L1)));
-    for (int i = 0; i < L.n16s; i++) t = _mm256_sub_epi32(t, _mm256_load_si256((const __m256i*)(L.s16[i] + L1)));
-    for (int i = 0; i < L.n8a; i++) t = _mm256_add_epi32(t, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
-    for (int i = 0; i < L.n8s; i++) t = _mm256_sub_epi32(t, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
-    _mm256_storeu_si256((__m256i*)dst, t);
+// -DCN_APPLYSTATS (TRANN5 lab, 07/11/2026; diagnostic): per kind of update, the lists applied, their rows and the rows
+// that cancel inside a list (the same row added and removed); per chain of moves walked forward or back, the rows of the
+// moves one at a time against the rows of one combined list after cancellation. Printed at exit. No value changes.
+#ifdef CN_APPLYSTATS
+struct ApplyStats {
+    static constexpr int K = 6;   // 0 common, 1 chain forward, 2 chain back, 3 refresh H, 4 refresh O, 5 king step
+    unsigned long long lists[K] = {}, rows[K] = {}, cancel[K] = {};
+    unsigned long long evals = 0, path[5] = {};   // 0 common, 1 chain, 2 refresh, 3 king step, 4 already computed
+    unsigned long long chains = 0, chainMoves = 0, chainRows = 0, chainRowsFused = 0;
+    unsigned long long inter = 0, interUsed = 0;   // intermediate states of forward chains, and those read later
+    unsigned long long interP = 0, interPUsed = 0; // the same for the parent of the evaluated state only (top - 1)
+    unsigned long long back = 0, backUsed = 0;     // states written by the walk back after a refresh, and those read
+    static int cancels(const RowList& L) {
+        int c = 0;
+        bool used[RowList::CAP8] = {};
+        for (int i = 0; i < L.n8a; i++)
+            for (int j = 0; j < L.n8s; j++)
+                if (!used[j] && L.a8[i] == L.s8[j]) {
+                    used[j] = true;
+                    c++;
+                    break;
+                }
+        return c;
+    }
+    void add(int k, const RowList& L) {
+        lists[k]++;
+        rows[k] += L.n8a + L.n8s;
+        cancel[k] += 2 * cancels(L);
+    }
+    ~ApplyStats() {
+        if (!evals) return;
+        static const char* name[K] = {"common", "chain-fwd", "chain-back", "refresh-H", "refresh-O", "kingstep"};
+        std::fprintf(stderr, "cn apply: %llu evaluations; paths common %.4f chain %.4f refresh %.4f kingstep %.4f "
+                     "computed %.4f per evaluation (per perspective for the last four)\n", evals,
+                     double(path[0]) / evals, double(path[1]) / evals, double(path[2]) / evals,
+                     double(path[3]) / evals, double(path[4]) / evals);
+        unsigned long long all = 0, allL = 0;
+        for (int k = 0; k < K; k++) all += rows[k], allL += lists[k];
+        std::fprintf(stderr, "cn apply total: %.2f rows and %.3f lists per evaluation\n", double(all) / evals,
+                     double(allL) / evals);
+        for (int k = 0; k < K; k++)
+            if (lists[k])
+                std::fprintf(stderr, "cn apply %-10s lists %.4f per evaluation, %.2f rows per list, %.3f rows per "
+                             "list cancel, %.2f rows per evaluation\n", name[k], double(lists[k]) / evals,
+                             double(rows[k]) / lists[k], double(cancel[k]) / lists[k], double(rows[k]) / evals);
+        if (chains)
+            std::fprintf(stderr, "cn apply chains: %llu, %.3f moves per chain, rows %.2f one at a time, %.2f fused "
+                         "per chain\n", chains, double(chainMoves) / chains, double(chainRows) / chains,
+                         double(chainRowsFused) / chains);
+        if (inter)
+            std::fprintf(stderr, "cn apply intermediates: %llu written by forward chains, %.4f of them read later as the "
+                         "start of an update\n", inter, double(interUsed) / inter);
+        if (interP)
+            std::fprintf(stderr, "cn apply intermediates: parent %llu (%.4f read), deeper %llu (%.4f read)\n", interP,
+                         double(interPUsed) / interP, inter - interP,
+                         inter > interP ? double(interUsed - interPUsed) / (inter - interP) : 0.0);
+        if (back)
+            std::fprintf(stderr, "cn apply walk back: %llu states written, %.4f of them read later as the start of an "
+                         "update\n", back, double(backUsed) / back);
+    }
+};
+ApplyStats g_applyStats;
+    #define CN_AST(x) (x)
 #else
-    std::int32_t t[NPSQT];
-    for (int k = 0; k < NPSQT; k++) t[k] = src[k];
-    auto tail = [](const void* row, std::size_t bytes) {
-        return reinterpret_cast<const std::int32_t*>(static_cast<const char*>(row) + bytes);
-    };
-    for (int i = 0; i < L.n16a; i++) for (int k = 0; k < NPSQT; k++) t[k] += tail(L.a16[i], 2 * L1)[k];
-    for (int i = 0; i < L.n16s; i++) for (int k = 0; k < NPSQT; k++) t[k] -= tail(L.s16[i], 2 * L1)[k];
-    for (int i = 0; i < L.n8a; i++) for (int k = 0; k < NPSQT; k++) t[k] += tail(L.a8[i], L1)[k];
-    for (int i = 0; i < L.n8s; i++) for (int k = 0; k < NPSQT; k++) t[k] -= tail(L.s8[i], L1)[k];
-    for (int k = 0; k < NPSQT; k++) dst[k] = t[k];
+    #define CN_AST(x) ((void)0)
 #endif
-}
 
 #if defined(USE_AVX512)
-// The int8 rows of a list (added and removed) on R registers of 32 int16 values from column t, with their PSQT tails
-// (WithPsqt). CN_W1: one 64-byte load per pair of registers (R even, t a multiple of 64).
-template <int R, bool WithPsqt>
-inline void rows8_512(const RowList& L, __m512i* r, __m256i& ps, int t) {
+// The int8 rows of a list (added and removed) on R registers of 32 int16 values from column t. CN_W1: one 64-byte load
+// per pair of registers (R even, t a multiple of 64).
+template <int R>
+inline void rows8_512(const RowList& L, __m512i* r, int t) {
     constexpr int W = 32;
 #if defined(CN_W2)
     // CN_W2: the words summed as they are into the low register, their high bytes (vpsraw 8) into o; the correction
@@ -764,7 +824,6 @@ inline void rows8_512(const RowList& L, __m512i* r, __m256i& ps, int t) {
             r[k]     = _mm512_add_epi16(r[k], w);
             o[k / 2] = _mm512_add_epi16(o[k / 2], _mm512_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k += 2) {
@@ -773,7 +832,6 @@ inline void rows8_512(const RowList& L, __m512i* r, __m256i& ps, int t) {
             r[k]     = _mm512_sub_epi16(r[k], w);
             o[k / 2] = _mm512_sub_epi16(o[k / 2], _mm512_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
     const __m512i bias = _mm512_set1_epi16(short(std::uint16_t(-128 * (L.n8a - L.n8s))));
     for (int k = 0; k < R; k += 2) {
@@ -788,7 +846,6 @@ inline void rows8_512(const RowList& L, __m512i* r, __m256i& ps, int t) {
             r[k]     = _mm512_add_epi16(r[k], _mm512_maddubs_epi16(even, w));
             r[k + 1] = _mm512_add_epi16(r[k + 1], _mm512_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k += 2) {
@@ -796,70 +853,39 @@ inline void rows8_512(const RowList& L, __m512i* r, __m256i& ps, int t) {
             r[k]     = _mm512_sub_epi16(r[k], _mm512_maddubs_epi16(even, w));
             r[k + 1] = _mm512_sub_epi16(r[k + 1], _mm512_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
 #else
     for (int i = 0; i < L.n8a; i++) {
         for (int k = 0; k < R; k++)
             r[k] = _mm512_add_epi16(r[k], _mm512_cvtepi8_epi16(_mm256_load_si256((const __m256i*)(L.a8[i] + t + k * W))));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k++)
             r[k] = _mm512_sub_epi16(r[k], _mm512_cvtepi8_epi16(_mm256_load_si256((const __m256i*)(L.s8[i] + t + k * W))));
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
 #endif
 }
 
-// AVX-512: 1024 values = 32 registers; two tiles of 16 registers (512 values). The first tile also sums the PSQT
-// values at the row tails (WithPsqt): four loops over the rows instead of eight, and each loop exit is a branch that
-// depends on the list lengths.
-template <bool WithPsqt>
+// AVX-512: 1024 values = 32 registers; two tiles of 16 registers (512 values).
 inline void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
     constexpr int R = 16, W = 32;
     __m512i       r[R];
-    __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)src.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm512_loadu_si512(src.v + t + k * W);
-    for (int i = 0; i < L.n16a; i++) {
-        for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(L.a16[i] + t + k * W));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a16[i] + L1)));
-    }
-    for (int i = 0; i < L.n16s; i++) {
-        for (int k = 0; k < R; k++) r[k] = _mm512_sub_epi16(r[k], _mm512_load_si512(L.s16[i] + t + k * W));
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s16[i] + L1)));
-    }
-    rows8_512<R, WithPsqt>(L, r, ps, t);
+    rows8_512<R>(L, r, t);
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
 CN_LEAF void apply(const RowList& L, const Acc& src, Acc& dst) {
     CN_TIME(3);
     static_assert(L1 == 2 * 16 * 32, "apply: two tiles of 16 registers");
-    apply_tile<true>(L, src, dst, 0);
-    apply_tile<false>(L, src, dst, L1 / 2);
+    apply_tile(L, src, dst, 0);
+    apply_tile(L, src, dst, L1 / 2);
 }
 #elif defined(USE_AVX2)
-// The int16 and the int8 rows of a list (added and removed) on R registers of 16 values from column t, with their PSQT
-// tails (WithPsqt). Shared by apply and, since 21/10/2026, by the single-pass refresh and king step.
-template <int R, bool WithPsqt>
-inline void rows16_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
-    constexpr int W = 16;
-    for (int i = 0; i < L.n16a; i++) {
-        for (int k = 0; k < R; k++)
-            r[k] = _mm256_add_epi16(r[k], _mm256_load_si256((const __m256i*)(L.a16[i] + t + k * W)));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a16[i] + L1)));
-    }
-    for (int i = 0; i < L.n16s; i++) {
-        for (int k = 0; k < R; k++)
-            r[k] = _mm256_sub_epi16(r[k], _mm256_load_si256((const __m256i*)(L.s16[i] + t + k * W)));
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s16[i] + L1)));
-    }
-}
-
-template <int R, bool WithPsqt>
-inline void rows8_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
+// The int8 rows of a list (added and removed) on R registers of 16 values from column t. Shared by apply and, since
+// 21/10/2026, by the single-pass refresh and king step.
+template <int R>
+inline void rows8_256(const RowList& L, __m256i* r, int t) {
     constexpr int W = 16;
 #if defined(CN_W2)
     // CN_W2 (see the top): words summed as they are, high bytes into o, one correction after the rows.
@@ -873,7 +899,6 @@ inline void rows8_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
             r[k]     = _mm256_add_epi16(r[k], w);
             o[k / 2] = _mm256_add_epi16(o[k / 2], _mm256_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k += 2) {
@@ -882,7 +907,6 @@ inline void rows8_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
             r[k]     = _mm256_sub_epi16(r[k], w);
             o[k / 2] = _mm256_sub_epi16(o[k / 2], _mm256_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
     const __m256i bias = _mm256_set1_epi16(short(std::uint16_t(-128 * (L.n8a - L.n8s))));
     for (int k = 0; k < R; k += 2) {
@@ -898,7 +922,6 @@ inline void rows8_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
             r[k]     = _mm256_add_epi16(r[k], _mm256_maddubs_epi16(even, w));
             r[k + 1] = _mm256_add_epi16(r[k + 1], _mm256_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k += 2) {
@@ -906,59 +929,41 @@ inline void rows8_256(const RowList& L, __m256i* r, __m256i& ps, int t) {
             r[k]     = _mm256_sub_epi16(r[k], _mm256_maddubs_epi16(even, w));
             r[k + 1] = _mm256_sub_epi16(r[k + 1], _mm256_srai_epi16(w, 8));
         }
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
 #else
     for (int i = 0; i < L.n8a; i++) {
         for (int k = 0; k < R; k++)
             r[k] = _mm256_add_epi16(r[k], _mm256_cvtepi8_epi16(_mm_load_si128((const __m128i*)(L.a8[i] + t + k * W))));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)(L.a8[i] + L1)));
     }
     for (int i = 0; i < L.n8s; i++) {
         for (int k = 0; k < R; k++)
             r[k] = _mm256_sub_epi16(r[k], _mm256_cvtepi8_epi16(_mm_load_si128((const __m128i*)(L.s8[i] + t + k * W))));
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, _mm256_load_si256((const __m256i*)(L.s8[i] + L1)));
     }
 #endif
 }
 
-// AVX2: 16 registers; tiles of 8 registers (128 values), eight tiles. As on AVX-512, the first tile also sums the PSQT
-// values at the row tails (WithPsqt, a ninth register): apply_psqt afterwards ran four more loops over the rows, each
-// with an exit branch on a list length that changes from move to move (19/10/2026). -DCN_PSQT_SEPARATE goes back.
-template <bool WithPsqt>
+// AVX2: 16 registers; tiles of 8 registers (128 values), eight tiles.
 inline void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
-    __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)src.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(src.v + t + k * W));
-    rows16_256<R, WithPsqt>(L, r, ps, t);
-    rows8_256<R, WithPsqt>(L, r, ps, t);
+    rows8_256<R>(L, r, t);
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
 CN_LEAF void apply(const RowList& L, const Acc& src, Acc& dst) {
     CN_TIME(3);
     constexpr int TILE = 8 * 16;
-#ifdef CN_PSQT_SEPARATE
-    for (int t = 0; t < L1; t += TILE) apply_tile<false>(L, src, dst, t);
-    apply_psqt(L, src.psqt, dst.psqt);
-#else
-    apply_tile<true>(L, src, dst, 0);
-    for (int t = TILE; t < L1; t += TILE) apply_tile<false>(L, src, dst, t);
-#endif
+    for (int t = 0; t < L1; t += TILE) apply_tile(L, src, dst, t);
 }
 #else
 void apply(const RowList& L, const Acc& src, Acc& dst) {
     CN_TIME(3);
     alignas(64) std::uint16_t t[L1];
     for (int j = 0; j < L1; j++) t[j] = std::uint16_t(src.v[j]);
-    for (int i = 0; i < L.n16a; i++) for (int j = 0; j < L1; j++) t[j] += std::uint16_t(L.a16[i][j]);
-    for (int i = 0; i < L.n16s; i++) for (int j = 0; j < L1; j++) t[j] -= std::uint16_t(L.s16[i][j]);
     for (int i = 0; i < L.n8a; i++) for (int j = 0; j < L1; j++) t[j] += std::uint16_t(std::int16_t(L.a8[i][j]));
     for (int i = 0; i < L.n8s; i++) for (int j = 0; j < L1; j++) t[j] -= std::uint16_t(std::int16_t(L.s8[i][j]));
     for (int j = 0; j < L1; j++) dst.v[j] = std::int16_t(t[j]);
-    apply_psqt(L, src.psqt, dst.psqt);
 }
 #endif
 
@@ -1058,7 +1063,6 @@ void active_rows(const Board& b, const Persp& P, RowList& L) {
 
 void refresh_one(const Net& net, const Board& b, int p, Acc& a) {
     std::memcpy(a.v, net.ftBias, sizeof(a.v));
-    std::memset(a.psqt, 0, sizeof(a.psqt));
     RowList L(&net);
     active_rows(b, Persp(p, b), L);
     apply(L, a, a);
@@ -1072,8 +1076,11 @@ void kcache_init(const Net& net, Handle& h) {
         for (auto& b : a)
             for (KingCacheEntry& e : b) {
                 std::memcpy(e.acc.v, net.ftBias, sizeof(e.acc.v));
-                std::memset(e.acc.psqt, 0, sizeof(e.acc.psqt));
+#ifdef CN_KC_BB
                 std::memset(e.bb, 0, sizeof(e.bb));
+#else
+                std::memset(e.mb, 0xFF, sizeof(e.mb));   // an empty board: the accumulator is the bias
+#endif
             }
     h.cacheNet = net.contentHash;
 }
@@ -1112,6 +1119,77 @@ const Acc& pawn_vec(const Net& net, Handle& h, const Board& b, const Persp& P, R
 
 // The rows that bring the cache entry of this king square and phase to the board: only the pieces that differ from
 // last time (the entry's bitboards are updated here; its accumulator by whoever applies the rows).
+#ifndef CN_KC_BB
+// The board's mailbox as 64 bytes (0-11, 0xFF = empty: the -1 of Board::mb cut to a byte).
+// (kc2) The four 16-byte pieces joined in a register and stored once: kcache_rows reads the 64 bytes with one load, and
+// a load fed by four narrower stores waits for them to reach the cache (no store forwarding on Skylake-SP or Zen 4).
+inline void mailbox_bytes(const Board& b, std::uint8_t* out) {
+    #if defined(USE_AVX512)
+    const __m128i q0 = _mm512_cvtepi32_epi8(_mm512_loadu_si512(b.mb));
+    const __m128i q1 = _mm512_cvtepi32_epi8(_mm512_loadu_si512(b.mb + 16));
+    const __m128i q2 = _mm512_cvtepi32_epi8(_mm512_loadu_si512(b.mb + 32));
+    const __m128i q3 = _mm512_cvtepi32_epi8(_mm512_loadu_si512(b.mb + 48));
+    const __m256i lo = _mm256_inserti128_si256(_mm256_castsi128_si256(q0), q1, 1);
+    const __m256i hi = _mm256_inserti128_si256(_mm256_castsi128_si256(q2), q3, 1);
+    _mm512_store_si512(out, _mm512_inserti64x4(_mm512_castsi256_si512(lo), hi, 1));
+    #else
+    for (int s = 0; s < 64; s++) out[s] = std::uint8_t(b.mb[s]);
+    #endif
+}
+
+// The mailbox of the parent of a stack state from the child's: the move taken back (the squares it filled emptied
+// first, then the pieces it moved or removed put back). Used by the king step.
+inline void mailbox_parent(const NnDirtyPiece& dp, const std::uint8_t* child, std::uint8_t* out) {
+    #if defined(USE_AVX512)
+    // (kc2) In a register, one store (see mailbox_bytes): byte stores followed by the 64-byte load would stall.
+    auto bit = [](int s) { return s != NN_SQ_NONE ? __mmask64(1) << s : __mmask64(0); };
+    __m512i v = _mm512_load_si512(child);
+    v = _mm512_mask_mov_epi8(v, bit(dp.to) | bit(dp.add_sq), _mm512_set1_epi8(char(0xFF)));
+    v = _mm512_mask_mov_epi8(v, bit(dp.remove_sq), _mm512_set1_epi8(char(dp.remove_pc)));
+    v = _mm512_mask_mov_epi8(v, bit(dp.from), _mm512_set1_epi8(char(dp.pc)));
+    _mm512_store_si512(out, v);
+    #else
+    std::memcpy(out, child, 64);
+    if (dp.to != NN_SQ_NONE) out[dp.to] = 0xFF;
+    if (dp.add_sq != NN_SQ_NONE) out[dp.add_sq] = 0xFF;
+    if (dp.remove_sq != NN_SQ_NONE) out[dp.remove_sq] = std::uint8_t(dp.remove_pc);
+    out[dp.from] = std::uint8_t(dp.pc);
+    #endif
+}
+
+// kcache_rows on mailboxes (08/11/2026, same rows): the squares whose piece differs from the entry's in one compare,
+// then per square the row of the old piece out and of the new one in, both pushed without a branch (an empty side is
+// not counted). In 8.1 a loop over the twelve bitboards with a branch per piece and two loops per changed piece.
+// mbb: the board's mailbox (mailbox_bytes).
+KingCacheEntry& kcache_rows(const Net& net, Handle& h, const std::uint8_t* mbb, const Persp& P, RowList& L) {
+    if (h.cacheNet != net.contentHash) kcache_init(net, h);
+    KingCacheEntry& e = h.kcache[P.p][P.ksq][P.phase];
+    alignas(64) std::uint8_t old[64];
+    #if defined(USE_AVX512)
+    const __m512i n = _mm512_load_si512(mbb), o = _mm512_load_si512(e.mb);
+    u64           m = _mm512_cmpneq_epi8_mask(n, o);
+    _mm512_store_si512(old, o);
+    _mm512_store_si512(e.mb, n);
+    #else
+    u64 m = 0;
+    for (int s = 0; s < 64; s++) m |= u64(e.mb[s] != mbb[s]) << s;
+    std::memcpy(old, e.mb, 64);
+    std::memcpy(e.mb, mbb, 64);
+    #endif
+    const int hbase = P.hbase;
+    for (; m; m &= m - 1) {
+        const int s  = CN_LSB(m);
+        const int po = old[s], pn = mbb[s];
+        const int vo = int(po < 12), vn = int(pn < 12);   // at least one: the square changed
+        int       ro = hbase + P.hk[vo ? po : 0][s], rn = hbase + P.hk[vn ? pn : 0][s];
+        ro = vo ? ro : rn;   // an empty side points at the other row (needed anyway), so its prefetch is not lost
+        rn = vn ? rn : ro;
+        L.pushHv(ro, vo, 0);
+        L.pushHv(rn, vn, 1);
+    }
+    return e;
+}
+#else
 KingCacheEntry& kcache_rows(const Net& net, Handle& h, const Board& b, const Persp& P, RowList& L) {
     if (h.cacheNet != net.contentHash) kcache_init(net, h);
     KingCacheEntry& e     = h.kcache[P.p][P.ksq][P.phase];
@@ -1126,6 +1204,7 @@ KingCacheEntry& kcache_rows(const Net& net, Handle& h, const Board& b, const Per
     }
     return e;
 }
+#endif
 
 // The rows one move changes for perspective P (spec 6), from the dirty state the engine wrote.
 // Part H: the pieces of the move.
@@ -1236,7 +1315,8 @@ Out forward_tail(const Stack& st, const std::int32_t* x1, const Acc& us, const A
     for (int i = 0; i < 2 * L3; i++) out += st.w3[2 * L2 + i] * a2[i];
     Out r;
     r.positional = int((std::int64_t(out) + skip) * 600 / 16384);   // C++ division truncates toward zero
-    r.psqt       = (us.psqt[bucket] - them.psqt[bucket]) / 32;
+    r.psqt       = 0;   // TRANN5: the PSQT comes from the table (psq_out), set by the caller
+    (void)us, (void)them, (void)bucket;
     return r;
 }
 
@@ -1356,7 +1436,8 @@ CN_LEAF Out forward_tail_simd(const Stack& st, const std::int32_t* x1, const Acc
     const std::int32_t skip = x1[L2 - 2] - x1[L2 - 1];
     Out r;
     r.positional = int((std::int64_t(out) + skip) * 600 / 16384);
-    r.psqt       = (us.psqt[bucket] - them.psqt[bucket]) / 32;
+    r.psqt       = 0;   // TRANN5: the PSQT comes from the table (psq_out), set by the caller
+    (void)us, (void)them, (void)bucket;
     return r;
 }
 
@@ -1374,6 +1455,45 @@ CN_LEAF Out forward_simd(const Net& net, const Acc& us, const Acc& them, int buc
     a1 = _mm512_add_epi32(a1, _mm512_loadu_si512(pk + 16));
     __m512i a2 = _mm512_setzero_si512(), a3 = a2;
     int i = 0;
+#ifdef CN_W1_PAIR
+    if (net.w1Pair) {
+        // Two groups per int16 sum (CN_W1_PAIR above), two pairs per step on four accumulators.
+        const __m512i ones = _mm512_set1_epi16(1);
+        for (; i + 3 < n; i += 4) {
+            const __m512i  x0 = _mm512_set1_epi32(in[nz[i]]), x1 = _mm512_set1_epi32(in[nz[i + 1]]);
+            const __m512i  x2 = _mm512_set1_epi32(in[nz[i + 2]]), x3 = _mm512_set1_epi32(in[nz[i + 3]]);
+            const __m512i* w0 = reinterpret_cast<const __m512i*>(st.w1g[nz[i]]);
+            const __m512i* w1 = reinterpret_cast<const __m512i*>(st.w1g[nz[i + 1]]);
+            const __m512i* w2 = reinterpret_cast<const __m512i*>(st.w1g[nz[i + 2]]);
+            const __m512i* w3 = reinterpret_cast<const __m512i*>(st.w1g[nz[i + 3]]);
+            const __m512i  p0 = _mm512_add_epi16(_mm512_maddubs_epi16(x0, _mm512_load_si512(w0)),
+                                                 _mm512_maddubs_epi16(x1, _mm512_load_si512(w1)));
+            const __m512i  p1 = _mm512_add_epi16(_mm512_maddubs_epi16(x0, _mm512_load_si512(w0 + 1)),
+                                                 _mm512_maddubs_epi16(x1, _mm512_load_si512(w1 + 1)));
+            const __m512i  p2 = _mm512_add_epi16(_mm512_maddubs_epi16(x2, _mm512_load_si512(w2)),
+                                                 _mm512_maddubs_epi16(x3, _mm512_load_si512(w3)));
+            const __m512i  p3 = _mm512_add_epi16(_mm512_maddubs_epi16(x2, _mm512_load_si512(w2 + 1)),
+                                                 _mm512_maddubs_epi16(x3, _mm512_load_si512(w3 + 1)));
+            a0 = _mm512_add_epi32(a0, _mm512_madd_epi16(p0, ones));
+            a1 = _mm512_add_epi32(a1, _mm512_madd_epi16(p1, ones));
+            a2 = _mm512_add_epi32(a2, _mm512_madd_epi16(p2, ones));
+            a3 = _mm512_add_epi32(a3, _mm512_madd_epi16(p3, ones));
+        }
+        if (i + 1 < n) {
+            const __m512i  x0 = _mm512_set1_epi32(in[nz[i]]), x1 = _mm512_set1_epi32(in[nz[i + 1]]);
+            const __m512i* w0 = reinterpret_cast<const __m512i*>(st.w1g[nz[i]]);
+            const __m512i* w1 = reinterpret_cast<const __m512i*>(st.w1g[nz[i + 1]]);
+            const __m512i  p0 = _mm512_add_epi16(_mm512_maddubs_epi16(x0, _mm512_load_si512(w0)),
+                                                 _mm512_maddubs_epi16(x1, _mm512_load_si512(w1)));
+            const __m512i  p1 = _mm512_add_epi16(_mm512_maddubs_epi16(x0, _mm512_load_si512(w0 + 1)),
+                                                 _mm512_maddubs_epi16(x1, _mm512_load_si512(w1 + 1)));
+            a0 = _mm512_add_epi32(a0, _mm512_madd_epi16(p0, ones));
+            a1 = _mm512_add_epi32(a1, _mm512_madd_epi16(p1, ones));
+            i += 2;
+        }
+        // At most one group left: the loops below take it.
+    }
+#endif
 #if CN_DOT_CHAINS >= 4 && defined(USE_VNNI)
     // Four independent chains (-DCN_DOT_CHAINS=4, 21/10/2026): vpdpbusd zmm issues two per cycle with a latency of 3 on
     // Zen 5 (desktop, full 512-bit pipes) and of 5-6 on Cascade Lake/Sapphire Rapids, so 6 to 12 products must be in
@@ -1536,7 +1656,8 @@ CN_LEAF Out forward_tail_avx2(const Stack& st, const __m256i* x1, const Acc& us,
     const std::int32_t skip = _mm_extract_epi32(hi3, 2) - _mm_extract_epi32(hi3, 3);
     Out r;
     r.positional = int((std::int64_t(out) + skip) * 600 / 16384);
-    r.psqt       = (us.psqt[bucket] - them.psqt[bucket]) / 32;
+    r.psqt       = 0;   // TRANN5: the PSQT comes from the table (psq_out), set by the caller
+    (void)us, (void)them, (void)bucket;
     return r;
 }
 
@@ -1573,6 +1694,22 @@ CN_LEAF Out forward_simd(const Net& net, const Acc& us, const Acc& them, int buc
         }
     }
     for (int k = 0; k < 4; k++) a[k] = _mm256_add_epi32(a[k], c[k]);
+#endif
+#ifdef CN_W1_PAIR
+    if (net.w1Pair) {
+        // Two groups per int16 sum (CN_W1_PAIR at the top): the pair goes to a[k], b[k] stays for the last group.
+        const __m256i ones = _mm256_set1_epi16(1);
+        for (; i + 1 < n; i += 2) {
+            const __m256i  x0 = _mm256_set1_epi32(in[nz[i]]), x1 = _mm256_set1_epi32(in[nz[i + 1]]);
+            const __m256i* w0 = reinterpret_cast<const __m256i*>(st.w1g[nz[i]]);
+            const __m256i* w1 = reinterpret_cast<const __m256i*>(st.w1g[nz[i + 1]]);
+            for (int k = 0; k < 4; k++) {
+                const __m256i p = _mm256_add_epi16(_mm256_maddubs_epi16(x0, _mm256_load_si256(w0 + k)),
+                                                   _mm256_maddubs_epi16(x1, _mm256_load_si256(w1 + k)));
+                a[k] = _mm256_add_epi32(a[k], _mm256_madd_epi16(p, ones));
+            }
+        }
+    }
 #endif
     for (; i + 1 < n; i += 2) {
         const __m256i  x0 = _mm256_set1_epi32(in[nz[i]]), x1 = _mm256_set1_epi32(in[nz[i + 1]]);
@@ -1625,9 +1762,15 @@ inline int l0_group(int g) {
 #endif
 }
 
+// The layer stack (32 stacks, 08/11/2026): piece-count bucket + 8 q, with q from the side to move: 0 no queen, 1 a
+// queen of the opponent only, 2 of the side to move only, 3 both. Stacks 0-7 are the queenless ones, as with 16 stacks.
+// The PSQT bucket is the piece-count bucket.
 inline int bucket_of(const Board& b) {
-    return g_bucket_override >= 0 ? g_bucket_override : (CN_POPCNT(b.occ[2]) - 1) / 4;
+    if (g_bucket_override >= 0) return g_bucket_override;
+    const int qs = int(b.bb[QUEEN + 6 * b.stm] != 0), qo = int(b.bb[QUEEN + 6 * (b.stm ^ 1)] != 0);
+    return (CN_POPCNT(b.occ[2]) - 1) / 4 + 8 * (2 * qs + qo);
 }
+inline int psqt_bucket_of(const Board& b) { return (CN_POPCNT(b.occ[2]) - 1) / 4; }
 
 // ================================================================ pawn-king subnetwork (Consilium Plebis)
 //
@@ -1847,31 +1990,12 @@ inline std::size_t pk_index(const Board& b) {
 // The pawn-king subnetwork runs only where the network uses it: positions with at most one minor piece on the board
 // and no rook or queen. Elsewhere it is replaced by its mean output on game positions (b2 + the mean of W2 h over
 // quiet positions of 8.1 games). Non-regression test passed (06/11/2026).
-// The mean belongs to one network: pk_gate_adopt turns the gate on only when the pawn-king weights hash to
-// PK_GATE_HASH (Consilium Plebis, 28/10/2026); with any other network the subnetwork runs everywhere, as before.
-constexpr std::uint64_t PK_GATE_HASH = 0x2A87E97CEEFA3F48ULL;   // FNV-1a of the pawn-king weights of Consilium Plebis
-alignas(64) constexpr std::int32_t PK_GATE_MEAN[L2] = {
-    -608,  -847, 466,  -275, -951, 2075, -1397, 1181, 1220,  414,  -448, 1036, -591, 1562, -16, -1019,
-    1009,  1630, 1466, 1392, 883,  379,  925,   -519, -1317, -267, -298, 936,  1270, -32,  -2402, -1303};
-bool g_pkGate = false;   // set at load by pk_gate_adopt
-std::uint64_t pk_weights_hash(const Net& net) {   // FNV-1a over pkB1, pkW1, pkB2, pkW2 in file order
-    std::uint64_t h   = 1469598103934665603ULL;
-    auto          eat = [&h](const void* p, std::size_t n) {
-        const unsigned char* c = static_cast<const unsigned char*>(p);
-        for (std::size_t i = 0; i < n; i++) h = (h ^ c[i]) * 1099511628211ULL;
-    };
-    eat(net.pkB1, sizeof(net.pkB1));
-    eat(net.pkW1, sizeof(net.pkW1));
-    eat(net.pkB2, sizeof(net.pkB2));
-    eat(net.pkW2, sizeof(net.pkW2));
-    return h;
-}
+// TRANN5: the gate is part of the architecture, and its mean output is in the file (Net::pkGateMean, section PKN2).
 // True where the gate replaces the subnetwork by its mean: a rook or a queen on the board, or two minors or more.
 inline bool pk_gate_skip(const Board& b) {
-    return g_pkGate && ((b.bb[ROOK] | b.bb[QUEEN] | b.bb[ROOK + 6] | b.bb[QUEEN + 6])
-                        || CN_POPCNT(b.bb[KNIGHT] | b.bb[BISHOP] | b.bb[KNIGHT + 6] | b.bb[BISHOP + 6]) > 1);
+    return (b.bb[ROOK] | b.bb[QUEEN] | b.bb[ROOK + 6] | b.bb[QUEEN + 6])
+        || CN_POPCNT(b.bb[KNIGHT] | b.bb[BISHOP] | b.bb[KNIGHT + 6] | b.bb[BISHOP + 6]) > 1;
 }
-void pk_gate_adopt(const Net& net) { g_pkGate = pk_weights_hash(net) == PK_GATE_HASH; }
 
 // The subnetwork's outputs for the board, from the thread's cache (exact key) or computed and stored.
 const std::int32_t* pawn_king(const Net& net, Handle& h, const Board& b) {
@@ -1882,7 +2006,7 @@ const std::int32_t* pawn_king(const Net& net, Handle& h, const Board& b) {
     return zero;
 #endif
     if (pk_gate_skip(b))   // PkGate: the mean output away from the pawn endgames
-        return PK_GATE_MEAN;
+        return net.pkGateMean;
     if (h.pkNet != net.contentHash) {
         std::memset(static_cast<void*>(h.pkc), 0, sizeof(h.pkc));
         h.pkNet = net.contentHash;
@@ -1926,6 +2050,11 @@ struct Reader {
                         | std::uint32_t(d[p + 3]) << 24;
         p += 4;
         return v;
+    }
+    // Is the next tensor LEB128-compressed?
+    bool compressed_next() const {
+        static const char magic[] = "COMPRESSED_LEB128";
+        return p + sizeof(magic) - 1 <= n && std::memcmp(d + p, magic, sizeof(magic) - 1) == 0;
     }
     // A tensor of `count` values of `bytes` bytes each (1, 2 or 4, signed), raw or LEB128-compressed.
     template <typename V>
@@ -1976,8 +2105,9 @@ struct Reader {
 constexpr std::uint32_t VERSION = 0x6A448AFA;
 
 std::uint32_t feature_hash() {
-    // Full_Threats, HalfKAv2_hm_X8 ("X8C1"), PP_3Wide, PassedPawns (trainer: model/modules/features/*.py HASH).
-    const std::uint32_t blocks[4] = {0x2E6B9D04u, 0x7F234CB8u ^ 0x58384331u, 0x86F2B1DDu, 0x50535344u};
+    // Full_Threats, HalfKAv2_hm_Q6 ("Q6B1", TRANN5: six experts, queen boundary), PP_3Wide, PassedPawns
+    // (docs/TRANN5_FORMAT.md; Consilium Plebis was "X8C1" = 0x58384331).
+    const std::uint32_t blocks[4] = {0x2E6B9D04u, 0x7F234CB8u ^ 0x51364231u, 0x86F2B1DDu, 0x50535344u};
     std::uint32_t h = 0;
     for (std::uint32_t bh : blocks) h = ((h << 1) | (h >> 31)) ^ bh;
     return h;
@@ -1999,6 +2129,22 @@ std::uint32_t fc_hash() {
 
 // ================================================================ public
 
+#ifdef CN_LOADTIME
+// -DCN_LOADTIME (TRANN5 lab, 08/11/2026; diagnostic): milliseconds of each part of the load, on stderr.
+struct LoadTimer {
+    const char* what;
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    explicit LoadTimer(const char* w) : what(w) {}
+    ~LoadTimer() {
+        std::fprintf(stderr, "cn load %-12s %8.1f ms\n", what,
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    }
+};
+    #define CN_LOADT(name, what) LoadTimer cn_lt_##name(what)
+#else
+    #define CN_LOADT(name, what) ((void)0)
+#endif
+
 // --- C2 signals for the search (agent A) ---
 int pk_skip(const Net& net, Handle& h, const Board& b) {
     const std::int32_t* pk = pawn_king(net, h, b);
@@ -2006,6 +2152,7 @@ int pk_skip(const Net& net, Handle& h, const Board& b) {
 }
 
 void init() {
+    CN_LOADT(init, "init");
     build_tables();
     build_fast_threats();
     build_thr_slots();
@@ -2028,6 +2175,7 @@ void set_passed_scale(int pct) { g_passed_scale = std::clamp(pct, 50, 200); }
 int  passed_scale() { return g_passed_scale; }
 
 bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::string* err) {
+    CN_LOADT(all, "load_memory");
     Reader r{data, size};
     const std::uint32_t fh = feature_hash(), ch = fc_hash();
     auto fail = [&](const char* why) {
@@ -2035,16 +2183,15 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
         return false;
     };
     if (r.u32() != VERSION) return fail("version");
-    if (r.u32() != (ch ^ fh ^ std::uint32_t(L1 * 2))) return fail("network hash (not a Consilium net)");
+    if (r.u32() != (ch ^ fh ^ std::uint32_t(L1 * 2))) return fail("network hash (not a TRANN5 Lex Hortensia net)");
     const std::uint32_t dl = r.u32();
     if (!r.ok || r.p + dl > size) return fail("description");
     r.p += dl;
     if (r.u32() != (fh ^ std::uint32_t(L1 * 2))) return fail("feature transformer hash");
     bool ok = r.tensor(net->ftBias, L1);
-    // Weights row by row into the strided rows (row `slot(file row)`), then the PSQT values into the tail of each row.
-    // CN_W1: element e of an int8 row goes to its interleaved byte (block of B = CN_W1_BLOCK bytes, 32 on AVX2 and 64
-    // on AVX-512: element Bb + j -> byte Bb + 2j, element Bb + B/2 + j -> byte Bb + 2j + 1); the PSQT tail after the
-    // 1024 weights is not touched.
+    // Weights row by row into the stored rows (row `slot(file row)`). CN_W1: element e of an int8 row goes to its
+    // interleaved byte (block of B = CN_W1_BLOCK bytes, 32 on AVX2 and 64 on AVX-512: element Bb + j -> byte Bb + 2j,
+    // element Bb + B/2 + j -> byte Bb + 2j + 1).
     auto block = [&](auto file_type_tag, auto* rows, int nrows, auto slot, int scale = 100) {
         using F = decltype(file_type_tag);
         // PassedScale: the file value times scale / 100, rounded, clamped to the int8 range (weights) before the
@@ -2066,32 +2213,75 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 #endif
             return e;
         };
+#ifndef CN_SLOW_LOADER
+        // Fast path (TRANN5 lab, 08/11/2026): raw int8 rows at the file's scale, copied row by row with the same layout
+        // as pos and val below (CN_W1: the two halves of each block interleaved; CN_W2: the low bytes + 128), so the
+        // same bytes in the net. The generic path below decoded every value through the callbacks: most of the
+        // startup. -DCN_SLOW_LOADER: the generic path only.
+        if constexpr (sizeof(F) == 1) {
+            if (scale == 100 && !r.compressed_next()) {
+                const std::size_t count = std::size_t(nrows) * L1;
+                if (r.p + count > r.n) return r.ok = false;
+                const unsigned char* src = r.d + r.p;
+                for (int row = 0; row < nrows; row++) {
+                    std::uint8_t*        dst = reinterpret_cast<std::uint8_t*>(rows[slot(row)]);
+                    const unsigned char* s   = src + std::size_t(row) * L1;
+#ifdef CN_W1
+                    constexpr std::size_t B = CN_W1_BLOCK, H = B / 2;
+#ifdef CN_W2
+                    constexpr std::uint8_t X = 0x80;
+#else
+                    constexpr std::uint8_t X = 0;
+#endif
+                    for (std::size_t b0 = 0; b0 < std::size_t(L1); b0 += B)
+                        for (std::size_t j = 0; j < H; j++) {
+                            dst[b0 + 2 * j]     = std::uint8_t(s[b0 + j] ^ X);
+                            dst[b0 + 2 * j + 1] = s[b0 + H + j];
+                        }
+#else
+                    std::memcpy(dst, s, L1);
+#endif
+                }
+                r.p += count;
+                return true;
+            }
+        }
+#endif
 #ifdef CN_W2
         // CN_W2: the element that lands in the low byte of its word (first half of the block) is stored + 128.
         auto val = [](std::size_t e, F v) -> F {
             if (sizeof(F) == 1 && e % CN_W1_BLOCK < CN_W1_BLOCK / 2) return F(std::uint8_t(std::uint8_t(v) ^ 0x80u));
             return v;
         };
-        bool ok2 = r.template tensor_f<F>(std::size_t(nrows) * L1, [rows, slot, pos, val, sc](std::size_t k, F v) {
+        return r.template tensor_f<F>(std::size_t(nrows) * L1, [rows, slot, pos, val, sc](std::size_t k, F v) {
             rows[slot(int(k / L1))][pos(k % L1)] = val(k % L1, sc(v));
         });
 #else
-        bool ok2 = r.template tensor_f<F>(std::size_t(nrows) * L1, [rows, slot, pos, sc](std::size_t k, F v) {
+        return r.template tensor_f<F>(std::size_t(nrows) * L1, [rows, slot, pos, sc](std::size_t k, F v) {
             rows[slot(int(k / L1))][pos(k % L1)] = sc(v);
         });
 #endif
-        return ok2 && r.template tensor_f<std::int32_t>(std::size_t(nrows) * NPSQT, [rows, slot, sc](std::size_t k, std::int32_t v) {
-            v = sc(v);
-            std::memcpy(reinterpret_cast<char*>(rows[slot(int(k / NPSQT))] + L1) + 4 * (k % NPSQT), &v, 4);
-        });
     };
     auto same = [](int row) { return row; };
-    using HkaFile = std::int8_t;   // Consilium Plebis: HalfKA exported in int8 (raw), like the threat rows
+    {
+    CN_LOADT(rows, "int8 rows");
     ok = ok && block(std::int8_t{}, net->wThr, ROWS_THR, [](int row) { return thr_slot(row); })
-            && block(HkaFile{}, net->wHka, ROWS_HKA, same)
+            && block(std::int8_t{}, net->wHka, ROWS_HKA, same)
             && block(std::int8_t{}, net->wPP, ROWS_PP, [](int row) { return int(g_ppStore[row]); })
             && block(std::int8_t{}, net->wPas, ROWS_PAS, same, g_passed_scale);
+    }
     if (!ok) return fail("feature transformer tensors");
+    // Section PST1: the piece-square table, [piece][square a1 = 0][bucket] in the file, [piece][engine square][bucket]
+    // here, with the zero rows of the absent pieces and squares.
+    if (r.u32() != 0x50535431u) return fail("piece-square section (PST1)");
+    if (r.u32() != 12u || r.u32() != std::uint32_t(NPSQT)) return fail("piece-square size");
+    std::memset(net->pst, 0, sizeof(net->pst));
+    ok = r.template tensor_f<std::int32_t>(std::size_t(12) * 64 * NPSQT, [net](std::size_t k, std::int32_t v) {
+        const int pc = int(k / (64 * NPSQT)), ts = int(k / NPSQT) % 64;
+        net->pst[pc][T(ts)][k % NPSQT] = v;   // T: trainer square <-> engine square (a xor, its own inverse)
+    });
+    if (!ok) return fail("piece-square tensor");
+    CN_LOADT(stacks, "PST..end");
     for (int b = 0; b < NBUCKETS; b++) {
         Stack& s = net->stack[b];
         if (r.u32() != ch) return fail("layer stack hash");
@@ -2099,6 +2289,13 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
           && r.tensor(&s.w2[0][0], std::size_t(L3) * 2 * L2) && r.tensor(&s.b3, 1)
           && r.tensor(s.w3, std::size_t(2 * L2 + 2 * L3));
         if (!ok) return fail("layer stack tensors");
+#ifdef CN_W1_CLIP
+        // TRANN5 lab (08/11/2026): the l1 weights cut to +-CN_W1_CLIP at load, as a trainer that quantizes them so
+        // would export them; other evaluations, so other trees (compare cycles per node only).
+        for (int o = 0; o < L2; o++)
+            for (int k = 0; k < L1; k++)
+                s.w1[o][k] = std::int8_t(std::clamp<int>(s.w1[o][k], -CN_W1_CLIP, CN_W1_CLIP));
+#endif
         for (int g = 0; g < L1 / 4; g++)
             for (int o = 0; o < L2; o++)
                 for (int k = 0; k < 4; k++) s.w1g[g][o][k] = s.w1[o][4 * l0_group(g) + k];
@@ -2106,21 +2303,54 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
             for (int o = 0; o < L3; o++)
                 for (int k = 0; k < 4; k++) s.w2g[g][o][k] = s.w2[o][4 * g + k];
     }
-    // Section RTB1: the routing table (cell -> expert). Section PKN1: the pawn-king subnetwork.
+    // CN_W1_PAIR: two groups of the sparse first layer summed in int16 before vpmaddwd, exact when |w1| <= 63 (see
+    // forward_simd). Checked here on the whole network, so a file with larger weights takes the usual path.
+    {
+        bool within = true;   // (not "small": a macro of the Windows headers)
+        for (int b = 0; b < NBUCKETS && within; b++)
+            for (int o = 0; o < L2 && within; o++)
+                for (int k = 0; k < L1; k++)
+                    if (net->stack[b].w1[o][k] > 63 || net->stack[b].w1[o][k] < -63) {
+                        within = false;
+                        break;
+                    }
+        net->w1Pair = within;
+#ifdef CN_W1_CLIP
+        std::fprintf(stderr, "cn: l1 weights cut to +-%d, all within +-63: %s\n", CN_W1_CLIP, within ? "yes" : "no");
+#endif
+    }
+    // Section RTB1: the routing table (cell -> expert). Section PKN2: the pawn-king subnetwork and its gate mean.
     if (r.u32() != 0x52544231u) return fail("router section (RTB1)");
     if (r.u32() != std::uint32_t(ROUTER_CELLS) || r.u32() != std::uint32_t(NEXPERTS)) return fail("router size");
     ok = r.tensor(net->router, ROUTER_CELLS);
     for (int c = 0; ok && c < ROUTER_CELLS; c++) ok = net->router[c] < NEXPERTS;
     if (!ok) return fail("router table");
-    if (r.u32() != 0x504B4E31u) return fail("pawn-king section (PKN1)");
+    CN_LOADT(pk, "router..end");
+    if (r.u32() != 0x504B4E32u) return fail("pawn-king section (PKN2)");
     if (r.u32() != std::uint32_t(PK_H) || r.u32() != std::uint32_t(L2)) return fail("pawn-king size");
     ok = r.tensor(net->pkB1, PK_H) && r.tensor(&net->pkW1[0][0], std::size_t(PK_INPUTS) * PK_H)
-      && r.tensor(net->pkB2, L2) && r.tensor(&net->pkW2[0][0], std::size_t(L2) * PK_H);
+      && r.tensor(net->pkB2, L2) && r.tensor(&net->pkW2[0][0], std::size_t(L2) * PK_H)
+      && r.tensor(net->pkGateMean, L2);
     if (!ok) return fail("pawn-king tensors");
     for (int g = 0; g < PK_H / 4; g++)
         for (int o = 0; o < L2; o++)
             for (int k = 0; k < 4; k++) net->pkW2g[g][o][k] = net->pkW2[o][4 * g + k];
     if (r.p != size) return fail("trailing bytes");
+#ifdef CN_LOADTIME
+    {   // Fingerprint of the stored int8 rows, to compare loaders byte for byte.
+        std::uint64_t fp = 1469598103934665603ULL;
+        auto fnv = [&fp](const void* p, std::size_t n) {
+            const unsigned char* c = static_cast<const unsigned char*>(p);
+            for (std::size_t i = 0; i < n; i++) fp = (fp ^ c[i]) * 1099511628211ULL;
+        };
+        fnv(net->wThr, sizeof(net->wThr));
+        fnv(net->wHka, sizeof(net->wHka));
+        fnv(net->wPP, sizeof(net->wPP));
+        fnv(net->wPas, sizeof(net->wPas));
+        std::fprintf(stderr, "cn load rows fingerprint %016llx\n", (unsigned long long)fp);
+    }
+#endif
+    CN_LOADT(tail, "adopt + hash");
     adopt(*net);
     // Name of the shared-memory copy: FNV-1a over 8-byte words (it only has to tell networks apart), plus the tail.
     std::uint64_t h = 1469598103934665603ULL ^ std::uint64_t(size);
@@ -2147,6 +2377,9 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 #ifdef CN_PPORDER_TABLE
     h ^= PP_ORDER_ID;   // and the order of the pawn-pair rows
 #endif
+#ifdef CN_W1_CLIP
+    h ^= 0x4331'0000'0000'0000ULL ^ (std::uint64_t(CN_W1_CLIP) << 32);   // cut l1 weights: another network
+#endif
     if (g_passed_scale != 100)   // other weights from the same file: the caches of the handles must not match
         h ^= 0x5053'0000'0000'0000ULL ^ (std::uint64_t(g_passed_scale) << 32);
     net->contentHash = h | 1;   // never 0: 0 marks an empty cache in the handle
@@ -2157,7 +2390,6 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
 void adopt(const Net& net) {
     std::memcpy(g_router, net.router, sizeof(g_router));   // the make and Persp read this copy
     pk_measure(net);                                        // C2 signals (agent B): ranks and medians of pk outputs
-    pk_gate_adopt(net);                                     // PkGate: on only for the network its mean belongs to
 }
 
 bool load_file(const char* path, Net* net, std::string* err) {
@@ -2210,26 +2442,132 @@ void prefetch_move(const Net& net, const std::uint64_t* bb, int phase, int pc, i
         const Row* r1 = net.wHka[base + hk[toPc][to]];
         const Row* r2 = net.wHka[base + hk[capPc][capSq]];
         CN_PREFETCH(r0);
-        CN_PREFETCH(r0 + L1);
         CN_PREFETCH(r1);
-        CN_PREFETCH(r1 + L1);
         CN_PREFETCH(r2);
-        CN_PREFETCH(r2 + L1);
+#ifdef CN_MAKE_PREFETCH_MID
+        // (TRANN5 lab, 07/11/2026, -DCN_MAKE_PREFETCH_MID) also the line where the second half of each row starts: the
+        // second tile of the update reads it after every row's first half. Only where the make calls this function
+        // (NN_MAKE_PREFETCH, consilium_bridge.h: AVX2 builds without AVX-512): in the AVX-512 builds it changes no
+        // code that runs (the lab's mkmid and nomk measurements there were layout and run noise).
+        CN_PREFETCH(r0 + L1 / 2);
+        CN_PREFETCH(r1 + L1 / 2);
+        CN_PREFETCH(r2 + L1 / 2);
+#endif
     }
 #else
     (void)net, (void)bb, (void)phase, (void)pc, (void)from, (void)toPc, (void)to, (void)capPc, (void)capSq;
 #endif
 }
 
+namespace {
+// ================================================================ PSQT (TRANN5: the piece-square table)
+// From scratch: the table rows of every piece of the board (White's view, 8 buckets).
+void psq_scan(const Net& net, const Board& b, std::int32_t* out) {
+#if defined(USE_AVX2) || defined(USE_AVX512)
+    __m256i v = _mm256_setzero_si256();
+    for (int pc = 0; pc < 12; pc++)
+        for (u64 x = b.bb[pc]; x; x &= x - 1)
+            v = _mm256_add_epi32(v, _mm256_load_si256(reinterpret_cast<const __m256i*>(net.pst[pc][CN_LSB(x)])));
+    _mm256_store_si256(reinterpret_cast<__m256i*>(out), v);
+#else
+    for (int k = 0; k < NPSQT; k++) out[k] = 0;
+    for (int pc = 0; pc < 12; pc++)
+        for (u64 x = b.bb[pc]; x; x &= x - 1) {
+            const std::int32_t* w = net.pst[pc][CN_LSB(x)];
+            for (int k = 0; k < NPSQT; k++) out[k] += w[k];
+        }
+#endif
+}
+// -DCN_PSQSTATS (diagnostic): calls, moves walked forward, scans from the board and states filled backwards, at exit.
+#ifdef CN_PSQSTATS
+struct PsqStats {
+    unsigned long long calls = 0, steps = 0, scans = 0, back = 0, hist[9] = {};
+    ~PsqStats() {
+        if (!calls) return;
+        std::fprintf(stderr, "cn psq: %llu calls, %.3f moves walked per call, %.5f scans per call, %.3f back per call\n",
+                     calls, double(steps) / calls, double(scans) / calls, double(back) / calls);
+        std::fprintf(stderr, "cn psq: moves walked per call 0..7, 8+:");
+        for (int i = 0; i < 9; i++) std::fprintf(stderr, " %.4f", double(hist[i]) / calls);
+        std::fprintf(stderr, "\n");
+    }
+};
+PsqStats g_psqStats;
+    #define CN_PSQ_STAT(x) (x)
+#else
+    #define CN_PSQ_STAT(x) ((void)0)
+#endif
+// Incremental: from the nearest stack state that has it (bit 2 of computed[0], cleared by the make), each later state
+// adds the rows of the pieces its move put down and subtracts those it took away, four rows per move without a branch
+// (absent squares and pieces read the zero rows). With no such state down to the root, from the board.
+const std::int32_t* psq_top(const Net& net, Handle& h, const Board& b) {
+    NnStack&  S   = h.stack;
+    const int top = S.size - 1;
+    int       c   = top;
+    while (c > 0 && !(S.st[c].computed[0] & 4)) c--;
+    CN_PSQ_STAT((g_psqStats.calls++, g_psqStats.steps += top - c, g_psqStats.hist[top - c < 8 ? top - c : 8]++));
+    if (!(S.st[c].computed[0] & 4)) {
+        CN_PSQ_STAT((g_psqStats.scans++, g_psqStats.back += top));
+        // No state has it down to the root: from the board, then back down the chain to the root, each move taken back
+        // (second version, 07/11/2026; the first one marked only the top, so its siblings scanned the board again).
+        psq_scan(net, b, h.psq[top]);
+        S.st[top].computed[0] |= 4;
+        for (int i = top; i > 0; i--) {
+            const NnDirtyPiece& dp = S.st[i].dp;
+            const std::int32_t* a  = net.pst[dp.pc & 15][dp.from];
+            const std::int32_t* t  = net.pst[dp.pc & 15][dp.to];
+            const std::int32_t* rm = net.pst[dp.remove_pc & 15][dp.remove_sq];
+            const std::int32_t* ad = net.pst[dp.add_pc & 15][dp.add_sq];
+            for (int k = 0; k < NPSQT; k++) h.psq[i - 1][k] = h.psq[i][k] + a[k] - t[k] + rm[k] - ad[k];
+            S.st[i - 1].computed[0] |= 4;
+        }
+        return h.psq[top];
+    }
+#if defined(USE_AVX2) || defined(USE_AVX512)
+    // (07/11/2026, second version) The eight buckets of a state are one 256-bit register: per move four row loads and
+    // four adds, the value kept in the register along the chain. The first version, plain loops over k, cost about 190
+    // instructions per node on the Xeon (xperf, r1k: +3.4% instructions against the base).
+    __m256i v = _mm256_load_si256(reinterpret_cast<const __m256i*>(h.psq[c]));
+    for (int i = c + 1; i <= top; i++) {
+        const NnDirtyPiece& dp = S.st[i].dp;
+        auto row = [&net](int pc, int sq) { return _mm256_load_si256(reinterpret_cast<const __m256i*>(net.pst[pc & 15][sq])); };
+        v = _mm256_add_epi32(_mm256_sub_epi32(v, row(dp.pc, dp.from)), row(dp.pc, dp.to));
+        v = _mm256_add_epi32(_mm256_sub_epi32(v, row(dp.remove_pc, dp.remove_sq)), row(dp.add_pc, dp.add_sq));
+        _mm256_store_si256(reinterpret_cast<__m256i*>(h.psq[i]), v);
+        S.st[i].computed[0] |= 4;
+    }
+#else
+    for (int i = c + 1; i <= top; i++) {
+        const NnDirtyPiece& dp = S.st[i].dp;
+        const std::int32_t* a  = net.pst[dp.pc & 15][dp.from];
+        const std::int32_t* t  = net.pst[dp.pc & 15][dp.to];
+        const std::int32_t* rm = net.pst[dp.remove_pc & 15][dp.remove_sq];
+        const std::int32_t* ad = net.pst[dp.add_pc & 15][dp.add_sq];
+        for (int k = 0; k < NPSQT; k++) h.psq[i][k] = h.psq[i - 1][k] - a[k] + t[k] - rm[k] + ad[k];
+        S.st[i].computed[0] |= 4;
+    }
+#endif
+    return h.psq[top];
+}
+// The PSQT output of the side to move: the old (us - them) / 32 is the White-view sum with the mover's sign.
+inline int psq_out(const std::int32_t* q, const Board& b) {
+    const int v = q[psqt_bucket_of(b)];
+    return (b.stm ? -v : v) / 32;
+}
+}  // namespace
+
 Out evaluate_refresh(const Net& net, const Board& b, Acc acc[2]) {
     refresh_one(net, b, 0, acc[0]);
     refresh_one(net, b, 1, acc[1]);
     alignas(64) std::int32_t pk[L2];
     if (pk_gate_skip(b))
-        std::memcpy(pk, PK_GATE_MEAN, sizeof(pk));   // PkGate: the value the incremental path takes (nnueverify)
+        std::memcpy(pk, net.pkGateMean, sizeof(pk));   // PkGate: the value the incremental path takes (nnueverify)
     else
         pawn_king_compute(net, b, pk);
-    return CN_FORWARD(net, acc[b.stm], acc[b.stm ^ 1], bucket_of(b) CN_PK_ARG(pk));
+    Out o = CN_FORWARD(net, acc[b.stm], acc[b.stm ^ 1], bucket_of(b) CN_PK_ARG(pk));
+    alignas(64) std::int32_t q[NPSQT];
+    psq_scan(net, b, q);
+    o.psqt = psq_out(q, b);
+    return o;
 }
 
 namespace {
@@ -2240,47 +2578,28 @@ inline bool barrier(const NnDirtyPiece& dp, int p) { return dp.pc == KING + 6 * 
 
 // A refresh in one pass: the cache entry brought to the board (the HalfKA rows that differ, LH, written back to the
 // entry), then the threat, pawn-pair and passed-pawn rows of the board (LO, all int8 and added) on top of it into the
-// accumulator. As in apply, the first tile also sums the PSQT values of the rows.
+// accumulator.
 #if defined(USE_AVX512)
-inline __m256i psqt_of(const void* row, std::size_t bytes) {
-    return _mm256_load_si256(reinterpret_cast<const __m256i*>(static_cast<const char*>(row) + bytes));
-}
-
 // pv (the pawn cache, 02/11/2026): the pawn vector of the board added with the board's rows; null when LO holds the
 // pawn rows itself.
-template <bool WithPsqt>
 inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 16, W = 32;
     __m512i       r[R];
-    __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)entry.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm512_loadu_si512(entry.v + t + k * W);
-    for (int i = 0; i < LH.n16a; i++) {
-        for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(LH.a16[i] + t + k * W));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, psqt_of(LH.a16[i], 2 * L1));
-    }
-    for (int i = 0; i < LH.n16s; i++) {
-        for (int k = 0; k < R; k++) r[k] = _mm512_sub_epi16(r[k], _mm512_load_si512(LH.s16[i] + t + k * W));
-        if (WithPsqt) ps = _mm256_sub_epi32(ps, psqt_of(LH.s16[i], 2 * L1));
-    }
-    // Consilium Plebis: the HalfKA rows are int8 (in the 8-bit lists of LH).
     if (LH.n8a + LH.n8s > 0) {
-        rows8_512<R, WithPsqt>(LH, r, ps, t);
+        rows8_512<R>(LH, r, t);
         for (int k = 0; k < R; k++) _mm512_storeu_si512(entry.v + t + k * W, r[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
     }
-    rows8_512<R, WithPsqt>(LO, r, ps, t);   // added rows only (the board's): the removed list is empty
-    if (pv) {
+    rows8_512<R>(LO, r, t);   // added rows only (the board's): the removed list is empty
+    if (pv)
         for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(pv->v + t + k * W));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)pv->psqt));
-    }
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
 void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     CN_TIME(1);
-    refresh_tile<true>(LH, LO, entry, dst, 0, pv);
-    refresh_tile<false>(LH, LO, entry, dst, L1 / 2, pv);
+    refresh_tile(LH, LO, entry, dst, 0, pv);
+    refresh_tile(LH, LO, entry, dst, L1 / 2, pv);
 }
 #define CN_PAWN_CACHE 1
 #elif defined(USE_AVX2) && defined(CN_AVX2_FUSED)
@@ -2289,42 +2608,32 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
 // operations in the same order per value, so the same accumulators. Pawn cache (pv) in both AVX2 forms since
 // 03/11/2026 (Houze Guo). xperf of 03/11/2026 against the two passes: +1.7% cycles on Skylake-SP, +2.2% on Zen 4,
 // mixed on Raptor Lake-U, -0.75% on Raptor Cove (A Tin Man's run): it stays a choice per CPU, off by default.
-template <bool WithPsqt>
 inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
-    __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)entry.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(entry.v + t + k * W));
     if (LH.n8a + LH.n8s > 0) {
-        rows16_256<R, WithPsqt>(LH, r, ps, t);
-        rows8_256<R, WithPsqt>(LH, r, ps, t);
+        rows8_256<R>(LH, r, t);
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(entry.v + t + k * W), r[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)entry.psqt, ps);
     }
-    rows8_256<R, WithPsqt>(LO, r, ps, t);   // added int8 rows only (the board's)
-    if (pv) {
+    rows8_256<R>(LO, r, t);   // added int8 rows only (the board's)
+    if (pv)
         for (int k = 0; k < R; k++) r[k] = _mm256_add_epi16(r[k], _mm256_load_si256((const __m256i*)(pv->v + t + k * W)));
-        if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_load_si256((const __m256i*)pv->psqt));
-    }
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
 void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     CN_TIME(1);
     constexpr int TILE = 8 * 16;
-    refresh_tile<true>(LH, LO, entry, dst, 0, pv);
-    for (int t = TILE; t < L1; t += TILE) refresh_tile<false>(LH, LO, entry, dst, t, pv);
+    for (int t = 0; t < L1; t += TILE) refresh_tile(LH, LO, entry, dst, t, pv);
 }
 #define CN_PAWN_CACHE 1
 #else
 void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, const Acc* pv = nullptr) {
     if (LH.n8a + LH.n8s > 0) apply(LH, entry, entry);
     apply(LO, entry, dst);
-    if (pv) {
-        for (int j = 0; j < L1; j++) dst.v[j] += pv->v[j];
-        for (int b = 0; b < NBUCKETS; b++) dst.psqt[b] += pv->psqt[b];
-    }
+    if (pv)
+        for (int j = 0; j < L1; j++) dst.v[j] = std::int16_t(std::uint16_t(dst.v[j]) + std::uint16_t(pv->v[j]));
 }
 #define CN_PAWN_CACHE 1
 #endif
@@ -2332,114 +2641,70 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
 
 // One pass of a king step: S(parent) - entry of the parent's king square (brought to the parent board, LP) + entry of
 // the child's king square (brought to the board, LN) + the O rows of the move (LO, int8). Both entries are written
-// back. Four tiles of 8 registers (two accumulators live at once); the first one also carries the PSQT values.
+// back. Four tiles of 8 registers (two accumulators live at once).
 #if defined(USE_AVX512)
-template <bool WithPsqt>
 inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
                           Acc& eNew, Acc& dst, int t) {
     constexpr int R = 8, W = 32;
     __m512i       sv[R], ev[R];
-    __m256i       sp = _mm256_setzero_si256(), ep = _mm256_setzero_si256();
-    if (WithPsqt) {
-        sp = _mm256_loadu_si256((const __m256i*)sPar.psqt);
-        ep = _mm256_loadu_si256((const __m256i*)ePar.psqt);
-    }
     for (int k = 0; k < R; k++) {
         sv[k] = _mm512_loadu_si512(sPar.v + t + k * W);
         ev[k] = _mm512_loadu_si512(ePar.v + t + k * W);
     }
-    for (int i = 0; i < LP.n16a; i++) {
-        for (int k = 0; k < R; k++) ev[k] = _mm512_add_epi16(ev[k], _mm512_load_si512(LP.a16[i] + t + k * W));
-        if (WithPsqt) ep = _mm256_add_epi32(ep, psqt_of(LP.a16[i], 2 * L1));
-    }
-    for (int i = 0; i < LP.n16s; i++) {
-        for (int k = 0; k < R; k++) ev[k] = _mm512_sub_epi16(ev[k], _mm512_load_si512(LP.s16[i] + t + k * W));
-        if (WithPsqt) ep = _mm256_sub_epi32(ep, psqt_of(LP.s16[i], 2 * L1));
-    }
     if (LP.n8a + LP.n8s > 0) {
-        rows8_512<R, WithPsqt>(LP, ev, ep, t);
+        rows8_512<R>(LP, ev, t);
         for (int k = 0; k < R; k++) _mm512_storeu_si512(ePar.v + t + k * W, ev[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)ePar.psqt, ep);
     }
     for (int k = 0; k < R; k++) {
         sv[k] = _mm512_sub_epi16(sv[k], ev[k]);
         ev[k] = _mm512_loadu_si512(eNew.v + t + k * W);
     }
-    if (WithPsqt) {
-        sp = _mm256_sub_epi32(sp, ep);
-        ep = _mm256_loadu_si256((const __m256i*)eNew.psqt);
-    }
-    for (int i = 0; i < LN.n16a; i++) {
-        for (int k = 0; k < R; k++) ev[k] = _mm512_add_epi16(ev[k], _mm512_load_si512(LN.a16[i] + t + k * W));
-        if (WithPsqt) ep = _mm256_add_epi32(ep, psqt_of(LN.a16[i], 2 * L1));
-    }
-    for (int i = 0; i < LN.n16s; i++) {
-        for (int k = 0; k < R; k++) ev[k] = _mm512_sub_epi16(ev[k], _mm512_load_si512(LN.s16[i] + t + k * W));
-        if (WithPsqt) ep = _mm256_sub_epi32(ep, psqt_of(LN.s16[i], 2 * L1));
-    }
     if (LN.n8a + LN.n8s > 0) {
-        rows8_512<R, WithPsqt>(LN, ev, ep, t);
+        rows8_512<R>(LN, ev, t);
         for (int k = 0; k < R; k++) _mm512_storeu_si512(eNew.v + t + k * W, ev[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)eNew.psqt, ep);
     }
     for (int k = 0; k < R; k++) sv[k] = _mm512_add_epi16(sv[k], ev[k]);
-    if (WithPsqt) sp = _mm256_add_epi32(sp, ep);
-    rows8_512<R, WithPsqt>(LO, sv, sp, t);
+    rows8_512<R>(LO, sv, t);
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, sv[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, sp);
 }
 
 void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar, Acc& eNew,
                     Acc& dst) {
     CN_TIME(1);
-    kingstep_tile<true>(LP, LN, LO, sPar, ePar, eNew, dst, 0);
-    for (int t = 8 * 32; t < L1; t += 8 * 32) kingstep_tile<false>(LP, LN, LO, sPar, ePar, eNew, dst, t);
+    for (int t = 0; t < L1; t += 8 * 32) kingstep_tile(LP, LN, LO, sPar, ePar, eNew, dst, t);
 }
 #elif defined(USE_AVX2) && defined(CN_AVX2_FUSED)
 // CN_AVX2_FUSED (see apply_refresh): with 16 registers only one accumulator tile is live, so S(parent) - parent entry
 // waits in dst (stored, then read back from L1) while the child's entry is brought to the board. The order of the
 // steps is the AVX-512 one: the child's entry is read after the parent's was written.
-template <bool WithPsqt>
 inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
                           Acc& eNew, Acc& dst, int t) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
-    __m256i       ps = WithPsqt ? _mm256_loadu_si256((const __m256i*)ePar.psqt) : _mm256_setzero_si256();
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(ePar.v + t + k * W));
     if (LP.n8a + LP.n8s > 0) {
-        rows16_256<R, WithPsqt>(LP, r, ps, t);
-        rows8_256<R, WithPsqt>(LP, r, ps, t);
+        rows8_256<R>(LP, r, t);
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(ePar.v + t + k * W), r[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)ePar.psqt, ps);
     }
     for (int k = 0; k < R; k++)
         _mm256_storeu_si256((__m256i*)(dst.v + t + k * W),
                             _mm256_sub_epi16(_mm256_loadu_si256((const __m256i*)(sPar.v + t + k * W)), r[k]));
-    if (WithPsqt) {
-        _mm256_storeu_si256((__m256i*)dst.psqt, _mm256_sub_epi32(_mm256_loadu_si256((const __m256i*)sPar.psqt), ps));
-        ps = _mm256_loadu_si256((const __m256i*)eNew.psqt);
-    }
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(eNew.v + t + k * W));
     if (LN.n8a + LN.n8s > 0) {
-        rows16_256<R, WithPsqt>(LN, r, ps, t);
-        rows8_256<R, WithPsqt>(LN, r, ps, t);
+        rows8_256<R>(LN, r, t);
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(eNew.v + t + k * W), r[k]);
-        if (WithPsqt) _mm256_storeu_si256((__m256i*)eNew.psqt, ps);
     }
     for (int k = 0; k < R; k++)
         r[k] = _mm256_add_epi16(r[k], _mm256_loadu_si256((const __m256i*)(dst.v + t + k * W)));
-    if (WithPsqt) ps = _mm256_add_epi32(ps, _mm256_loadu_si256((const __m256i*)dst.psqt));
-    rows8_256<R, WithPsqt>(LO, r, ps, t);   // the O rows of the move (int8)
+    rows8_256<R>(LO, r, t);   // the O rows of the move (int8)
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
-    if (WithPsqt) _mm256_storeu_si256((__m256i*)dst.psqt, ps);
 }
 
 void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar, Acc& eNew,
                     Acc& dst) {
     CN_TIME(1);
     constexpr int TILE = 8 * 16;
-    kingstep_tile<true>(LP, LN, LO, sPar, ePar, eNew, dst, 0);
-    for (int t = TILE; t < L1; t += TILE) kingstep_tile<false>(LP, LN, LO, sPar, ePar, eNew, dst, t);
+    for (int t = 0; t < L1; t += TILE) kingstep_tile(LP, LN, LO, sPar, ePar, eNew, dst, t);
 }
 #else
 void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar, Acc& eNew,
@@ -2449,7 +2714,6 @@ void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, con
     alignas(64) Acc t;
     for (int j = 0; j < L1; j++)
         t.v[j] = std::int16_t(std::uint16_t(sPar.v[j]) - std::uint16_t(ePar.v[j]) + std::uint16_t(eNew.v[j]));
-    for (int k = 0; k < NPSQT; k++) t.psqt[k] = sPar.psqt[k] - ePar.psqt[k] + eNew.psqt[k];
     apply(LO, t, dst);
 }
 #endif
@@ -2459,10 +2723,28 @@ void move_rows_all(const NnStack& S, int i, const Persp& P, RowList& L, int dir)
     move_rows_o(S, i, P, L, dir);
 }
 
+#ifdef CN_CHAIN_FUSE
+// -DCN_CHAIN_FUSE (TRANN5 lab, 07/11/2026): the moves of a forward chain gathered into one list, a row added by one
+// move and removed by a later one (a piece that moves twice, a threat that comes and goes) dropped from both lists,
+// then one pass over the accumulator. =1: the whole chain, the intermediate states left uncomputed; =2: all but the
+// last move, so the parent of the evaluated state stays computed for its other children. Integer sums modulo 2^16:
+// the same accumulator as one move at a time.
+inline void cancel_pairs(RowList& L) {
+    for (int i = 0; i < L.n8a; i++)
+        for (int j = 0; j < L.n8s; j++)
+            if (L.a8[i] == L.s8[j]) {
+                L.a8[i--] = L.a8[--L.n8a];
+                L.s8[j]   = L.s8[--L.n8s];
+                break;
+            }
+}
+#endif
+
 }  // namespace
 
 Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
     CN_TIME(0);
+    CN_AST(g_applyStats.evals++);
     {   // The pawn-king entry is read at the end: asked for now, so it arrives under the accumulator work (21/10/2026).
         const char* e = reinterpret_cast<const char*>(&h.pkc[pk_index(b)]);
         CN_PREFETCH(e);
@@ -2490,6 +2772,19 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
         if (!rb && !(S.st[c].computed[p] & 1)) rb = true;   // the root, never computed
         from[p]    = c;
         refresh[p] = rb;
+#ifdef CN_APPLYSTATS
+        // Bit 0x40: an intermediate state of a forward chain not yet read (diagnostic only).
+        const int start = !rb ? c : (c == top && top > 0 ? top - 1 : -1);
+        if (start >= 0 && (S.st[start].computed[p] & 0x60)) {
+            g_applyStats.interUsed++;
+            g_applyStats.interPUsed += (S.st[start].computed[p] & 0x20) != 0;
+            S.st[start].computed[p] &= ~0x60;
+        }
+        if (start >= 0 && (S.st[start].computed[p] & 0x10)) {
+            g_applyStats.backUsed++;
+            S.st[start].computed[p] &= ~0x10;
+        }
+#endif
     }
 #if defined(USE_AVX512) && !defined(USE_AVX512ICL)
     // King-cache entries of the refreshes ahead (R26, 06/11/2026, same values): kcache_rows first reads the entry's
@@ -2499,8 +2794,12 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
     for (int p = 0; p < 2; p++)
         if (refresh[p]) {
             const KingCacheEntry& e = h.kcache[p][CN_LSB(b.bb[KING + 6 * p])][state_phase(S, top, b, p)];
+#ifdef CN_KC_BB
             CN_PREFETCH(e.bb);
             CN_PREFETCH(e.bb + 8);
+#else
+            CN_PREFETCH(e.mb);   // the mailbox: one line
+#endif
         }
 #endif
 
@@ -2517,6 +2816,7 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
         move_threats(S, top, PP, LL, 1);
         move_pawns(S, top, P0, *L0, 1);
         move_pawns(S, top, P1, *L1, 1);
+        CN_AST((g_applyStats.path[0]++, g_applyStats.add(0, *L0), g_applyStats.add(0, *L1)));
         apply(*L0, h.acc[top - 1][0], h.acc[top][0]);
         apply(*L1, h.acc[top - 1][1], h.acc[top][1]);
 #else
@@ -2534,8 +2834,23 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
         S.st[top].computed[1] |= 1;
     } else {
         SliderAtt sa;   // the slider attacks of `b`, shared by the refreshes of the two perspectives
+#ifndef CN_KC_BB
+        // The board's mailbox in bytes for kcache_rows, made at the first refresh or king step and shared by both.
+        alignas(64) std::uint8_t mbb[64];
+        bool                     mbbReady = false;
+        auto                     mbox     = [&]() -> const std::uint8_t* {
+            if (!mbbReady) mailbox_bytes(b, mbb), mbbReady = true;
+            return mbb;
+        };
+    #define CN_KC_BOARD(bd, mbx) (mbx)
+#else
+    #define CN_KC_BOARD(bd, mbx) (bd)
+#endif
         for (int p = 0; p < 2; p++) {
-            if (S.st[top].computed[p] & 1) continue;
+            if (S.st[top].computed[p] & 1) {
+                CN_AST(g_applyStats.path[4]++);
+                continue;
+            }
             const Persp P(p, b, state_phase(S, top, b, p));
             const NnDirtyPiece& dpt = S.st[top].dp;
 #ifndef CN_NO_KINGSTEP
@@ -2543,7 +2858,11 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
             // pieces the refresh adds few threat rows, while the step reads three accumulators and writes three. xperf on
             // the Xeon (deterministic PGO, avx512, 3 rounds): -0.34% cycles per node in the middlegame, -1.0% in
             // endgames. 81% of the endgame king steps had fewer than 15 pieces.
-            constexpr int KINGSTEP_MIN_PIECES = 15;
+            // TRANN5 lab (07/11/2026): -DCN_KINGSTEP_MIN=N to measure other thresholds with six experts and 1 KB rows.
+#ifndef CN_KINGSTEP_MIN
+    #define CN_KINGSTEP_MIN 15
+#endif
+            constexpr int KINGSTEP_MIN_PIECES = CN_KINGSTEP_MIN;
             if (refresh[p] && from[p] == top && top > 0 && (S.st[top - 1].computed[p] & 1)
                 && !(dpt.pc == KING + 6 * p && mirror_oth(dpt.from) != mirror_oth(dpt.to))
                 && CN_POPCNT(b.occ[2]) >= KINGSTEP_MIN_PIECES) {
@@ -2562,9 +2881,15 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
                 RowList*     LP   = new (&lists[0]) RowList(&net);
                 RowList*     LN   = new (&lists[1]) RowList(&net);
                 RowList*     LO   = new (&lists[2]) RowList(&net);
-                KingCacheEntry&  ePar = kcache_rows(net, h, bpar, Ppar, *LP);
-                KingCacheEntry&  eNew = kcache_rows(net, h, b, P, *LN);
+#ifndef CN_KC_BB
+                alignas(64) std::uint8_t mbp[64];   // the parent's mailbox (bpar.mb is the child's)
+                mailbox_parent(dpt, mbox(), mbp);
+#endif
+                KingCacheEntry&  ePar = kcache_rows(net, h, CN_KC_BOARD(bpar, mbp), Ppar, *LP);
+                KingCacheEntry&  eNew = kcache_rows(net, h, CN_KC_BOARD(b, mbox()), P, *LN);
                 move_rows_o(S, top, P, *LO, 1);
+                CN_AST((g_applyStats.path[3]++, g_applyStats.add(3, *LP), g_applyStats.add(3, *LN),
+                        g_applyStats.add(5, *LO)));
                 apply_kingstep(*LP, *LN, *LO, h.acc[top - 1][p], ePar.acc, eNew.acc, h.acc[top][p]);
                 S.st[top].computed[p] |= 1;
                 continue;
@@ -2573,7 +2898,7 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
             if (refresh[p]) {
                 RowList*    LH = new (&lists[0]) RowList(&net);
                 RowList*    LO = new (&lists[1]) RowList(&net);
-                KingCacheEntry& e  = kcache_rows(net, h, b, P, *LH);
+                KingCacheEntry& e  = kcache_rows(net, h, CN_KC_BOARD(b, mbox()), P, *LH);
 #if defined(CN_PAWN_CACHE) && !defined(CN_NO_PAWN_CACHE)
                 // Pawn cache (02/11/2026): the pawn-pair and passed-pawn rows of the board as one stored vector
                 // (lists[2] is free until the chain below).
@@ -2584,23 +2909,91 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
                 active_other(b, P, *LO, sa);
                 apply_refresh(*LH, *LO, e.acc, h.acc[top][p]);
 #endif
+                CN_AST((g_applyStats.path[2]++, g_applyStats.add(3, *LH), g_applyStats.add(4, *LO)));
+#ifdef CN_APPLYSTATS
+                static RowList fusedB(&net);
+                fusedB.n8a = fusedB.n8s = 0;
+                int rowsB = 0;
+#endif
                 // Back down the chain to the state of the refresh (after the king move or phase change, or the
                 // root), taking each move back: the nearby branches then start from a computed state.
-                for (int i = top; i > from[p]; i--) {
+                // -DCN_BACKFILL_MAX=N (TRANN5 lab, 08/11/2026): at most N states back (0: none).
+#ifndef CN_BACKFILL_MAX
+    #define CN_BACKFILL_MAX 1000
+#endif
+                for (int i = top; i > from[p] && i > top - CN_BACKFILL_MAX; i--) {
                     RowList* L = new (&lists[2]) RowList(&net);
                     move_rows_all(S, i, P, *L, -1);
+#ifdef CN_APPLYSTATS
+                    g_applyStats.add(2, *L);
+                    rowsB += L->n8a + L->n8s;
+                    g_applyStats.back++;
+                    S.st[i - 1].computed[p] |= 0x10;
+                    for (int j = 0; j < L->n8a && fusedB.n8a < RowList::CAP8; j++) fusedB.a8[fusedB.n8a++] = L->a8[j];
+                    for (int j = 0; j < L->n8s && fusedB.n8s < RowList::CAP8; j++) fusedB.s8[fusedB.n8s++] = L->s8[j];
+#endif
                     apply(*L, h.acc[i][p], h.acc[i - 1][p]);
                     S.st[i - 1].computed[p] |= 1;
                 }
+#ifdef CN_APPLYSTATS
+                if (top - from[p] >= 2) {
+                    g_applyStats.chains++;
+                    g_applyStats.chainMoves += top - from[p];
+                    g_applyStats.chainRows += rowsB;
+                    g_applyStats.chainRowsFused += fusedB.n8a + fusedB.n8s - 2 * ApplyStats::cancels(fusedB);
+                }
+#endif
             } else {
                 // Every state of the chain, one move at a time.
                 CN_COUNT(7, top - from[p]);
-                for (int i = from[p] + 1; i <= top; i++) {
+                CN_AST(g_applyStats.path[1]++);
+#ifdef CN_APPLYSTATS
+                static RowList fusedF(&net);
+                fusedF.n8a = fusedF.n8s = 0;
+                int rowsF = 0;
+#endif
+                int i0 = from[p] + 1;
+#ifdef CN_CHAIN_FUSE
+                {
+                    // At most 12 moves in one list: 12 moves of the most rows a move can change stay under CAP8.
+                    constexpr int keep = CN_CHAIN_FUSE == 2 ? 1 : 0;
+                    const int     end  = top - keep;
+                    if (end - from[p] >= 2 && end - from[p] <= 12) {
+                        RowList* L = new (&lists[2]) RowList(&net);
+                        for (int i = i0; i <= end; i++) move_rows_all(S, i, P, *L, 1);
+                        cancel_pairs(*L);
+                        CN_AST(g_applyStats.add(1, *L));
+                        apply(*L, h.acc[from[p]][p], h.acc[end][p]);
+                        S.st[end].computed[p] |= 1;
+                        i0 = end + 1;
+                    }
+                }
+#endif
+                for (int i = i0; i <= top; i++) {
                     RowList* L = new (&lists[2]) RowList(&net);
                     move_rows_all(S, i, P, *L, 1);
+#ifdef CN_APPLYSTATS
+                    g_applyStats.add(1, *L);
+                    rowsF += L->n8a + L->n8s;
+                    if (i < top) {
+                        g_applyStats.inter++;
+                        g_applyStats.interP += i == top - 1;
+                        S.st[i].computed[p] |= i == top - 1 ? 0x20 : 0x40;
+                    }
+                    for (int j = 0; j < L->n8a && fusedF.n8a < RowList::CAP8; j++) fusedF.a8[fusedF.n8a++] = L->a8[j];
+                    for (int j = 0; j < L->n8s && fusedF.n8s < RowList::CAP8; j++) fusedF.s8[fusedF.n8s++] = L->s8[j];
+#endif
                     apply(*L, h.acc[i - 1][p], h.acc[i][p]);
                     S.st[i].computed[p] |= 1;
                 }
+#ifdef CN_APPLYSTATS
+                if (top - from[p] >= 2) {
+                    g_applyStats.chains++;
+                    g_applyStats.chainMoves += top - from[p];
+                    g_applyStats.chainRows += rowsF;
+                    g_applyStats.chainRowsFused += fusedF.n8a + fusedF.n8s - 2 * ApplyStats::cancels(fusedF);
+                }
+#endif
             }
             S.st[top].computed[p] |= 1;
         }
@@ -2610,10 +3003,12 @@ Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
     // them (pk_effect); the AVX-512 path keeps writing them (no gain measured there).
 #if defined(USE_AVX512)
     (void)want_x1;
-    return CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, h.x1);   // x1 kept: pk_effect
+    Out o = CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, h.x1);   // x1 kept: pk_effect
 #else
-    return CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, want_x1 ? h.x1 : nullptr);
+    Out o = CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, want_x1 ? h.x1 : nullptr);
 #endif
+    o.psqt = psq_out(psq_top(net, h, b), b);   // the PSQT from the table, per stack state
+    return o;
 }
 
 // --- C2 signals (agent B) ---
@@ -2740,9 +3135,7 @@ int expert_of_board(const Board& b, int p) { return expert_of(b, p); }
 bool same_accumulators(const Handle& h, const Acc acc[2]) {
     const int top = h.stack.size - 1;
     for (int p = 0; p < 2; p++)
-        if (std::memcmp(h.acc[top][p].v, acc[p].v, sizeof(acc[p].v))
-            || std::memcmp(h.acc[top][p].psqt, acc[p].psqt, sizeof(acc[p].psqt)))
-            return false;
+        if (std::memcmp(h.acc[top][p].v, acc[p].v, sizeof(acc[p].v))) return false;
     return true;
 }
 

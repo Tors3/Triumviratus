@@ -4,7 +4,7 @@
 #include "../resource.h"
 #include "triumv_version.h"
 IDI_MAIN_ICON ICON "../logo.ico"
-NNUE_DEFAULT RCDATA "../nn-consilium.nnue"
+NNUE_DEFAULT RCDATA "../nn-lex-hortensia.nnue"
 
 1 VERSIONINFO
 FILEVERSION TRIUMV_VER_NUM
