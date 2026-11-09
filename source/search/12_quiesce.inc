@@ -601,7 +601,9 @@ static int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
     if (C2PkStale)   // quiescence: a pawn-king miss reuses the last outputs (01_params.inc)
       nn_set_pk_stale(td.nnpos, 1);
     const int plain = node_eval(td, h, eval_raw);
-    f->static_eval = best = corrected_eval(plain, signal + corr_signal_extra(td));
+    // CorrNetW (OFF): the correction by hidden state, when the network has just evaluated this very position.
+    const int net_x = (CorrNetW && fresh) ? CorrNetW * corr_net_sum(td, nn_x1_signs(td.nnpos)) : 0;
+    f->static_eval = best = corrected_eval(plain, signal + corr_signal_extra(td) + net_x);
     // A hash bound on the right side is a better estimate than the evaluation.
     if (h.hit && val_known(h.value) && !val_decided(h.value) && bound_covers(h.bound, h.value > best))
       best = h.value;

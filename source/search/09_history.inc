@@ -654,6 +654,28 @@ static inline int corr_signal_extra(const ThreadData &td) {
   return 0;
 }
 
+// CorrNetW (09/11/2026, ours, OFF; 01_params.inc): a correction keyed by the network's own view of the position. The
+// 30 hidden neurons of the layer stack that evaluated the node are read as on/off (nn_x1_signs) and cut in three
+// groups of ten; each group, with the stack, names one cell, and the three cells are summed: three coarse classes that
+// overlap, instead of one exact pattern of 30 bits that would almost never come back. Positions the network sees alike
+// share the error the search found on them, whatever their pawns and pieces. The cells live in the table of
+// CorrExpertW (hashed keys). Read and learned only at nodes the network has just evaluated: an evaluation taken from
+// the hash has no hidden state. Like CorrExpertW the term enters the evaluation and not n.signal. The closest closed
+// idea is CorrPkW (above): its key read the pawn-king subnetwork alone, so it named the pawn structure a second time.
+static inline int net_stack(const ThreadData &td) {   // the layer stack of the position (consilium/cn.cpp, bucket_of)
+  const bool wtm = td.side == white;
+  const int qs = td.bitboards[wtm ? Q : q] != 0, qo = td.bitboards[wtm ? q : Q] != 0;
+  return (count_bits(td.occupancies[both]) - 1) / 4 + 8 * (2 * qs + qo);
+}
+static inline int16_t &corr_net_cell(const ThreadData &td, unsigned signs, int stack, int group) {
+  const U64 k = (U64)(((stack * 3 + group) << 10) | ((signs >> (10 * group)) & 1023)) * 0x9E3779B97F4A7C15ULL;
+  return static_cast<int16_t (*)[2]>(td.st_corr_x)[(k >> 32) & td.st_corr_mask][td.side];
+}
+static inline int corr_net_sum(const ThreadData &td, unsigned signs) {
+  const int st = net_stack(td);
+  return corr_net_cell(td, signs, st, 0) + corr_net_cell(td, signs, st, 1) + corr_net_cell(td, signs, st, 2);
+}
+
 static inline int corrected_eval(int v, int signal) {
   return std::clamp(v + signal / CorrEvalDiv, -TB_WIN_FLOOR + 1, TB_WIN_FLOOR - 1);   // CorrEvalDiv: was 131072
 }

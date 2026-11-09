@@ -291,6 +291,11 @@ static void on_eval_error(ThreadData &td, NodeFrame *f, const NodeState &n) {
       (int)std::clamp((long long)(n.best - f->static_eval) * dq * (n.best_move ? CorrBonusHi : CorrBonusLo) / 8192,
                       (long long)-CorrBonusMaxLo, (long long)CorrBonusMaxHi);
   Learner(td, f, n.expert).corrections(CorrLearnW * amount / 1024);
+  if (n.net_ok) {   // CorrNetW (09_history.inc): the three cells of the hidden state this node was evaluated with
+    const int part = CorrLearnW * amount / 1024 * CorrNetUpd / 128, st = net_stack(td), g = corr_grav(n.expert);
+    for (int k = 0; k < 3; k++)
+      hist_learn(corr_net_cell(td, n.net_signs, st, k), part, LIM_CORR, g);
+  }
 }
 
 // The correction tables learn the gap to a value the node did not search but knows (R19, CorrRepLearn: the draw of a

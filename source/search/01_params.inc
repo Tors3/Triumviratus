@@ -1717,7 +1717,21 @@
   P(IirShortTt, 0, 0, 16)                /* IIR also when the hash entry is shallower than the node by more than this */ \
   P(CorrAbsFut, 0, 0, 4096)              /* quiet futility margin grows by |correction| * this / 1024 */ \
   P(ContemptAhead, 0, 0, 200)            /* draw worth -this for the root side when the last move closed ahead (lists) */ \
-  P(ContemptAheadFrom, 100, 0, 1000)     /*   from this root score                                            */
+  P(ContemptAheadFrom, 100, 0, 1000)     /*   from this root score                                            */ \
+  /* -- 09/11/2026 evening, ideas of ours, OFF; each measured before any SPRT (docs: A8) --                          */ \
+  /* CorrNet: a correction keyed by the hidden state of the layer stack that evaluated the node (which of its 30     */ \
+  /* neurons are on, in three groups of ten; 09_history.inc). In the evaluation only, like CorrExpertW.              */ \
+  P(CorrNetW, 0, 0, 40000)               /* weight of the sum of the three cells (0 = off, identical tree) */ \
+  P(CorrNetUpd, 128, 0, 400)             /* step of the cells, /128 */ \
+  /* TmMlScore: the moves still to play (budget_own, 14_deepen.inc) also from the score of the previous move. The    */ \
+  /* four values are a fit of what the estimate from material and ply misses, on 23,523 of our games at 10+0.1       */ \
+  /* (2.9 million positions; held-out games: R2 of the estimate 0.371 -> 0.469, mean error 13.7 -> 12.1 moves).      */ \
+  /* The first value depends on the draw adjudication of our tests, where a level game is short.                     */ \
+  P(TmMlScore, 0, 0, 2000)               /* /1000: weight of the addition (0 = off, identical timing) */ \
+  P(TmMsBase, -721, -3000, 3000)         /* /100 moves: the addition at score 0 */ \
+  P(TmMsRise, 1772, 0, 6000)             /* /100 moves more per 100 cp of |score|, up to 100 cp */ \
+  P(TmMsFall, 782, 0, 6000)              /* /100 moves fewer per 100 cp, from 100 to 300 cp */ \
+  P(TmMsTail, 298, 0, 6000)              /* /100 moves fewer per 100 cp, from 300 to 700 cp */
 
 // OWN ORDERING FORM (OrdOwn, OrdMapNo/OrdMapMask, OrdOwnTact, OrdRedK, OqGood/OtGood and the Oq/Ot/Oe weights):
 // REMOVED 22/10/2026 (user). Fitted on a move-ordering oracle of 597k nodes it ordered better than the inherited

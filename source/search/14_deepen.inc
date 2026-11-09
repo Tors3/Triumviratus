@@ -101,6 +101,20 @@ struct ClockBudget {
 // the same spending profile as the inherited formula from 5 s to 3 minutes (studio_esperti/tm_own_sim.py).
 static void budget_own(ClockBudget &b, double clock, double inc, int overhead, int game_ply) {
   double ml = TL(TmMlBase) / 100.0 + TL(TmMlPiece) / 100.0 * count_bits(occupancies[both]) - TL(TmMlPly) / 1000.0 * game_ply;
+  // TmMlScore (09/11/2026, ours, OFF; 01_params.inc): the estimate also reads the score the previous move closed
+  // with. At equal material and ply a level game ends soon (a draw is near), a game one side is pressing lasts the
+  // longest, and a decided one ends soon again: three straight pieces on |score| in printed centipawns (0-100,
+  // 100-300, 300-700), added to the estimate above. Nothing on the first move of a game or with a decided score.
+  if (TmMlScore && g_clock.have_prev && g_clock.prev_best != -infinity && !val_decided(g_clock.prev_best)) {
+    const double s = std::abs(units_to_print_cp(g_clock.prev_best));
+    const double add = TmMsBase + TmMsRise * std::min(s, 100.0) / 100.0 - TmMsFall * std::clamp(s - 100.0, 0.0, 200.0) / 100.0 -
+                       TmMsTail * std::clamp(s - 300.0, 0.0, 400.0) / 100.0;
+#ifdef TRIUMV_TMML_STATS
+    printf("info string tmml score %.0f moves-left %.1f -> %.1f\n", s, std::max(ml, (double)TmMlMin),
+           std::max(ml + TmMlScore / 1000.0 * add / 100.0, (double)TmMlMin));
+#endif
+    ml += TmMlScore / 1000.0 * add / 100.0;
+  }
   ml = std::max(ml, (double)TmMlMin);
   if (g_limits.movestogo)
     ml = std::min(ml, (double)g_limits.movestogo);

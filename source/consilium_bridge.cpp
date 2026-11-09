@@ -568,6 +568,13 @@ constexpr bool g_c2_want_effect = false;
 #else
 bool g_c2_want_effect = false;
 #endif
+// nn_want_x1: keep the l1 sums of every evaluation for nn_x1_signs (CorrNetW). The AVX-512 path keeps them anyway; a
+// constant in the release builds, like the flag above (a release with CorrNetW on needs it true on the other paths).
+#ifdef TRIUMV_FROZEN
+constexpr bool g_want_x1 = false;
+#else
+bool g_want_x1 = false;
+#endif
 
 // pk_effect = what the pawn-king subnetwork adds to the positional output (cn::pk_effect), read only with C2ConvW on.
 inline void c2_adjust(const NnBoard& board, int pk_effect, int& psqt, int& positional) {
@@ -732,6 +739,19 @@ void nn_want_pk_effect(int on) { g_c2_want_effect = on != 0; }
 #endif
 int  nn_last_pk_effect(void* handle) { return static_cast<CnPos*>(handle)->pk_effect; }
 
+// CorrNetW: which of the 30 hidden neurons of the layer stack were above zero in the thread's last evaluation.
+#ifdef TRIUMV_FROZEN
+void nn_want_x1(int on) { (void)on; }
+#else
+void nn_want_x1(int on) { g_want_x1 = on != 0; }
+#endif
+unsigned nn_x1_signs(void* handle) {
+    const std::int32_t* x1 = static_cast<CnPos*>(handle)->h->x1;
+    unsigned            s  = 0;
+    for (int o = 0; o < cn::L2 - 2; o++) s |= unsigned(x1[o] > 0) << o;
+    return s;
+}
+
 // --- Conversion push, search version with the exact pawn-king effect (C2ConvPkSrc 1; 21/10/2026) ---
 namespace {
 // From scratch: accumulators refreshed, then the two tails (as eval_full).
@@ -882,7 +902,7 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
 #ifdef C2B_STATS
     const bool want_x1 = true;
 #else
-    const bool want_x1 = g_c2_on || g_c2_want_effect;
+    const bool want_x1 = g_c2_on || g_c2_want_effect || g_want_x1;
 #endif
     const cn::Out o   = cn::evaluate(NET_REF, *p->h, board.view(), want_x1);
     int ps = o.psqt, po = o.positional;

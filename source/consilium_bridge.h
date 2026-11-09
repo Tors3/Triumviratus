@@ -142,6 +142,12 @@ long long nn_pk_signature(void* handle, const unsigned long long* bb, int side_w
 // The search does not read it (it can belong to another position): it uses nn_pk_effect_fresh/now below.
 void      nn_want_pk_effect(int on);
 int       nn_last_pk_effect(void* handle);
+// nn_x1_signs (CorrNetW, 09/11/2026): the state of the hidden layer of the layer stack in the thread's last network
+// evaluation, as one bit per neuron (bit o = l1 sum o above zero, 30 neurons; the two skip sums are left out). Valid
+// only right after nn_pos_eval evaluated this very position with the network (not an evaluation taken from the hash).
+// The AVX-512 path always keeps the sums; the other paths keep them while nn_want_x1(1).
+void      nn_want_x1(int on);
+unsigned  nn_x1_signs(void* handle);
 
 // --- Conversion push (the author's idea: push toward the endgame when it is winning), 21/10/2026 ---
 // Shared by the search version (C2ConvOrder/C2ConvRed, 13_search.inc) and the evaluation version (C2ConvW,

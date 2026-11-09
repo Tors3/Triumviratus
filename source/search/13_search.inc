@@ -60,10 +60,54 @@ struct NodeState {
   int  c2_imb;                   // C2Imb*: +1 ahead, -1 behind by material class and evaluation, 0 otherwise or off
   bool aff;                      // SmpAff: the node is in the material regimes of this helper
   bool pk_crit;                  // PkCrit: the pawn-king subnetwork adds >= PkCritFrom here (fresh evaluations only)
+  bool net_ok;                   // CorrNetW: the network evaluated this node, net_signs is its hidden state
+  unsigned net_signs;
+#ifdef TRIUMV_CORRNET_STATS
+  int  net_t;                    // the sum of the node's three cells as read at its evaluation
+#endif
   // R19 techniques (03/11/2026, 01_params.inc), written only when their lever is on.
   bool sing_drop;                // SingDropHash: the exclusion search came back above the hash value
   bool rep_seen;                 // CorrRepLearn: a repetition was in reach at entry
 };
+
+// -DTRIUMV_CORRSTATS -DTRIUMV_CORRNET_STATS (measurement build, one thread): what CorrNetW knows that the other
+// corrections do not. With the environment variable TRIUMV_CN_SHADOW=1 and CorrNetW 0 the cells are read and taught
+// but never enter the evaluation, so the tree is the default one; at the end of each node the network has just
+// evaluated, the residual r1 = searched value - corrected evaluation is paired with t = the sum of the node's three
+// cells as read at its evaluation, per bound type (0 fail high, 1 exact, 2 fail low). Printed at exit: the squared
+// correlation of r1 and t (the share of the remaining error the term could take) and the weight that would take it.
+// With CorrNetW on, the same lines describe what is left after the term. A second set of lines gives the mean square
+// of the residual before and after all the corrections, apart for fresh and hash evaluations.
+#ifdef TRIUMV_CORRNET_STATS
+static struct CorrNetStats {
+  double n[2][3] = {}, q0[2][3] = {}, q1[2][3] = {};
+  double pn[3] = {}, prr[3] = {}, prt[3] = {}, ptt[3] = {};
+  bool shadow = false;
+  CorrNetStats() { shadow = getenv("TRIUMV_CN_SHADOW") != nullptr; }
+  void add(bool fresh, int kind, int r0, int r1) {
+    n[fresh][kind] += 1, q0[fresh][kind] += (double)r0 * r0, q1[fresh][kind] += (double)r1 * r1;
+  }
+  void pair(int kind, int r1, int t) {
+    pn[kind] += 1, prr[kind] += (double)r1 * r1, prt[kind] += (double)r1 * t, ptt[kind] += (double)t * t;
+  }
+  ~CorrNetStats() {
+    for (int fr = 0; fr < 2; fr++)
+      for (int k = 0; k < 3; k++)
+        if (n[fr][k])
+          fprintf(stderr, "corrnet: fresh %d bound %d n %.0f msq-before %.1f msq-after %.1f\n", fr, k, n[fr][k],
+                  q0[fr][k] / n[fr][k], q1[fr][k] / n[fr][k]);
+    for (int k = 0; k < 3; k++)
+      if (pn[k] && ptt[k] > 0)
+        fprintf(stderr, "corrnet-pair: bound %d n %.0f corr2 %.5f best-weight %.0f mean-abs-t %.1f\n", k, pn[k],
+                prt[k] * prt[k] / (prr[k] * ptt[k]), (double)CorrEvalDiv * prt[k] / ptt[k], std::sqrt(ptt[k] / pn[k]));
+  }
+} g_cns;
+  #define CN_SHADOW g_cns.shadow
+  #define CN_STAT(x) (x)
+#else
+  #define CN_SHADOW false
+  #define CN_STAT(x) ((void)0)
+#endif
 
 #ifdef TRIUMV_REDLOG
 // Re-search data (redlog.h): the current move, already made, searched with a null window at lo, lo+1 and lo+2.
@@ -223,6 +267,7 @@ static void c2_eval_push() {
   const int exp_scale[8] = {C2EvalExp0, C2EvalExp1, C2EvalExp2, C2EvalExp3,
                             C2EvalExp4, C2EvalExp5, C2EvalExp6, C2EvalExp7};
   nn_set_c2_eval(conv, exp_scale);
+  nn_want_x1(CorrNetW != 0);   // CorrNetW: the hidden sums of every evaluation are kept on every path
 }
 // Offsets per cell (C2 expert x pawn-structure class, 01_params.inc) for reverse futility, quiet futility, LMR, null
 // move, razoring, ProbCut and move count, added on top of the per-band tables where those rules read them. They do not
@@ -809,6 +854,7 @@ static int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
 static void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {
   n.eval_raw = tt_eval_none;
   n.disagree = -1;
+  n.net_ok = false;
   if (n.in_check) {
     f->static_eval = n.eval = f[-2].static_eval;
   } else if (n.excluded) {
@@ -820,6 +866,15 @@ static void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {
       nn_set_pk_stale(td.nnpos, n.depth <= C2PkStale);
     const int plain = node_eval(td, n.h, n.eval_raw);
     n.disagree = nn_last_disagree;   // -1 when node_eval took the evaluation from the hash
+    // CorrNetW (09/11/2026, OFF; 09_history.inc): the hidden state of a fresh evaluation and its correction, which
+    // enters the evaluation only (signal_x).
+    if ((CorrNetW || CN_SHADOW) && n.disagree >= 0) {
+      n.net_ok = true;
+      n.net_signs = nn_x1_signs(td.nnpos);
+      const int t = corr_net_sum(td, n.net_signs);
+      CN_STAT(n.net_t = t);
+      n.signal_x += CorrNetW * t;
+    }
     // Conversion push (C2ConvPkSrc 1): the network has just evaluated this very position, so its l1 sums give the
     // exact pawn-king effect for one tail pass. From the hash: read at the move loop (move_loop, c2_conv_side).
     if (c2_conv_exact() && n.disagree >= 0)
@@ -2481,6 +2536,11 @@ static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
     const int fb = td.fifty < 20 ? 0 : td.fifty < 60 ? 1 : 2;
     const int kind = n.best_move ? (n.best >= n.beta ? 0 : 1) : 2;   // fail-high, esatto, fail-low
     CSTAT(net_phase(count_bits(td.occupancies[both])), fb, kind, n.best - plain, n.best - f->static_eval);
+#ifdef TRIUMV_CORRNET_STATS
+    g_cns.add(n.disagree >= 0, kind, n.best - plain, n.best - f->static_eval);
+    if (n.net_ok)
+      g_cns.pair(kind, n.best - f->static_eval, n.net_t);
+#endif
   }
 #endif
   if (!n.in_check && !(n.best_move && get_move_capture(n.best_move)) && dir_ok && learn_ok)
