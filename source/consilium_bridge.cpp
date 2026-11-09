@@ -266,7 +266,11 @@ static int load_net_impl(const char* path) {
 // Per-bucket EvalScale (percent). The eight output buckets of the network (by piece count) each get their own scale;
 // the UCI option EvalScale writes all eight, EvalScaleB0..B7 one each (BAKE MOE1, 30/09/2026).
 static int g_eval_scale_pct  = 60;
-static int g_eval_scale_b[8] = {60, 54, 60, 57, 59, 58, 59, 58};
+// Lex Hortensia (9.0, 09/11/2026): the 8.1 values {60, 54, 60, 57, 59, 58, 59, 58}, fitted with Consilium Plebis,
+// divided per bucket by Lex's raw output against Plebis's on 60,000 game positions (slope 0.940-0.984, all buckets
+// 0.953), so that the search reads Lex on the scale its margins were tuned on. Same network on both sides, 20k nodes:
+// +0.9 +- 6.3 over 4,000 games against the 8.1 values. To be measured again on the final network.
+static int g_eval_scale_b[8] = {62, 57, 64, 59, 61, 60, 61, 59};
 
 // Terms of the last evaluation of one thread (kept in the thread's handle, not thread_local: the MinGW TLS emulation
 // cost ~2.4% of the engine on 25/09/2026). unadjusted = steps 1-3 for the evaluation cache (EvalTTWrite); opt_base and
