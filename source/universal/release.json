@@ -2,8 +2,8 @@
   "_comment": "9.0 development (dev branch, 09/11/2026): the TRANN5 inference of Lex Hortensia, whose training is in progress. Not a release: the network below is lex_init_e4, the distilled start, until the trained network replaces it. Release data read by the build scripts (build_universal.ps1, build_variants.ps1, pack_universal.ps1, build/release.ps1) and by the macOS and Linux workflows. Update bench at every change of the search tree or of the network; bench_possolver is the analysis-mode bench of a -PosSolver build (null = unknown). The network is the file the engine loads by default (CN_DEFAULT_NET_FILE); on Windows the scripts also copy it under the name triumv.rc embeds.",
   "version": "9.0",
   "clang_min": "23.1.4",
-  "bench": 219552,
-  "bench_possolver": 1286991,
+  "bench": 211171,
+  "bench_possolver": 1335839,
   "network": {
     "file": "nn-lex-hortensia.nnue",
     "url": "",
