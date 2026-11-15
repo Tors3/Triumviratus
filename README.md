@@ -135,34 +135,34 @@ after it.
 
 ## Rating lists
 
-On **CCRL 40/15** Triumviratus 8.0 shares **first place** on 4 CPUs with Stockfish 19 (both 3650) in the list of
-7 November 2026, and is **first** among the single-CPU engines (3635 ± 16; Stockfish 19, 1 CPU: 3629). On **CCRL
-Blitz** Triumviratus 8.0 on one CPU (3784 ± 13) is **second** in the main table, behind Stockfish 19 on 8 CPUs
-(3803); among the single-CPU versions it is behind Stockfish 19 on one CPU (3792 ± 11). On **CCRL 40/2 FRC**
-(Chess960) it is **second** (4104 ± 10), behind Stockfish 19 (4115).
+On **CCRL Blitz** (list of 14 November 2026) the new **Triumviratus 8.1** on one CPU enters at **second place**
+(3796 ± 18, 800 games), behind Stockfish 19 on 8 CPUs (3803) and above Stockfish 19 on one CPU (3791 ± 10). On
+**CCRL 40/15** (list of 13 November 2026) Triumviratus 8.0 on 4 CPUs is **second** (3647 ± 17), 3 points behind
+Stockfish 19 on 4 CPUs (3650), and Triumviratus 8.0 on one CPU (3634 ± 15) is rated above Stockfish 19 on one CPU
+(3629 ± 11). On **CCRL 40/2 FRC** (Chess960) Triumviratus 8.0 is **second** (4104 ± 10), behind Stockfish 19 (4115).
 
-**CCRL 40/15** (40 moves in 15 minutes, with increment), list of 2026-11-07
+**CCRL Blitz** (2 min + 1 s), list of 2026-11-14
 
 | version | rating | rank | games |
 |---|---:|---:|---:|
-| **Triumviratus 8.0** (4 CPU) | **3650** ± 19 | **1–2** | 499 |
-| **Triumviratus 8.0** (1 CPU) | **3635** ± 16 | **1** (single-CPU) | 700 |
+| **Triumviratus 8.1** (1 CPU) | **3796** ± 18 | **2** | 800 |
+| Triumviratus 8.0 (1 CPU) | 3784 ± 13 | | 1,682 |
+| Triumviratus 7.0 (8 CPU) | 3779 ± 20 | | 1,106 |
+| Triumviratus 7.0 (1 CPU) | 3755 ± 12 | | 2,015 |
+| Triumviratus 6.0 (1 CPU) | 3743 ± 12 | | 2,056 |
+| Triumviratus 4.2 (1 CPU) | 3666 ± 13 | | 1,518 |
+
+**CCRL 40/15** (40 moves in 15 minutes, with increment), list of 2026-11-13
+
+| version | rating | rank | games |
+|---|---:|---:|---:|
+| **Triumviratus 8.0** (4 CPU) | **3647** ± 17 | **2** | 662 |
+| Triumviratus 8.0 (1 CPU) | 3634 ± 15 | | 860 |
 | Triumviratus 6.0 (4 CPU) | 3632 ± 16 | | 718 |
-| Triumviratus 7.0 (4 CPU) | 3632 ± 53 | | 59 |
 | Triumviratus 7.0 (1 CPU) | 3607 ± 13 | | 1,166 |
 | Triumviratus 5.0 (4 CPU) | 3606 ± 15 | | 924 |
 | Triumviratus 6.0 (1 CPU) | 3606 ± 13 | | 1,018 |
 | Triumviratus 5.0 (1 CPU) | 3572 ± 16 | | 717 |
-
-**CCRL Blitz** (2 min + 1 s), list of 2026-11-07
-
-| version | rating | rank | games |
-|---|---:|---:|---:|
-| **Triumviratus 8.0** (1 CPU) | **3784** ± 13 | **2** | 1,582 |
-| Triumviratus 7.0 (8 CPU) | 3780 ± 20 | | 1,106 |
-| Triumviratus 7.0 (1 CPU) | 3755 ± 12 | | 2,015 |
-| Triumviratus 6.0 (1 CPU) | 3743 ± 12 | | 2,056 |
-| Triumviratus 4.2 (1 CPU) | 3666 ± 13 | | 1,518 |
 
 **CCRL 40/2 FRC** (Chess960, 40 moves in 2 minutes), list of 2026-11-01
 
