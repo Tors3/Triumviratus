@@ -24,7 +24,14 @@ function Fail($m) { Say "ERROR: $m"; throw $m }
 function Find-Toolchain([switch]$NeedPgo) {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { Fail "vswhere not found: Visual Studio 2022 is missing (see build\setup_toolchain.ps1)" }
-    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
+    # Which Visual Studio (15/11/2026): VS 18 Build Tools (MSVC 14.51) came in next to VS 2022 (MSVC 14.44) on the
+    # Xeon, and -latest picked it. Every speed measure and release of 8.1 / 9.0 dev used the MSVC 14.44 headers and
+    # libraries, and the MSVC STL matters for speed (R26: its atomics not inlined cost +17%), so VS 2022 is preferred
+    # when installed; -latest only without it. $env:TRIUMV_VS names another installation folder.
+    $vs = if ($env:TRIUMV_VS) { $env:TRIUMV_VS } else {
+        & $vswhere -version '[17.0,18.0)' -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath |
+            Select-Object -First 1 }
+    if (-not $vs) { $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath }
     if (-not $vs) { Fail "Visual Studio without the 'C++ Clang Compiler for Windows' component (see build\setup_toolchain.ps1)" }
     # The compiler (03/11/2026): the newest complete LLVM among $env:TRIUMV_LLVM, a standalone install
     # (%ProgramFiles%\LLVM: winget LLVM.LLVM, see build\setup_toolchain.ps1) and the one inside Visual Studio. clang 23
@@ -64,6 +71,11 @@ function Find-Toolchain([switch]$NeedPgo) {
     $t.sdk = Get-ChildItem "$kits\Lib" -Directory | Where-Object { Test-Path "$($_.FullName)\um\x64\kernel32.lib" } |
              Sort-Object Name -Descending | Select-Object -First 1
     $env:LIB = "$($t.msvc.FullName)\lib\x64;$($t.sdk.FullName)\um\x64;$($t.sdk.FullName)\ucrt\x64"
+    # The headers from the same MSVC and SDK as the libraries (15/11/2026). Without INCLUDE, clang-cl looks for them on
+    # its own and takes the newest Visual Studio: the MSVC 14.51 headers of VS 18 with the 14.44 libraries, and that STL
+    # refuses clang < 20.
+    $inc = "$kits\Include\$($t.sdk.Name)"
+    $env:INCLUDE = "$($t.msvc.FullName)\include;$inc\ucrt;$inc\um;$inc\shared;$inc\winrt"
     $t.py = (Get-Command python -ErrorAction SilentlyContinue).Source
     if (-not $t.py -and $NeedPgo) { Fail "Python 3 not found in PATH (the PGO training needs it)" }
     $t.clang = "$((& $t.CXX --version)[0])".Trim()
