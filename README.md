@@ -135,17 +135,18 @@ after it.
 
 ## Rating lists
 
-On **CCRL Blitz** (list of 14 November 2026) the new **Triumviratus 8.1** on one CPU enters at **second place**
-(3796 ± 18, 800 games), behind Stockfish 19 on 8 CPUs (3803) and above Stockfish 19 on one CPU (3791 ± 10). On
-**CCRL 40/15** (list of 13 November 2026) Triumviratus 8.0 on 4 CPUs is **second** (3647 ± 17), 3 points behind
-Stockfish 19 on 4 CPUs (3650), and Triumviratus 8.0 on one CPU (3634 ± 15) is rated above Stockfish 19 on one CPU
-(3629 ± 11). On **CCRL 40/2 FRC** (Chess960) Triumviratus 8.0 is **second** (4104 ± 10), behind Stockfish 19 (4115).
+On **CCRL Blitz** (list of 14 November 2026) the new **Triumviratus 8.1** on one CPU enters at **second place** in
+the main table (3796 ± 18, 800 games), behind Stockfish 19 on 8 CPUs (3803), and is **first** among the single-CPU
+engines, ahead of Stockfish 19 on one CPU (3791 ± 10). On **CCRL 40/15** (list of 13 November 2026) Triumviratus 8.0
+on 4 CPUs is **second** (3647 ± 17), 3 points behind Stockfish 19 on 4 CPUs (3650), and Triumviratus 8.0 is **first**
+among the single-CPU engines (3634 ± 15; Stockfish 19 on one CPU: 3629 ± 11). On **CCRL 40/2 FRC** (Chess960)
+Triumviratus 8.0 is **second** (4104 ± 10), behind Stockfish 19 (4115).
 
 **CCRL Blitz** (2 min + 1 s), list of 2026-11-14
 
 | version | rating | rank | games |
 |---|---:|---:|---:|
-| **Triumviratus 8.1** (1 CPU) | **3796** ± 18 | **2** | 800 |
+| **Triumviratus 8.1** (1 CPU) | **3796** ± 18 | **2**; **1** (single-CPU) | 800 |
 | Triumviratus 8.0 (1 CPU) | 3784 ± 13 | | 1,682 |
 | Triumviratus 7.0 (8 CPU) | 3779 ± 20 | | 1,106 |
 | Triumviratus 7.0 (1 CPU) | 3755 ± 12 | | 2,015 |
@@ -157,7 +158,7 @@ Stockfish 19 on 4 CPUs (3650), and Triumviratus 8.0 on one CPU (3634 ± 15) is r
 | version | rating | rank | games |
 |---|---:|---:|---:|
 | **Triumviratus 8.0** (4 CPU) | **3647** ± 17 | **2** | 662 |
-| Triumviratus 8.0 (1 CPU) | 3634 ± 15 | | 860 |
+| **Triumviratus 8.0** (1 CPU) | **3634** ± 15 | **1** (single-CPU) | 860 |
 | Triumviratus 6.0 (4 CPU) | 3632 ± 16 | | 718 |
 | Triumviratus 7.0 (1 CPU) | 3607 ± 13 | | 1,166 |
 | Triumviratus 5.0 (4 CPU) | 3606 ± 15 | | 924 |
