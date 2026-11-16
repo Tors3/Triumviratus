@@ -22,6 +22,11 @@
 ideas are shared and contributions are discussed: to join, just contact me ([@Tors3](https://github.com/Tors3) on
 GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 
+**Support Triumviratus ♥** Triumviratus is free and will stay free. Its networks learn on rented GPUs: if the engine
+has given you a good game, you can help it learn the next one. Every contribution counts, even 1 €.
+
+[![Support Triumviratus on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Triumviratus-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/triumviratus)
+
 **Downloads of each release**
 
 [![8.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.1/total?label=v8.1)](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
@@ -393,6 +398,17 @@ results: [CONTRIBUTING.md](docs/project/CONTRIBUTING.md).
 > Pawnocchio; the implementation and the weights are ours.
 
 </details>
+
+---
+
+<div align="center">
+
+**Enjoyed a game with Triumviratus?** Buy its next network a coffee ☕ Every contribution, even 1 €, becomes
+training time.
+
+[![Support Triumviratus on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Triumviratus-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/triumviratus)
+
+</div>
 
 ---
 
