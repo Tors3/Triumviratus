@@ -25,7 +25,7 @@ GitHub). Everyone is welcome, as long as discussions stay open and respectful.
 **Support Triumviratus ♥** Triumviratus is free and will stay free. Its networks learn on rented GPUs: if the engine
 has given you a good game, you can help it learn the next one. Every contribution counts, even 1 €.
 
-[![Support Triumviratus on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Triumviratus-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/triumviratus)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/triumviratus)
 
 **Downloads of each release**
 
@@ -406,7 +406,7 @@ results: [CONTRIBUTING.md](docs/project/CONTRIBUTING.md).
 **Enjoyed a game with Triumviratus?** Buy its next network a coffee ☕ Every contribution, even 1 €, becomes
 training time.
 
-[![Support Triumviratus on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Triumviratus-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/triumviratus)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/triumviratus)
 
 </div>
 
