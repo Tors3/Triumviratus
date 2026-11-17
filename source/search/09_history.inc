@@ -433,11 +433,12 @@ static inline int ttm_grav(int e)    { return by_exp4(e, TtmGrav0, TtmGrav1, Ttm
 static inline void hist_learn(int16_t &e, int bonus, int limit, int grav) {
   const int b = std::clamp(bonus, -limit, limit);
   const int v = e;
-#if defined(__AVX2__) && !defined(__AVX512F__)
+#if defined(__AVX2__)
   // (29/10/2026 night, speed, same values) At the default gravity G = 1024 (every expert in the release) the quotient
   // is v*|b| / limit with the same truncation, and it fits 32 bits (|v| <= 32767, |b| <= limit <= 32000, the largest
-  // limit of 01_params.inc). -0.8% / -1.5% cycles (mg / eg) on the Xeon avx2 variant; kept off the AVX-512 builds,
-  // where it measured +0.2% / +0.4%.
+  // limit of 01_params.inc). -0.8% / -1.5% cycles (mg / eg) on the Xeon avx2 variant. On AVX-512 it measured +0.2% /
+  // +0.4% on 29/10 and was kept off there; (17/11/2026) on AVX-512 too, measured together with the scalar history
+  // reads of quiet_vec_score (11_queue.inc, the numbers are there).
   if (grav == 1024) {
     const int pull = v * (b < 0 ? -b : b) / limit;
     e = (int16_t)std::clamp(v + b - pull, -32767, 32767);

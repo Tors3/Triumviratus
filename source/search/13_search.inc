@@ -9,7 +9,7 @@
 // in the release the compiler removes them, as before the analysis mode (xperf: the version with the terms read at
 // every node cost ~1% of cycles in games). The two copies give the same values as before in their respective modes.
 template <bool AN>
-static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth, bool cut, bool pv);
+static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth, bool cut, bool pv);
 
 #ifdef TRIUMV_REDLOG
 #include "redlog.h"
@@ -2068,7 +2068,7 @@ static int eval_first_move(ThreadData &td, NodeFrame *f, const NodeState &n) {
 }
 
 template <bool AN>
-static int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int us = td.side;
   // EvalOrd: the choice stands in for the hash move in the queue only; n.h.move stays empty.
   int eo_move = 0;
@@ -2650,7 +2650,7 @@ static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
 
 // --------------------------------------------------------------------------
 template <bool AN>
-static int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth, bool cut, bool pv) {
+static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int beta, int depth, bool cut, bool pv) {
   if (depth <= 0)
     return ((AN && (td.an_bits & AN_QSCHK)) || (QsChecksPieces && count_bits(td.occupancies[both]) <= QsChecksPieces))
                ? quiesce<true>(td, f, alpha, beta, pv)

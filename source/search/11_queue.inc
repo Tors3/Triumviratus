@@ -459,19 +459,13 @@ static inline U64 knight_fill(U64 b) {
 // truncates toward zero as in the scalar code. Xeon (PGO, xperf, with the vector ranking above and the compaction of
 // fill_quiets): -2.4% cycles per node in the middlegame, -2.1% in endgames, -6% instructions, bench unchanged.
 // -DTRIUMV_VERIFY_VQ compares every score with the scalar loop.
+// (17/11/2026, speed, same scores) The seven history reads of each move are scalar loads; the indices come from the
+// vector code and the sums go back into it. Before, seven 16-lane gathers (vpgatherdd): on the Skylake-SP their line
+// took 66 cycles per node with 41 instructions, waiting on the loads. Together with the 32-bit saturating update on
+// AVX-512 (hist_learn, 09_history.inc), Xeon, PGO, xperf 8 rounds against two bases of the same source (A/A 0.14% /
+// 0.05%): -0.87% cycles per node in the middlegame, -0.58% in endgames, +1.7% instructions, bench unchanged.
+// Not measured on the Zen 4.
 #if defined(__AVX512F__)
-// 16 int16 entries tab[idx[j]], sign-extended, each read as the aligned dword that holds it: an aligned dword never
-// crosses a page, so no lane touches memory outside the page of its own entry.
-static inline __m512i gather16(__mmask16 k, const int16_t *tab, __m512i idx) {
-  const uintptr_t a = reinterpret_cast<uintptr_t>(tab);
-  const __m512i off = _mm512_add_epi32(_mm512_slli_epi32(idx, 1), _mm512_set1_epi32((int)(a & 3)));
-  const __m512i dw = _mm512_mask_i32gather_epi32(_mm512_setzero_si512(), k, _mm512_srli_epi32(off, 2),
-                                                 reinterpret_cast<const void *>(a & ~(uintptr_t)3), 4);
-  // entry in the low half (off & 2 = 0): left 16, then arithmetic right 16; in the high half: arithmetic right 16 only
-  const __m512i sh = _mm512_sub_epi32(_mm512_set1_epi32(16),
-                                      _mm512_slli_epi32(_mm512_and_si512(off, _mm512_set1_epi32(2)), 3));
-  return _mm512_srai_epi32(_mm512_sllv_epi32(dw, sh), 16);
-}
 // Tables and maps of the node for the vector score.
 struct QuietVecIn {
   const int16_t *qh, *pw, *h1, *h2, *h3, *h4, *h6;   // main (side to move), pawn row, continuation rows 1-4 and 6
@@ -496,13 +490,17 @@ static inline void quiet_vec_score(const QuietVecIn &in, const int *mv, int *sc,
     const __m512i pkind =
         _mm512_permutexvar_epi32(_mm512_and_si512(_mm512_srli_epi32(m, 16), _mm512_set1_epi32(15)), pk_tab);
     const __m512i key = _mm512_or_si512(_mm512_and_si512(m, _mm512_set1_epi32(0xfff)), _mm512_slli_epi32(pkind, 12));
-    __m512i hs = _mm512_mullo_epi32(gather16(k, in.qh, key), _mm512_set1_epi32(in.w_main));
-    hs = _mm512_add_epi32(hs, _mm512_mullo_epi32(gather16(k, in.pw, pidx), _mm512_set1_epi32(in.w_pawn)));
-    const __m512i nr = _mm512_add_epi32(gather16(k, in.h1, pidx), gather16(k, in.h2, pidx));
-    hs = _mm512_add_epi32(hs, _mm512_mullo_epi32(nr, _mm512_set1_epi32(in.w_near)));
-    const __m512i fr = _mm512_add_epi32(_mm512_add_epi32(gather16(k, in.h3, pidx), gather16(k, in.h4, pidx)),
-                                        gather16(k, in.h6, pidx));
-    hs = _mm512_add_epi32(hs, _mm512_mullo_epi32(fr, _mm512_set1_epi32(in.w_far)));
+    // the seven history reads, scalar (see above): same 32-bit sum, same terms (integer addition, no overflow)
+    alignas(64) int kk[16], pp[16], hsa[16];
+    _mm512_store_si512(kk, key);
+    _mm512_store_si512(pp, pidx);
+    const int lanes = n - i >= 16 ? 16 : n - i;
+    for (int j = 0; j < lanes; j++) {
+      const int p = pp[j];
+      hsa[j] = in.qh[kk[j]] * in.w_main + in.pw[p] * in.w_pawn + (in.h1[p] + in.h2[p]) * in.w_near +
+               (in.h3[p] + in.h4[p] + in.h6[p]) * in.w_far;
+    }
+    const __m512i hs = _mm512_maskz_loadu_epi32(k, hsa);
     // hs / 1024 truncated toward zero: 1023 is added to the negative sums before the arithmetic shift
     __m512i qv = _mm512_srai_epi32(
         _mm512_add_epi32(hs, _mm512_and_si512(_mm512_srai_epi32(hs, 31), _mm512_set1_epi32(1023))), 10);

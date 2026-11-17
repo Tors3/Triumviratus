@@ -309,6 +309,14 @@ function Link($exe, $objs, [switch]$Gen, [string[]]$Extra = @()) {
     # W3 (09/10/2026): no cmov -> branch conversion in the ThinLTO codegen (-0.15% middlegame, -0.29% endgames, z_w3)
     $a += '/mllvm:-x86-cmov-converter=false'
     $a += '/mllvm:-enable-ext-tsp-block-placement=true'   # 14/10/2026: ext-tsp adopted (xperf v14/et, with EVC8 -0.6% middlegame)
+    # 17/11/2026: functions aligned to 64 bytes in the ThinLTO code generation. Xeon, PGO, xperf 6 rounds over three
+    # code layouts: -0.27% cycles per node in the middlegame, -0.33% in endgames (every layout), branch misses
+    # -0.3/-0.9%, same instructions. Branch targets aligned to 16 bytes were worse (+0.25%), not used.
+    $a += '/mllvm:-align-all-functions=6'
+    # 17/11/2026: hot/cold splitting in the ThinLTO code generation (the cold blocks of hot functions moved out of line,
+    # from the PGO profile). Xeon, xperf 6 rounds over three code layouts: -0.20% cycles per node in the middlegame
+    # (every layout), endgames level (-0.05%).
+    $a += '/mllvm:-hot-cold-split=true'
     # Arguments through a response file (29/10/2026): the seven variants are 150 objects, and with a long work folder the
     # command line passed the 32767 characters Windows allows ("file name or extension too long").
     $rsp = "$OBJ\link.rsp"   # one link at a time
