@@ -577,6 +577,11 @@ static TRIUMV_SEARCH_CC int quiesce(ThreadData &td, NodeFrame *f, int alpha, int
   if (f[-1].captured >= 0 && insufficient_material(td))   // material changes only with a capture
     return contempt(td);
 
+  // The correction first (p02q, 22/11/2026, speed, same values), as in the main search: corr_signal reads only the
+  // keys, the side, the fifty-move counter and the frames of the previous moves, all final here, and the hash read
+  // writes none of them. Issued before the probe, its table loads and the hash bucket load are in flight together. In
+  // check the stand is not taken and the signal is not read. A node that closes on the hash entry computes it unused.
+  const int signal = in_check ? 0 : corr_signal(td, f);
   HashView h;
   hash_read(td, h);
   f->tt_hit = h.hit;
@@ -591,7 +596,7 @@ static TRIUMV_SEARCH_CC int quiesce(ThreadData &td, NodeFrame *f, int alpha, int
   if (in_check) {
     best = w.fut_base = -infinity;
   } else {
-    const int signal = corr_signal(td, f);
+    // (signal: computed before the hash probe, see above.)
     // QsMatStand (29/10/2026, OFF by default): stand on the material when the network would be called and the
     // material alone, minus the margin, already reaches beta (01_params.inc).
     const bool fresh = !(h.hit && h.eval_raw != tt_eval_none);
