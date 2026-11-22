@@ -118,6 +118,10 @@ struct NnStack {
     // captures a passer on the same square leaves the square passed but changes the colour.
     std::uint64_t v1PassW[NN_STACK_SIZE];
     std::uint64_t v1PassB[NN_STACK_SIZE];
+    // Board before the move of state i (types P..K over both colours, then white and black occupancy), written by the
+    // make with one 64-byte store where NN_PREBOARD is on (search/06_nndirty.inc, 22/11/2026): the catch-up starts from
+    // it instead of undoing the pending moves. Present in every build, so the layout does not depend on the variant.
+    alignas(64) std::uint64_t pre[NN_STACK_SIZE][8];
 };
 
 // The accumulator receives the states by reference: the passers of a state (R4) are found from its position in the

@@ -49,6 +49,14 @@ static void nn_dirty_init() {
     }
 }
 
+// NN_PREBOARD (22/11/2026, speed, same board): the make saves the board before the move (NnStack::pre) and the
+// catch-up starts from it, instead of undoing the pending moves on the bitboards. On in the avx512 variant only:
+// Xeon Gold 6138 (Skylake-SP), xperf, cycles per node -0.27% middlegame / -0.47% endgame (6 rounds, every round below
+// both copies of the base; A/A 0.0%); Zen 4 (avx512icl) +0.34% / +1.03% (12 rounds), so off there and, not measured,
+// in the other variants. -DNN_NO_PREBOARD turns it off.
+#if defined(USE_AVX512) && !defined(USE_VNNI) && !defined(NN_NO_PREBOARD)
+  #define NN_PREBOARD
+#endif
 
 // Working board of the steps: bitboards per type (P..K, both colours), per colour and occupancy.
 struct NnTB {
@@ -377,6 +385,16 @@ static inline void nn_make_dirty(ThreadData &td, int piece, int source, int targ
   st.computed[white] = st.computed[black] = 0;
   // Position in the stack (nn_stack_of: passers of PassedPawns v1, R4), in the same line as `computed`.
   st.idx = (std::uint8_t)(S.size - 1);
+#if defined(NN_PREBOARD)
+  // The board before this move (NnStack::pre): types over both colours, then the two occupancies, which follow the
+  // twelve bitboards in ThreadData; one 64-byte store.
+  {
+    static_assert(offsetof(ThreadData, occupancies) == offsetof(ThreadData, bitboards) + 12 * sizeof(U64),
+                  "NN_PREBOARD: occupancies right after the bitboards");
+    const __m512i lo = _mm512_loadu_si512(td.bitboards), hi = _mm512_loadu_si512(td.bitboards + 6);
+    _mm512_store_si512(S.pre[S.size - 1], _mm512_mask_or_epi64(hi, 0x3F, lo, hi));
+  }
+#endif
 
   NnDirtyPiece &dp = st.dp;
   dp.pc = (std::uint8_t)piece;
@@ -528,11 +546,23 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
   if (first >= last)
     return;
   NnTB tb;
+#if defined(NN_PREBOARD)
+  // The board before the first pending move, as the make saved it (the root is state 0, first >= 1 always).
+  {
+    const U64 *pre = S.pre[first];
+    for (int t = 0; t < 6; t++)
+      tb.type[t] = pre[t];
+    tb.color[white] = pre[6];
+    tb.color[black] = pre[7];
+    tb.occ = pre[6] | pre[7];
+  }
+#else
   for (int t = 0; t < 6; t++)
     tb.type[t] = td.bitboards[t] | td.bitboards[t + 6];
   tb.color[white] = td.occupancies[white];
   tb.color[black] = td.occupancies[black];
   tb.occ = td.occupancies[both];
+#endif
 #if defined(NN_MB8)
   alignas(64) std::int8_t mb8[64];
   __m512i b8 = _mm512_load_si512(td.pc8);
@@ -545,7 +575,9 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
   alignas(64) int mb[64];
   std::memcpy(mb, td.piece_on, sizeof(mb));
   for (int i = last - 1; i >= first; i--) {
+  #if !defined(NN_PREBOARD)
     nn_dp_toggle(tb, S.st[i].dp);
+  #endif
     nn_mb_undo(mb, S.st[i].dp);
   }
 #endif

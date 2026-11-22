@@ -1153,7 +1153,13 @@ static bool cpu_vendor_intel() {
 // (15/10/2026) Off in the AVX-512 builds (avx512, vnni512, avx512icl): on the Xeon, without this prefetch, -0.40%
 // cycles per node in the middlegame and -0.72% in endgames. On where it was measured: Intel without AVX-512 (12th-14th
 // generation) in the avx2, avx2-nopext and avxvnni builds.
-#if defined(USE_AVX512)
+// (22/11/2026) On in the avx512icl build on AMD, i.e. Zen 4 and Zen 5 (the only AMD CPUs that run it): Zen 4, xperf,
+// 9.0 with Lex Hortensia, cycles per node -1.2% middlegame / -1.6% endgame (12 rounds, A/A 0.0 / +0.3%; the first
+// capture of 8 rounds gave -1.2 / -2.0%). The Xeon (avx512) stays off: +0.9 / +0.7% there. Intel CPUs that run
+// avx512icl (Ice Lake, Sapphire Rapids) are not measured: off.
+#if defined(USE_AVX512ICL)
+static const bool g_next_prefetch = !cpu_vendor_intel();
+#elif defined(USE_AVX512)
 static const bool g_next_prefetch = false;
 #else
 static const bool g_next_prefetch = cpu_vendor_intel();
