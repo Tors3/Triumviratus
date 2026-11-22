@@ -95,5 +95,17 @@ the build without it:
 
 (1) Against the A/A copy: in that capture the first copy of the reference build ran 1.0% slower than the second.
 
+Two more changes help one machine and cost the other, so each is on only in the variant where it was measured to
+help. The table gives both machines; the cell of the variant that keeps the change is in bold.
+
+| change | variant where on | Xeon middlegame | Xeon endgame | Zen 4 middlegame | Zen 4 endgame |
+|---|---|---:|---:|---:|---:|
+| the make saves the board before the move, the accumulator catch-up starts from it | `avx512` | **−0.27%** | **−0.47%** | +0.34% | +1.03% |
+| prefetch of the hash entry of the next move | `avx512icl` on AMD | +0.9% | +0.7% | **−1.2%** | **−1.6%** |
+
+The Xeon figures come from 6 rounds, the Zen 4 figures from 12; the A/A pairs agree within 0.3%. These two changes
+came after the measurement of section 1.2, so they are not in its 9.0 numbers. The Intel processors that run the
+`avx512icl` variant (Ice Lake, Sapphire Rapids) are not measured and keep the prefetch off.
+
 Two more were measured and dropped: accumulator tiles of 8 registers instead of 16 (slower on the Xeon, and on the
 Zen 4 once the changes above were in), and a bitset of the non-zero groups in the AVX2 forward pass (+2.7% cycles).
