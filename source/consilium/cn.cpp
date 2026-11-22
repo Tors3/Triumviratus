@@ -77,6 +77,32 @@ static inline int CN_LSB(unsigned long long b) { unsigned long i; _BitScanForwar
     #define CN_ONE_REG(p) ((void)0)
 #endif
 
+// Tile loops fully unrolled (p01, 22/11/2026, speed, same values). The accumulator tiles keep their registers in local
+// arrays (__m512i r[16] = 1 KB in apply_tile and refresh_tile, plus o[8] with CN_W2) that the loops over k index. Only
+// when every k loop is unrolled are all indices constants, so the arrays live in registers; a loop left rolled makes
+// them memory, and every row then loads and stores the whole tile. LLVM 23.1.4 was reported to leave such loops rolled
+// under AVX-512 and VNNI-512 even with PGO, and its unroll threshold changes with the profile, so the choice is not
+// left to it: CN_UNROLL asks for the full unroll of the k loops (their trip counts are template constants) and
+// CN_TILE_INLINE forces the row helpers into the tile functions (an array passed by pointer to a call that is not
+// inlined must be in memory). The same additions and subtractions on the same lanes in the same order: identical
+// accumulators. -DCN_NO_UNROLL: the previous code.
+#if defined(CN_NO_UNROLL)
+    #define CN_UNROLL
+    #define CN_TILE_INLINE inline
+#elif defined(__clang__)
+    #define CN_UNROLL _Pragma("clang loop unroll(full)")
+    #define CN_TILE_INLINE __attribute__((always_inline)) inline
+#elif defined(__GNUC__)
+    #define CN_UNROLL _Pragma("GCC unroll 32")
+    #define CN_TILE_INLINE __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+    #define CN_UNROLL
+    #define CN_TILE_INLINE __forceinline
+#else
+    #define CN_UNROLL
+    #define CN_TILE_INLINE inline
+#endif
+
 // CN_W1 (block 8, 18/10/2026; the idea is A Tin Man's, 15/10/2026, measured on the previous inference): the int8 rows
 // (threats, pawn pairs, passed pawns) are stored with their bytes interleaved in blocks of 32 (byte 2j = element j,
 // byte 2j + 1 = element 16 + j). One 32-byte load then gives two int16 vectors: vpmaddubsw with (1, 0) pairs keeps the
@@ -809,15 +835,17 @@ ApplyStats g_applyStats;
 // The int8 rows of a list (added and removed) on R registers of 32 int16 values from column t. CN_W1: one 64-byte load
 // per pair of registers (R even, t a multiple of 64).
 template <int R>
-inline void rows8_512(const RowList& L, __m512i* r, int t) {
+CN_TILE_INLINE void rows8_512(const RowList& L, __m512i* r, int t) {
     constexpr int W = 32;
 #if defined(CN_W2)
     // CN_W2: the words summed as they are into the low register, their high bytes (vpsraw 8) into o; the correction
     // after the rows (see CN_W2 at the top). Nothing to do for empty lists (a refresh whose cache entry is current).
     if (L.n8a + L.n8s == 0) return;
     __m512i o[R / 2];
+    CN_UNROLL
     for (int k = 0; k < R / 2; k++) o[k] = _mm512_setzero_si512();
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             __m512i w = _mm512_load_si512(L.a8[i] + t + k * W);
             CN_W2_REG(w);
@@ -826,6 +854,7 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
         }
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             __m512i w = _mm512_load_si512(L.s8[i] + t + k * W);
             CN_W2_REG(w);
@@ -834,6 +863,7 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
         }
     }
     const __m512i bias = _mm512_set1_epi16(short(std::uint16_t(-128 * (L.n8a - L.n8s))));
+    CN_UNROLL
     for (int k = 0; k < R; k += 2) {
         r[k + 1] = _mm512_add_epi16(r[k + 1], o[k / 2]);
         r[k]     = _mm512_sub_epi16(_mm512_add_epi16(r[k], bias), _mm512_slli_epi16(o[k / 2], 8));
@@ -841,6 +871,7 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
 #elif defined(CN_W1)
     const __m512i even = _mm512_set1_epi16(1);   // u8 pairs (1, 0): vpmaddubsw keeps the signed even byte
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             const __m512i w = _mm512_load_si512(L.a8[i] + t + k * W);
             r[k]     = _mm512_add_epi16(r[k], _mm512_maddubs_epi16(even, w));
@@ -848,6 +879,7 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
         }
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             const __m512i w = _mm512_load_si512(L.s8[i] + t + k * W);
             r[k]     = _mm512_sub_epi16(r[k], _mm512_maddubs_epi16(even, w));
@@ -856,10 +888,12 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
     }
 #else
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k++)
             r[k] = _mm512_add_epi16(r[k], _mm512_cvtepi8_epi16(_mm256_load_si256((const __m256i*)(L.a8[i] + t + k * W))));
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k++)
             r[k] = _mm512_sub_epi16(r[k], _mm512_cvtepi8_epi16(_mm256_load_si256((const __m256i*)(L.s8[i] + t + k * W))));
     }
@@ -867,11 +901,13 @@ inline void rows8_512(const RowList& L, __m512i* r, int t) {
 }
 
 // AVX-512: 1024 values = 32 registers; two tiles of 16 registers (512 values).
-inline void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
+CN_TILE_INLINE void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
     constexpr int R = 16, W = 32;
     __m512i       r[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm512_loadu_si512(src.v + t + k * W);
     rows8_512<R>(L, r, t);
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, r[k]);
 }
 
@@ -885,14 +921,16 @@ CN_LEAF void apply(const RowList& L, const Acc& src, Acc& dst) {
 // The int8 rows of a list (added and removed) on R registers of 16 values from column t. Shared by apply and, since
 // 21/10/2026, by the single-pass refresh and king step.
 template <int R>
-inline void rows8_256(const RowList& L, __m256i* r, int t) {
+CN_TILE_INLINE void rows8_256(const RowList& L, __m256i* r, int t) {
     constexpr int W = 16;
 #if defined(CN_W2)
     // CN_W2 (see the top): words summed as they are, high bytes into o, one correction after the rows.
     if (L.n8a + L.n8s == 0) return;
     __m256i o[R / 2];
+    CN_UNROLL
     for (int k = 0; k < R / 2; k++) o[k] = _mm256_setzero_si256();
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             __m256i w = _mm256_load_si256((const __m256i*)(L.a8[i] + t + k * W));
             CN_W2_REG(w);
@@ -901,6 +939,7 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
         }
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             __m256i w = _mm256_load_si256((const __m256i*)(L.s8[i] + t + k * W));
             CN_W2_REG(w);
@@ -909,6 +948,7 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
         }
     }
     const __m256i bias = _mm256_set1_epi16(short(std::uint16_t(-128 * (L.n8a - L.n8s))));
+    CN_UNROLL
     for (int k = 0; k < R; k += 2) {
         r[k + 1] = _mm256_add_epi16(r[k + 1], o[k / 2]);
         r[k]     = _mm256_sub_epi16(_mm256_add_epi16(r[k], bias), _mm256_slli_epi16(o[k / 2], 8));
@@ -917,6 +957,7 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
     // Interleaved int8 rows (CN_W1): one 32-byte load per pair of registers, widened on ports 0/1.
     const __m256i even = _mm256_set1_epi16(1);   // u8 pairs (1, 0): vpmaddubsw keeps the signed even byte
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             const __m256i w = _mm256_load_si256((const __m256i*)(L.a8[i] + t + k * W));
             r[k]     = _mm256_add_epi16(r[k], _mm256_maddubs_epi16(even, w));
@@ -924,6 +965,7 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
         }
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k += 2) {
             const __m256i w = _mm256_load_si256((const __m256i*)(L.s8[i] + t + k * W));
             r[k]     = _mm256_sub_epi16(r[k], _mm256_maddubs_epi16(even, w));
@@ -932,10 +974,12 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
     }
 #else
     for (int i = 0; i < L.n8a; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k++)
             r[k] = _mm256_add_epi16(r[k], _mm256_cvtepi8_epi16(_mm_load_si128((const __m128i*)(L.a8[i] + t + k * W))));
     }
     for (int i = 0; i < L.n8s; i++) {
+        CN_UNROLL
         for (int k = 0; k < R; k++)
             r[k] = _mm256_sub_epi16(r[k], _mm256_cvtepi8_epi16(_mm_load_si128((const __m128i*)(L.s8[i] + t + k * W))));
     }
@@ -943,11 +987,13 @@ inline void rows8_256(const RowList& L, __m256i* r, int t) {
 }
 
 // AVX2: 16 registers; tiles of 8 registers (128 values), eight tiles.
-inline void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
+CN_TILE_INLINE void apply_tile(const RowList& L, const Acc& src, Acc& dst, int t) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(src.v + t + k * W));
     rows8_256<R>(L, r, t);
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
 }
 
@@ -2582,17 +2628,22 @@ inline bool barrier(const NnDirtyPiece& dp, int p) { return dp.pc == KING + 6 * 
 #if defined(USE_AVX512)
 // pv (the pawn cache, 02/11/2026): the pawn vector of the board added with the board's rows; null when LO holds the
 // pawn rows itself.
-inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
+CN_TILE_INLINE void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 16, W = 32;
     __m512i       r[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm512_loadu_si512(entry.v + t + k * W);
     if (LH.n8a + LH.n8s > 0) {
         rows8_512<R>(LH, r, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm512_storeu_si512(entry.v + t + k * W, r[k]);
     }
     rows8_512<R>(LO, r, t);   // added rows only (the board's): the removed list is empty
-    if (pv)
+    if (pv) {
+        CN_UNROLL
         for (int k = 0; k < R; k++) r[k] = _mm512_add_epi16(r[k], _mm512_load_si512(pv->v + t + k * W));
+    }
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, r[k]);
 }
 
@@ -2608,17 +2659,22 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
 // operations in the same order per value, so the same accumulators. Pawn cache (pv) in both AVX2 forms since
 // 03/11/2026 (Houze Guo). xperf of 03/11/2026 against the two passes: +1.7% cycles on Skylake-SP, +2.2% on Zen 4,
 // mixed on Raptor Lake-U, -0.75% on Raptor Cove (A Tin Man's run): it stays a choice per CPU, off by default.
-inline void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
+CN_TILE_INLINE void refresh_tile(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, int t, const Acc* pv) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(entry.v + t + k * W));
     if (LH.n8a + LH.n8s > 0) {
         rows8_256<R>(LH, r, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(entry.v + t + k * W), r[k]);
     }
     rows8_256<R>(LO, r, t);   // added int8 rows only (the board's)
-    if (pv)
+    if (pv) {
+        CN_UNROLL
         for (int k = 0; k < R; k++) r[k] = _mm256_add_epi16(r[k], _mm256_load_si256((const __m256i*)(pv->v + t + k * W)));
+    }
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
 }
 
@@ -2643,28 +2699,34 @@ void apply_refresh(const RowList& LH, const RowList& LO, Acc& entry, Acc& dst, c
 // the child's king square (brought to the board, LN) + the O rows of the move (LO, int8). Both entries are written
 // back. Four tiles of 8 registers (two accumulators live at once).
 #if defined(USE_AVX512)
-inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
-                          Acc& eNew, Acc& dst, int t) {
+CN_TILE_INLINE void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
+                                  Acc& eNew, Acc& dst, int t) {
     constexpr int R = 8, W = 32;
     __m512i       sv[R], ev[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) {
         sv[k] = _mm512_loadu_si512(sPar.v + t + k * W);
         ev[k] = _mm512_loadu_si512(ePar.v + t + k * W);
     }
     if (LP.n8a + LP.n8s > 0) {
         rows8_512<R>(LP, ev, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm512_storeu_si512(ePar.v + t + k * W, ev[k]);
     }
+    CN_UNROLL
     for (int k = 0; k < R; k++) {
         sv[k] = _mm512_sub_epi16(sv[k], ev[k]);
         ev[k] = _mm512_loadu_si512(eNew.v + t + k * W);
     }
     if (LN.n8a + LN.n8s > 0) {
         rows8_512<R>(LN, ev, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm512_storeu_si512(eNew.v + t + k * W, ev[k]);
     }
+    CN_UNROLL
     for (int k = 0; k < R; k++) sv[k] = _mm512_add_epi16(sv[k], ev[k]);
     rows8_512<R>(LO, sv, t);
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm512_storeu_si512(dst.v + t + k * W, sv[k]);
 }
 
@@ -2677,26 +2739,33 @@ void apply_kingstep(const RowList& LP, const RowList& LN, const RowList& LO, con
 // CN_AVX2_FUSED (see apply_refresh): with 16 registers only one accumulator tile is live, so S(parent) - parent entry
 // waits in dst (stored, then read back from L1) while the child's entry is brought to the board. The order of the
 // steps is the AVX-512 one: the child's entry is read after the parent's was written.
-inline void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
-                          Acc& eNew, Acc& dst, int t) {
+CN_TILE_INLINE void kingstep_tile(const RowList& LP, const RowList& LN, const RowList& LO, const Acc& sPar, Acc& ePar,
+                                  Acc& eNew, Acc& dst, int t) {
     constexpr int R = 8, W = 16;
     __m256i       r[R];
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(ePar.v + t + k * W));
     if (LP.n8a + LP.n8s > 0) {
         rows8_256<R>(LP, r, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(ePar.v + t + k * W), r[k]);
     }
+    CN_UNROLL
     for (int k = 0; k < R; k++)
         _mm256_storeu_si256((__m256i*)(dst.v + t + k * W),
                             _mm256_sub_epi16(_mm256_loadu_si256((const __m256i*)(sPar.v + t + k * W)), r[k]));
+    CN_UNROLL
     for (int k = 0; k < R; k++) r[k] = _mm256_loadu_si256((const __m256i*)(eNew.v + t + k * W));
     if (LN.n8a + LN.n8s > 0) {
         rows8_256<R>(LN, r, t);
+        CN_UNROLL
         for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(eNew.v + t + k * W), r[k]);
     }
+    CN_UNROLL
     for (int k = 0; k < R; k++)
         r[k] = _mm256_add_epi16(r[k], _mm256_loadu_si256((const __m256i*)(dst.v + t + k * W)));
     rows8_256<R>(LO, r, t);   // the O rows of the move (int8)
+    CN_UNROLL
     for (int k = 0; k < R; k++) _mm256_storeu_si256((__m256i*)(dst.v + t + k * W), r[k]);
 }
 

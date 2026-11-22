@@ -666,6 +666,13 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
   // The hash entry is read before the window is narrowed to the reachable mate distances (order of ours, 28/10/2026):
   // the read depends on the position only, and a node that closes on the mate distance does not read its frame again.
   n.excluded = f->excluded;
+  // The corrections first (p02, 22/11/2026, speed, same values): corr_signal reads only the keys, the side, the
+  // fifty-move counter and the frames of the previous moves, all final at this point, and nothing between here and
+  // its old place (after the mate-distance step) writes them. Issued before the probe, its four table loads (lines
+  // fetched ahead by the make) and the hash bucket load are in flight together instead of one after the other. A node
+  // that closes on the mate distance now computes it without reading it: no value changes.
+  n.signal = corr_signal(td, f);
+  n.signal_x = corr_signal_extra(td);
   hash_read(td, n.h);
   f->tt_hit = n.h.hit;
   if (n.root)
@@ -688,8 +695,7 @@ static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
   f->stat_score = 0;
   f[2].cutoff_cnt = 0;
   f[1].null_cuts = 0;   // NmpSibCut: the children of this node count their null-move cuts afresh
-  n.signal = corr_signal(td, f);
-  n.signal_x = corr_signal_extra(td);
+  // (n.signal and n.signal_x: computed before the hash probe, see above.)
   // per-band tables: piece band of Consilium, or with C2Cells the slot of the node's cell (01_params.inc)
   n.cell = (C2Cells || g_cell_on) ? c2_cell(td) : 0;
   n.expert = C2Cells ? g_cell_band[n.cell] : search_band(td);
