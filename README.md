@@ -43,11 +43,29 @@ has given you a good game, you can help it learn the next one. Every contributio
 
 <div align="center">
 
-[8.1](#triumviratus-81) · [8.0](#triumviratus-80) · [Rating lists](#rating-lists) · [Download](#download) · [What is new](docs/project/NOVELTIES.md) ·
+[Lex Hortensia](#lex-hortensia-the-network-of-90) · [8.1](#triumviratus-81) · [8.0](#triumviratus-80) · [Rating lists](#rating-lists) · [Download](#download) · [What is new](docs/project/NOVELTIES.md) ·
 [Networks](docs/networks/NETWORKS.md) · [Tests](docs/tests/) · [History](docs/project/HISTORY.md) ·
 [Credits](#credits) · [License](#license)
 
 </div>
+
+---
+
+## Lex Hortensia, the network of 9.0
+
+The next network, **Lex Hortensia** (architecture `TRANN5`), is **trained and published**
+([network file](https://github.com/Tors3/Triumviratus-Networks/releases/tag/lex-hortensia), 24 November 2026). It is the
+default network of the `dev` branch, which will become Triumviratus 9.0. Its design comes from the lessons of
+Consilium Plebis: offline studies of what its experts, PSQT and pawn blocks contribute, judged on game results, and
+speed measurements of the engine. It has **six experts per side with the queen as a boundary**, feature rows of
+exactly 1024 bytes with the PSQT in a 24 KB piece-square table, a pawn-king block active only in the pawn endgames,
+and **32 layer stacks** chosen by piece count and by which side has a queen. The game measurements come with the 9.0
+release.
+
+<p align="center"><img src="docs/networks/next_network_design.svg" alt="Lex Hortensia architecture: six int8 HalfKA experts chosen per side by the opponent's material with the queen as a boundary, two 1024 accumulators without PSQT, a 24 KB piece-square table, a 128-unit pawn-king block active only in pawn endgames, 32 layer stacks chosen by piece count and by which side has a queen" width="100%"></p>
+
+[Design and measurements](docs/networks/NETWORKS.md#the-next-network--future-training-direction-not-in-training-now) ·
+[network file](https://github.com/Tors3/Triumviratus-Networks/releases/tag/lex-hortensia)
 
 ---
 
@@ -75,20 +93,6 @@ layer stack.
 [Architecture and measurements](docs/networks/NETWORKS.md#consilium-plebis--the-network-of-triumviratus-81) ·
 [network file](https://github.com/Tors3/Triumviratus-Networks/releases/tag/consilium-plebis) ·
 [recipe](https://github.com/Tors3/Triumviratus-Networks/tree/main/recipes/07_consilium-plebis).
-
-<details>
-<summary><b>The next network: future training direction (not in training now)</b></summary>
-
-No network is being trained now. This design, **Lex Hortensia** (architecture `TRANN5`), comes from the lessons of Consilium Plebis: offline studies of what its
-experts, PSQT and pawn blocks contribute, judged on game results, and speed measurements of the engine (November
-2026). It has six experts with the queen as a boundary, rows of exactly 1024 bytes with the PSQT in a small table,
-a pawn-king block only in the pawn endgames and 32 layer stacks.
-
-<p align="center"><img src="docs/networks/next_network_design.svg" alt="Design of the next network: six int8 HalfKA experts chosen per side by the opponent's material with the queen as a boundary, two 1024 accumulators without PSQT, a 24 KB piece-square table, a 128-unit pawn-king block active only in pawn endgames, 32 layer stacks chosen by piece count and by which side has a queen" width="100%"></p>
-
-[Details](docs/networks/NETWORKS.md#the-next-network--future-training-direction-not-in-training-now)
-
-</details>
 
 ---
 
