@@ -774,6 +774,43 @@
                                          /* / 1,806. The cells carry signal (corr. with the residual +0.24), */ \
                                          /* NPS cost ~1%, tree unchanged: off, goes into the SPSA CORR1 from 4011 */ \
   P(CorrContOppUpd, 70, 0, 256)          /* step of the opponent continuation, /128 */                    \
+  /* 24/11/2026, the plan as a memory of the corrections (docs/PIANO_9.0_RETE_FISSATA s.14; the author's line after  */ \
+  /* CorrContOppW on Lex); OFF at 0, tree unchanged:                                                                  */ \
+  P(CorrContOpp5W, 0, 0, 30000)          /* the opponent's plan over three moves: their move at -5 with the one at */ \
+                                         /* -1, same cells as CorrContOppW (as -2/-4/-6 share CorrContW's)  */ \
+  P(CorrContOpp5Upd, 70, 0, 256)         /* step of that cell, /128 */                                    \
+  P(CorrContOwnW, 0, 0, 30000)           /* our own plan: our move at -4 with our move at -2, in a table of its */ \
+                                         /* own (cont_corr_own): the shared cells of a same-colour pair are  */ \
+                                         /* CorrContOppW's, seen from the other side                          */ \
+  P(CorrContOwnUpd, 70, 0, 256)          /* step of our-plan cell, /128 */                                \
+  /* Long-term plan of the game (search/10_plan.inc; the 8.1 study of 01/11/2026 brought back 24/11/2026 for       */ \
+  /* PlanLmrLow alone, plan s.14). OFF at Plan 0; Plan 1 with PlanLmr and PlanLmrLow at 0 keeps the plan, no node   */ \
+  /* changes. Values of the 8.1 study.                                                                              */ \
+  P(Plan, 0, 0, 1)                       /* keep the plan of the game (map built at each search)          */ \
+  P(PlanKeep, 870, 0, 1023)              /* moving average of the target weights, /1024 kept per search   */ \
+  P(PlanSources, 15, 1, 15)              /* bit 1 network placements, 2 pairs, 4 pawn structure, 8 end of line */ \
+  P(PlanReach, 3, 1, 4)                  /* moves of a piece for the placements                           */ \
+  P(PlanK, 3, 1, 8)                      /* best squares kept per piece                                   */ \
+  P(PlanGainMin, 36, 0, 2000)            /* smallest gain of a placement                                  */ \
+  P(PlanCap, 712, 1, 4000)               /* largest gain (above: a tactic of the relocation)              */ \
+  P(PlanPairTop, 6, 0, 12)               /* single placements combined in pairs                           */ \
+  P(PlanPairMax, 30, 0, 66)              /* pair probes per side                                          */ \
+  P(PlanPairMin, 18, 0, 2000)            /* a pair is kept when it beats its better single by this        */ \
+  P(PlanPairW, 1024, 0, 2048)            /* credit of a pair to its targets, /1024                        */ \
+  P(PlanPawnPush, 3, 1, 5)               /* pawn pushes to a lever or of a passed pawn                    */ \
+  P(PlanPvPly, 16, 2, 32)                /* plies of the line played read at the end of the search        */ \
+  P(PlanPvGain, 178, 0, 2000)            /* gain of a square reached at the end of the line               */ \
+  P(PlanRoute, 5, 1, 7)                  /* length of the routes of the map                               */ \
+  P(PlanTargets, 24, 1, 64)              /* heaviest targets per colour in the map                        */ \
+  P(PlanMin, 18, 0, 2000)                /* smallest weight of a target in the map                        */ \
+  P(PlanPawnBreak, 5, 0, 32)             /* pawn squares changed that end the plan                        */ \
+  P(PlanContra, 107, 0, 4000)            /* root score drop after a plan move that ends the plan          */ \
+  P(PlanRootMin, 30, 0, 4000)            /* value of a root move that "follows" the plan                  */ \
+  P(PlanScale, 16, 1, 1024)              /* saturation of a move's value on the plan                      */ \
+  P(PlanLmr, 0, -4096, 4096)             /* 1/1024 ply less reduction for a quiet move of the plan        */ \
+  P(PlanLmrLow, 0, -4096, 4096)          /* more of it in proportion to how low the move's statistic is   */ \
+                                         /* (8.1: PlanLmr 512 + PlanLmrLow 1024 -8.5 +- 8.7 / 1,438 UHO;  */ \
+                                         /* PlanLmrLow alone never measured)                               */ \
   P(CorrLearnMode, 0, 0, 15)             /* bit 1: nothing if excluded without moves; 2: nothing in excluded */ \
                                          /* nodes; 4: nothing from decided values; 8: exact PV nodes in every */ \
                                          /* direction. 06/10 at 12+0.12: =1 does not change the bench (skipped); */ \

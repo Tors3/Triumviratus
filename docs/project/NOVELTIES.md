@@ -4,7 +4,7 @@
 
 # Triumviratus: what is new
 
-**The techniques of Triumviratus 8.1 for which no earlier example was found in the published work of other engines**
+**The techniques of Triumviratus for which no earlier example was found in the published work of other engines**
 
 **by Francesco Torsello**
 
@@ -16,12 +16,13 @@
 
 <div align="center">
 
-[Method](#method) · [Summary](#summary) · [Consilium](#1-consilium-experts-by-material-on-the-first-layer) ·
+[Method](#method) · [Summary](#summary) · [In use](#a-in-use) · [Tested, off](#b-tested-and-off) ·
+[Not yet tested](#c-written-not-yet-tested) · [Consilium](#1-consilium-experts-by-material-on-the-first-layer) ·
 [PassedPawns](#2-the-passedpawns-input-block) · [CorrPhase](#3-correction-history-per-material-band-corrphase) ·
 [HistGrad](#4-the-quiet-history-as-a-listwise-ranker-histgrad) ·
 [Bishop-pair capture](#5-capture-of-a-bishop-of-the-pair-in-move-ordering) ·
 [Slider attacks](#6-slider-attacks-on-avx-512) · [Analysis build](#7-analysis-build-position-solver) ·
-[In development](#8-in-development) · [Open checks](#9-open-checks)
+[Open checks](#8-open-checks)
 
 </div>
 
@@ -29,11 +30,13 @@
 
 ## Method
 
-First written on 9 October 2026, during the development of 8.0; revised on 7 November 2026 for the 8.1 release. The
-register lists the techniques that the 8.1 release uses and for which no earlier example was found, and, in a
-separate section ([§8](#8-in-development)), the new ideas that are written but not used in 8.1 and will be tested
-again for the next version. Known ideas that the project uses in its own form, and ideas that were tried and closed,
-are not listed.
+First written on 9 October 2026, during the development of 8.0; revised on 7 November 2026 for the 8.1 release and on
+24 November 2026 during the development of 9.0. The register lists the project's new ideas in three blocks: those in
+use ([A](#a-in-use)), those tested and off by default, with their code kept ([B](#b-tested-and-off)), and those written
+but not yet tested ([C](#c-written-not-yet-tested)). Blocks B and C are public so that the record of priority is; no
+claim of strength is made for an idea until it passes a test in its final form, and a partial measurement, where one is
+given, is not a result. Known ideas that the project uses in its own form, and ideas of other engines, are not
+listed.
 
 Every technique was compared with other engines in two ways: by reading the source code of nine engines (Stockfish 19,
 Reckless, PlentyChess 8.0, Viridithas 20, Berserk 14, Caissa 2.0, Coda, Integral 8, Stormphrax 8.0) and by searching
@@ -53,17 +56,47 @@ margin and the number of games; the full context of each is in [`DEVELOPMENT_8.0
 
 ## Summary
 
-| entry | category | version | measured effect | in 8.1 |
+### A. In use
+
+On by default in the releases; each has its section below.
+
+| entry | category | version | measured effect | status |
 |---|---|---|---|---|
-| Experts by material on the king-relative input block: Consilium (8.0, four experts by piece count) and Consilium Plebis (8.1, eight experts per side, chosen by the opponent's non-pawn material) | New | 8.0, 8.1 | 8.0 against 7.0 **+27.3 ± 8.3** (15+0.15, 2,000 games), of which about +15 from the network with its tuning; Consilium Plebis over Consilium **+10.3 ± 4.3** (same search, 30k nodes per move, 8,332 games) | the 8.1 network |
+| Experts by material on the king-relative input block: Consilium (8.0, four experts by piece count) and Consilium Plebis (8.1, eight experts per side, chosen by the opponent's non-pawn material) | New | 8.0, 8.1 | 8.0 against 7.0 **+27.3 ± 8.3** (15+0.15, 2,000 games), of which about +15 from the network with its tuning; Consilium Plebis over Consilium **+10.3 ± 4.3** (same search, 30k nodes per move, 8,332 games) | the 8.1 network; the 9.0 network (Lex Hortensia) also has experts by material |
 | `PassedPawns` input block (96 inputs) | New | 6.0 | **+6.96 Elo** (15+0.15, 2,596 games), network alone | in every network since 6.0 |
 | Correction history per material band (`CorrPhase`) | New in its form | 8.0 | **+3.2 ± 3.8** (12+0.12, 8,634) | in use |
 | History update as a listwise ranker (`HistGrad`) | New | 8.1 | non-regression test passed (5+0.05, both sockets and a Zen 4 laptop, 11,166 games); a stronger blend (512) did not hold | in use at 256 |
 | Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone; adopted in 8.0 with the tuned vector of the ordering terms (+3.4 ± 3.9, about 8,100 games) | in use |
 | Slider attacks by obstruction difference on the four lines of a square in one AVX-512 register | New in its form | 8.1 | **−0.98%** cycles per node in the middlegame, **−1.20%** in endgames, whole engine (hardware counters, PGO build, Xeon) | default of the AVX-512 builds |
 
-The analysis build has its own section ([§7](#7-analysis-build-position-solver)), and the ideas in development
-another ([§8](#8-in-development)), both outside this table.
+The analysis build has its own section ([§7](#7-analysis-build-position-solver)), outside this table.
+
+### B. Tested and off
+
+New ideas of the project tested in games and off by default, because the test lost, was flat or was stopped before a
+decision. Their code is kept, in the source as options or in the project's archive, and each can be tested again on a
+later search or network.
+
+| entry | category | where it acts | tested | state |
+|---|---|---|---|---|
+| Correction from the opponent's plan (`CorrContOppW`, the author's idea): a continuation-correction term whose pair of moves is the opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan, instead of one of our moves and its answer. The engines read use only pairs that contain one of our moves | New | correction of the static evaluation | 8.0: −5.2 ± 12.7 over 742 games (12+0.12, weight 4011) and −4.8 ± 8.7 over 1,806 (8+0.08, weight 8000); 8.1: +1.5 ± 4.8 over 4,882 (8+0.08, UHO), stopped before a decision | off; SPRT on the 9.0 search and network running since 24 November 2026 |
+| Knight outposts in move ordering (`OutpostOrder`, `OutpostSafe`, the author's idea): a bonus for a knight move to a square on ranks 4-6 defended by an own pawn and out of reach of every enemy pawn, now and later; with `OutpostSafe` also without an enemy bishop of the square's colour. Outposts are a classical evaluation term; none of the nine engines read uses them in move ordering, and no example was found on the web | New | move ordering | 8.0: weight 8000 alone +0.2 ± 3.9 over 8,244 games (10+0.1), stopped | off; to be tuned again with the current ordering |
+| Pawn break in a closed structure reduced less (`RdPawnBreak`, the author's idea): when at least three pawns are blocked, a quiet pawn push that attacks an enemy pawn, offering the exchange that opens a file or a diagonal, has its late-move reduction lowered. The engines read do not condition any reduction on the pawn structure | New | search reductions | 8.0: a first test on UHO openings at 7+0.07, where closed structures are rare and the term seldom acts: +1.3 ± 9.0, not decided | off; to be measured on openings with closed structures |
+| Helper threads specialised by material regime (`SmpAff`, the author's direction): each helper of the parallel search takes a range of the material regimes read from the experts of the network and reduces less in the nodes of its range, so the threads share one network but divide the tree by the kind of position. Helpers with different search parameters are known; the division of the work by the experts of the network needs a network with experts by material | New in its form | parallel search | 8.1: four threads at 3+0.03 with hyperthreading, conditions that cannot show a gain of the parallel search, stopped at +2.8 | off; to be measured at many threads |
+| Plans at the root (the author's idea, 31 October - 1 November 2026): a goal map (each piece moved on the frozen board, the network judges the placement, routes of single pieces lead to the targets) and a long-term plan of the game (targets kept across the moves as a moving average, with pairs of placements, pawn-structure targets and the squares reached by the line played), read by the reductions and the ordering of quiet moves. The planning programs of the past (PIONEER, PARADISE) used full target positions and hand-written judges | New in its form | search reductions, move ordering | 8.1: goal map in the reductions flat at every dose; earlier pruning off the plan −6.0, more reduction off the plan −13.8 over 378 games, both stopped; long-term plan with `PlanLmr` 512 and `PlanLmrLow` 1024 −8.5 ± 8.7 over 1,438 games (UHO openings), +2.6 ± 6.8 over 672 on closed positions. The signal measured offline was mostly the network's static view, which the search already has | off; removed from the source on 1 November 2026, code in the archive; `PlanLmrLow` alone brought back (block C) |
+
+### C. Written, not yet tested
+
+New ideas whose code is written and off by default, or, for the network, designed and trained as grafts, not yet
+tested in games. For the entries of 24 November 2026 the comparison with the engines read is still to be done, so
+their category is provisional.
+
+| entry | category | where it acts | state |
+|---|---|---|---|
+| The opponent's plan over three moves (`CorrContOpp5W`, 24 November 2026, after `CorrContOppW`): the same correction term with the opponent's move five plies back paired with the one a ply back, in the same table, so the correction follows a longer fragment of the opponent's plan | New in its form (to be checked) | correction of the static evaluation | in the 9.0 code, off; single SPRT, then the correction block in an SPSA |
+| Our own plan in the corrections (`CorrContOwnW`, 24 November 2026): the pair of our two last moves (four plies back and two plies back) as the key of a continuation-correction table of its own. In a shared table a pair of moves of one colour is already the opponent's plan of `CorrContOppW`, whose error is seen by the other side to move, hence the separate table | New in its form (to be checked) | correction of the static evaluation | in the 9.0 code, off; single SPRT, then the correction block in an SPSA |
+| The long-term plan in the reduction of the low-ranked quiet moves (`Plan`, `PlanLmrLow` alone): the plan of block B, kept across the moves, lowers the reduction of a quiet move of the plan in proportion to how low the history ranks it. The offline measurement of 1 November 2026 found the plan worth about five times more for these moves; in 8.1 it was tested only together with `PlanLmr` | New in its form | search reductions | brought back into the 9.0 code on 24 November 2026, off; single SPRT |
+| Passed pawns with their relations (`PassedRel`, `PassedState`): an extension of the `PassedPawns` block with the relations of each passed pawn (outside the enemy king's square, connected, free path; or one of 100 states of the passer) | New | network inputs | trained as grafts on the 8.0 network; a candidate for the next network |
 
 ---
 
@@ -208,24 +241,11 @@ Crystal and ShashChess found no option like these two; as above, this is to our 
 | Preference for the more direct win (`AnDirect`): when both exact lines win clearly (above +3), the direct one (check, capture, promotion, or a sacrifice: a quiet move that loses material by static exchange) is shown and played if the higher one is not direct and the gap is at most 4 pawns; the search tree is unchanged | New | same tree: IQ4 163 → 166 at 4M nodes (three solutions added, none lost), Arasan 178 unchanged; without the sacrifice in the definition, 164 (a quiet sacrifice was lost) | default in the Position Solver |
 | The second line paused in quiet positions (`AnShQuiet`): from root depth 10, when the two best moves are quiet and the score has stayed within 15 cp for three iterations, the search goes on with one line | New | eight collections at 1M nodes +20 (SBD, quiet key moves, 98 → 110); higher budgets +7 | default in the Position Solver |
 
-## 8. In development
-
-New ideas of the project that 8.1 does not use. Their code is written and off by default, or, for the network, the
-blocks are designed and trained as grafts; each will be tested again for the next version, on the 8.1 search and
-network. They are listed here so that the record of priority is public; no claim of strength is made for them until
-they pass a test in their final form, and a partial measurement, where one is given, is not a result.
-
-| entry | category | where it acts | state |
-|---|---|---|---|
-| Knight outposts in move ordering (`OutpostOrder`, `OutpostSafe`, the author's idea): a bonus for a knight move to a square on ranks 4-6 defended by an own pawn and out of reach of every enemy pawn, now and later; with `OutpostSafe` also without an enemy bishop of the square's colour. Outposts are a classical evaluation term; none of the nine engines read uses them in move ordering, and no example was found on the web | New | move ordering | in the code, off in 8.1; to be tuned again with the 8.1 ordering |
-| Helper threads specialised by material regime (`SmpAff`, the author's direction): each helper of the parallel search takes a range of the material regimes read from the experts of the network and reduces less in the nodes of its range, so the threads share one network but divide the tree by the kind of position. Helpers with different search parameters are known; the division of the work by the experts of the network needs a network with experts by material | New in its form | parallel search | in the code, off in 8.1; to be measured at many threads |
-| Correction from the opponent's plan (`CorrContOppW`, the author's idea): a continuation-correction term whose pair of moves is the opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan, instead of one of our moves and its answer. The engines read use only pairs that contain one of our moves | New | correction of the static evaluation | in the code, off in 8.1; on the 8.1 search and network, weight 8000 against off at 8+0.08 (UHO): +1.5 ± 4.8 over 4,882 games, test stopped before a decision, to be continued |
-| Pawn break in a closed structure reduced less (`RdPawnBreak`, the author's idea): when at least three pawns are blocked, a quiet pawn push that attacks an enemy pawn, offering the exchange that opens a file or a diagonal, has its late-move reduction lowered. The engines read do not condition any reduction on the pawn structure | New | search reductions | in the code, off in 8.1 |
-| Passed pawns with their relations (`PassedRel`, `PassedState`): an extension of the `PassedPawns` block with the relations of each passed pawn (outside the enemy king's square, connected, free path; or one of 100 states of the passer) | New | network inputs | trained as grafts on the 8.0 network; a candidate for the next network |
-
-## 9. Open checks
+## 8. Open checks
 
 1. **Experts by material and recent engines.** No engine with input buckets by material was found, but the developer
    channels are not indexed. Every statement of priority here is meant to our knowledge; corrections are welcome.
 2. **Move ordering and `HistGrad`.** For the bishop-pair capture, the knight outposts and `HistGrad`, nine engines and
    the web were checked; Obsidian, Koivisto, Ethereal and recent Berserk were not read line by line.
+3. **The entries of 24 November 2026.** `CorrContOpp5W` and `CorrContOwnW` (block C) are not yet compared with the
+   engines read; their category is provisional until that is done.

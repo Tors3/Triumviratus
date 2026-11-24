@@ -622,6 +622,18 @@ static int corr_signal(const ThreadData &td, const NodeFrame *f) {
     // context, was closed (-7.6 +- 7.8 at 20+0.2).
     if (CorrContOppW)
       cont += CorrContOppW * (*f[-3].cont_corr)[pc][to];
+    // The plan as a memory of the corrections (24/11/2026, OFF at 0; docs/PIANO_9.0_RETE_FISSATA s.14). After
+    // CorrContOppW held on Lex, the same idea over a longer and a symmetric span. CorrContOpp5W: the opponent's plan
+    // over three moves, their move at -5 with the one at -1, in the same cells as CorrContOppW (as -2, -4 and -6 share
+    // CorrContW's). CorrContOwnW: our own plan, our move at -4 with our move at -2. Its table is separate
+    // (td.cont_corr_own, per thread): in the shared one the cell of a same-colour pair is CorrContOppW's, which holds
+    // the error seen by the other side to move. Pieces and squares come from the moves, as the rows of step_in.
+    if (CorrContOpp5W)
+      cont += CorrContOpp5W * (*f[-5].cont_corr)[pc][to];
+    if (CorrContOwnW && move_ok(f[-2].move) && move_ok(f[-4].move)) {
+      const int a = f[-4].move, b = f[-2].move;
+      cont += CorrContOwnW * td.cont_corr_own[move_piece(a)][move_to(a)][move_piece(b)][move_to(b)];
+    }
   }
   // (CorrPairCont, two entries keyed by the position paired with the ones 1 and 2 plies back, closed negative,
   // removed 04/11/2026.)

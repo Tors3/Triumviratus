@@ -2316,6 +2316,16 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
       else
         r -= SmpAffLmr;
     }
+    // Long-term plan (10_plan.inc; OFF at PlanLmr = PlanLmrLow = 0, and with Plan 0 no map exists): a quiet move of the
+    // plan is reduced less, in proportion to its value and, for PlanLmrLow, to how low its statistic score is. Only in
+    // the root's material regime; never below zero reduction through this term.
+    if ((PlanLmr | PlanLmrLow) && !tact && !gives && !n.in_check && plan_node(td)) {
+      const int less = plan_lmr_less(us, m, f->stat_score);
+      if (less > 0)
+        r = std::max(r - less, std::min(r, 0));
+      else
+        r -= less;   // negative values of the options: more reduction
+    }
     // AnGold, tweaks of the reductions far from the root (units 1/1024 ply): in attack captures and checks
     // -60, in defence the quiet moves -40, in manoeuvring the quiet moves without check +80 from depth 9.
     if (gd_style && n.depth > 5 && f->ply > 1) {

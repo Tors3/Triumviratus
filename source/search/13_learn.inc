@@ -105,6 +105,13 @@ struct Learner {
         hist_learn((*f[-6].cont_corr)[pc][to], amount * CorrCont6Upd / 128, LIM_CORR, g);
       if (CorrContOppW)
         hist_learn((*f[-3].cont_corr)[pc][to], amount * CorrContOppUpd / 128, LIM_CORR, g);
+      if (CorrContOpp5W)   // the opponent's plan over three moves (24/11/2026, corr_signal in 09_history.inc)
+        hist_learn((*f[-5].cont_corr)[pc][to], amount * CorrContOpp5Upd / 128, LIM_CORR, g);
+      if (CorrContOwnW && move_ok(f[-2].move) && move_ok(f[-4].move)) {   // our own plan (24/11/2026)
+        const int a = f[-4].move, b = f[-2].move;
+        hist_learn(td.cont_corr_own[move_piece(a)][move_to(a)][move_piece(b)][move_to(b)], amount * CorrContOwnUpd / 128,
+                   LIM_CORR, g);
+      }
     }
     if (CorrExpertW)
       hist_learn(static_cast<int16_t (*)[2]>(td.st_corr_x)[corr_expert_key(td) & td.st_corr_mask][us], amount * CorrExpertUpd / 128, LIM_CORR, g);

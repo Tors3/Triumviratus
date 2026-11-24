@@ -91,6 +91,7 @@ unsigned long long prof_dead_pair[8][8] = {};
 #include "search/08_movegen.inc"
 #include "search/09_history.inc"
 #include "search/10_order.inc"
+#include "search/10_plan.inc"     // long-term plan of the game (OFF at Plan 0; 24/11/2026, from the 8.1 study)
 #include "search/11_queue.inc"
 #include "search/12_quiesce.inc"
 #include "search/13_search.inc"

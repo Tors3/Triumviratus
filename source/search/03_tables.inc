@@ -273,13 +273,17 @@ static void thread_stats_reset(ThreadData &td) {
   fill_with(&td.low_ply_hist[0][0], (size_t)LOW_PLY_SIZE * QH_SIZE, 0);
   fill_with(&td.capt_hist[0][0][0], (size_t)12 * 64 * 7, (int16_t)HistInitCapt);
   fill_with(&td.cont_corr[0][0], (size_t)(NO_PC + 1) * 64, (int16_t)HistInitContCorr);
+  fill_with(&td.cont_corr_own[0][0], (size_t)12 * 64, (int16_t)HistInitContCorr);   // CorrContOwnW
   td.tt_move_hist = 0;
 }
 
 // Time-management state that lives between one move of the game and the next (13_deepen.inc).
 static void clock_memory_reset();
 
+static void plan_clear();   // 10_plan.inc: the long-term plan restarts with each game
+
 void search_clear() {
+  plan_clear();
   for (auto &td : thread_data) {
     thread_stats_reset(td);
     // 21/10/2026: the pawn-king cache restarts with each game too. It holds exact outputs, so no evaluation changes,

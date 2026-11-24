@@ -226,6 +226,7 @@ struct alignas(128) ThreadData {
     int16_t    low_ply_hist[LOW_PLY_SIZE][QH_SIZE];
     int16_t    capt_hist[12][64][7];
     PieceToRow cont_corr[NO_PC + 1][64];
+    PieceToRow cont_corr_own[12][64];   // CorrContOwnW (24/11/2026): our move at -4 x our move at -2, per thread
     int        tt_move_hist;
 
     // Rete incrementale

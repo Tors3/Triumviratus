@@ -298,6 +298,8 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
     TT_PREFETCH(&(*f[-3].cont_corr)[pc][to]);
     if (CorrContOppW)
       TT_PREFETCH(&(*f[-2].cont_corr)[pc][to]);
+    if (CorrContOpp5W)   // the child at -5 (24/11/2026)
+      TT_PREFETCH(&(*f[-4].cont_corr)[pc][to]);
   }
   return true;
 }

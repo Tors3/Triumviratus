@@ -428,6 +428,14 @@ void search_position_mt(int depth) {
     td.sel_depth = 0;
     reset_root_lines(td, list, n);
   }
+  // Long-term plan (10_plan.inc; OFF at Plan 0): the plan of the game takes this root's targets and gives the map every
+  // thread reads, before the helpers start.
+  if (Plan)
+    plan_begin(thread_data[0],
+               td_is_square_attacked(thread_data[0], get_ls1b_index(thread_data[0].bitboards[side == white ? K : k]),
+                                     side ^ 1));
+  else
+    g_plan.skip = true, g_plan_map.on = false;
 
   while ((int)g_helper_workers.size() < num_threads - 1)
     g_helper_workers.push_back(new SearchWorker());
@@ -445,6 +453,8 @@ void search_position_mt(int depth) {
 
   ThreadData *bt = g_limits.depth ? &thread_data[0] : pick_thread();
   RootLine &line = bt->root[0];
+  if (!g_plan.skip)   // the plan after the search (10_plan.inc): the evaluation's verdict, the line's last squares
+    plan_end(thread_data[0], line);
   opp_judge(line.score);   // ContemptOpp: before the new score replaces the previous one
   g_clock.prev_best = line.score;
   g_clock.prev_avg = line.avg_score;
