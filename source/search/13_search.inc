@@ -995,8 +995,12 @@ static int eval_gates(ThreadData &td, NodeFrame *f, NodeState &n) {
 template <bool AN>
 static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int max_depth = n.hunt_mate ? RfpHuntDepth : e_rfp_max_depth(td);
-  if (f->tt_pv || n.depth >= max_depth || n.eval < n.beta || (n.h.move && !n.tact_hash) || val_lost(n.beta) ||
-      val_won(n.eval))
+  // Verified extension (24/11/2026, baked from the RfpQsExt option at 4): up to 4 plies past the depth limit the rule
+  // still applies, but its verdict must be confirmed by a null-window quiescence search at beta (below, before the
+  // return). Not in mate hunts.
+  const bool qs_verify = !n.hunt_mate && n.depth >= max_depth && n.depth < max_depth + 4;
+  if (f->tt_pv || (n.depth >= max_depth && !qs_verify) || n.eval < n.beta || (n.h.move && !n.tact_hash) ||
+      val_lost(n.beta) || val_won(n.eval))
     return NO_VALUE;
   int mult = std::min(RfpMultBase + n.depth * RfpMultDepth, RfpMultCap) + (AN ? td.dz_rfp : deep_term(td, DeepRfp));
   if (AN && td.gd_rfp_pct != 100)
@@ -1042,6 +1046,14 @@ static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
   PL_SET(pl_rfp, margin);
   if (n.eval - margin < n.beta)
     return NO_VALUE;
+  if (qs_verify) {   // past the depth limit the capture sequences must agree; the node keeps its own frame fields
+    const int se = f->static_eval;
+    const bool th = f->tt_hit;
+    const int qv = quiesce(td, f, n.beta - 1, n.beta, false);
+    f->static_eval = se, f->tt_hit = th;
+    if (qv < n.beta)
+      return NO_VALUE;
+  }
   PL_RULE(2);
   return (RfpBetaWeight * n.beta + (1024 - RfpBetaWeight) * n.eval) / 1024;
 }
@@ -1434,7 +1446,9 @@ template <bool AN>
 static bool skip_move(ThreadData &td, NodeFrame *f, NodeState &n, MoveQueue &q, int m, bool tact, bool gives,
                       int r, int ctx) {
   const int us = td.side;
-  if (n.root || val_lost(n.best) || (AN && n.crystal))
+  // In check (24/11/2026, baked from the EvasKeep option): the few legal replies are all searched; the capture gate
+  // would read there a static evaluation copied from two plies back.
+  if (n.root || val_lost(n.best) || (AN && n.crystal) || n.in_check)
     return false;
   const U64 own_pieces = td.occupancies[us] & ~td.bitboards[us == white ? P : p] & ~td.bitboards[us == white ? K : k];
   if (!own_pieces)

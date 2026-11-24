@@ -109,3 +109,21 @@ came after the measurement of section 1.2, so they are not in its 9.0 numbers. T
 
 Two more were measured and dropped: accumulator tiles of 8 registers instead of 16 (slower on the Xeon, and on the
 Zen 4 once the changes above were in), and a bitset of the non-zero groups in the AVX2 forward pass (+2.7% cycles).
+
+## 2. Search changes
+
+### 2.1 Two search levers of 24 November 2026
+
+Two changes to the search went in together, each tested alone first, none negative.
+
+- **In check every legal reply is searched.** The move gates no longer skip evasions. The capture gate read there a
+  static evaluation copied from two plies back.
+- **Reverse futility goes up to 4 plies past its depth limit.** There its cut must be confirmed by a null-window
+  quiescence search at beta. Not in mate hunts.
+
+Bundle SPRT against the tree before: +1.17 ± 1.89 Elo over 32,052 games (8+0.08, UHO openings, [−1, 2]). Bench
+309144 → 271761.
+
+**Still to check at a long time control.** The second change only acts at remaining depths 19 to 22. At 8+0.08 such
+nodes are rare (the bench is the same with and without it), so the short SPRT measured mostly the first change. An
+SPRT at 40+0.4 of the second change alone, with the first on both sides, decides whether it stays.
