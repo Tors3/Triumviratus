@@ -127,3 +127,15 @@ Bundle SPRT against the tree before: +1.17 ± 1.89 Elo over 32,052 games (8+0.08
 **Still to check at a long time control.** The second change only acts at remaining depths 19 to 22. At 8+0.08 such
 nodes are rare (the bench is the same with and without it), so the short SPRT measured mostly the first change. An
 SPRT at 40+0.4 of the second change alone, with the first on both sides, decides whether it stays.
+
+### 2.2 The correction from the opponent's plan (`CorrContOppW`), 24 November 2026
+
+The correction of the static evaluation reads continuation tables keyed by pairs of moves. The ones in use pair one of
+our moves with the opponent's answer. `CorrContOppW`, the author's idea of 6 October 2026, adds the pair of the
+opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan. On 8.0 it lost
+(−5.2 ± 12.7 over 742 games at weight 4011, −4.8 ± 8.7 over 1,806 at 8000) and stayed off. With Lex Hortensia it holds.
+
+SPRT at weight 8000 against off: +2.70 ± 2.15 Elo over 24,698 games (8+0.08, UHO openings, [−1, 2], H1). Bench
+271761 → 302771. The weight stays a parameter, for the SPSA of the correction block that follows the single tests of
+its two extensions (the opponent's plan over three moves, our own two last moves) and of the long-term plan in the
+reduction, all written and off.

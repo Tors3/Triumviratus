@@ -58,7 +58,8 @@ margin and the number of games; the full context of each is in [`DEVELOPMENT_8.0
 
 ### A. In use
 
-On by default in the releases; each has its section below.
+On by default in the releases (for 9.0: in the development line); the older entries have their section below, the
+newest their record in the development log.
 
 | entry | category | version | measured effect | status |
 |---|---|---|---|---|
@@ -68,6 +69,7 @@ On by default in the releases; each has its section below.
 | History update as a listwise ranker (`HistGrad`) | New | 8.1 | non-regression test passed (5+0.05, both sockets and a Zen 4 laptop, 11,166 games); a stronger blend (512) did not hold | in use at 256 |
 | Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone; adopted in 8.0 with the tuned vector of the ordering terms (+3.4 ± 3.9, about 8,100 games) | in use |
 | Slider attacks by obstruction difference on the four lines of a square in one AVX-512 register | New in its form | 8.1 | **−0.98%** cycles per node in the middlegame, **−1.20%** in endgames, whole engine (hardware counters, PGO build, Xeon) | default of the AVX-512 builds |
+| Correction from the opponent's plan (`CorrContOppW`, the author's idea): a continuation-correction term whose pair of moves is the opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan, instead of one of our moves and its answer. The engines read use only pairs that contain one of our moves | New | 9.0 | **+2.70 ± 2.15** (8+0.08, UHO openings, 24,698 games, SPRT [−1, 2] passed) on the 9.0 search and network; on 8.0 it had lost (−5.2 ± 12.7 over 742, −4.8 ± 8.7 over 1,806) | in use since 24 November 2026 at weight 8000 ([`DEVELOPMENT_9.0.md` §2.2](../development/DEVELOPMENT_9.0.md)) |
 
 The analysis build has its own section ([§7](#7-analysis-build-position-solver)), outside this table.
 
@@ -79,7 +81,6 @@ later search or network.
 
 | entry | category | where it acts | tested | state |
 |---|---|---|---|---|
-| Correction from the opponent's plan (`CorrContOppW`, the author's idea): a continuation-correction term whose pair of moves is the opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan, instead of one of our moves and its answer. The engines read use only pairs that contain one of our moves | New | correction of the static evaluation | 8.0: −5.2 ± 12.7 over 742 games (12+0.12, weight 4011) and −4.8 ± 8.7 over 1,806 (8+0.08, weight 8000); 8.1: +1.5 ± 4.8 over 4,882 (8+0.08, UHO), stopped before a decision | off; SPRT on the 9.0 search and network running since 24 November 2026 |
 | Knight outposts in move ordering (`OutpostOrder`, `OutpostSafe`, the author's idea): a bonus for a knight move to a square on ranks 4-6 defended by an own pawn and out of reach of every enemy pawn, now and later; with `OutpostSafe` also without an enemy bishop of the square's colour. Outposts are a classical evaluation term; none of the nine engines read uses them in move ordering, and no example was found on the web | New | move ordering | 8.0: weight 8000 alone +0.2 ± 3.9 over 8,244 games (10+0.1), stopped | off; to be tuned again with the current ordering |
 | Pawn break in a closed structure reduced less (`RdPawnBreak`, the author's idea): when at least three pawns are blocked, a quiet pawn push that attacks an enemy pawn, offering the exchange that opens a file or a diagonal, has its late-move reduction lowered. The engines read do not condition any reduction on the pawn structure | New | search reductions | 8.0: a first test on UHO openings at 7+0.07, where closed structures are rare and the term seldom acts: +1.3 ± 9.0, not decided | off; to be measured on openings with closed structures |
 | Helper threads specialised by material regime (`SmpAff`, the author's direction): each helper of the parallel search takes a range of the material regimes read from the experts of the network and reduces less in the nodes of its range, so the threads share one network but divide the tree by the kind of position. Helpers with different search parameters are known; the division of the work by the experts of the network needs a network with experts by material | New in its form | parallel search | 8.1: four threads at 3+0.03 with hyperthreading, conditions that cannot show a gain of the parallel search, stopped at +2.8 | off; to be measured at many threads |

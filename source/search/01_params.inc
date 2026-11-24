@@ -768,11 +768,12 @@
   P(CorrCont6W, 5776, 0, 30000)          /* continuation also with our move at -6 (0 = off)               */ \
                                          /* 02/11: on with the other weights rebalanced (BAKE CORR6)      */ \
   P(CorrCont6Upd, 35, 0, 256)            /* step of the continuation at -6, /128 */                       \
-  P(CorrContOppW, 0, 0, 30000)           /* user's idea (06/10): continuation with the opponent's PLAN, the */ \
+  P(CorrContOppW, 8000, 0, 30000)        /* user's idea (06/10): continuation with the opponent's PLAN, the */ \
                                          /* pair (their move at -3, their move at -1); 0 = off           */ \
-                                         /* =4011 at 12+0.12 -5.15 +- 12.68 / 742; =8000 at 8+0.08 -4.81 +- 8.67 */ \
-                                         /* / 1,806. The cells carry signal (corr. with the residual +0.24), */ \
-                                         /* NPS cost ~1%, tree unchanged: off, goes into the SPSA CORR1 from 4011 */ \
+                                         /* 8.0: =4011 at 12+0.12 -5.15 +- 12.68 / 742, =8000 at 8+0.08     */ \
+                                         /* -4.81 +- 8.67 / 1,806 (off). BAKE 24/11/2026 at 8000 on the 9.0 */ \
+                                         /* tree with Lex: +2.70 +- 2.15 / 24,698 (UHO 8+0.08, [-1, 2], H1); */ \
+                                         /* a weight, kept as a parameter for the SPSA of the corrections   */ \
   P(CorrContOppUpd, 70, 0, 256)          /* step of the opponent continuation, /128 */                    \
   /* 24/11/2026, the plan as a memory of the corrections (docs/PIANO_9.0_RETE_FISSATA s.14; the author's line after  */ \
   /* CorrContOppW on Lex); OFF at 0, tree unchanged:                                                                  */ \
