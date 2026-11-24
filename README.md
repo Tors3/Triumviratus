@@ -29,6 +29,7 @@ has given you a good game, you can help it learn the next one. Every contributio
 
 **Downloads of each release**
 
+[![9.0 pre](https://img.shields.io/github/downloads/Tors3/Triumviratus/v9.0-prerelease-20261124/total?label=v9.0%20pre)](https://github.com/Tors3/Triumviratus/releases/tag/v9.0-prerelease-20261124)
 [![8.1](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.1/total?label=v8.1)](https://github.com/Tors3/Triumviratus/releases/tag/v8.1)
 [![8.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v8.0/total?label=v8.0)](https://github.com/Tors3/Triumviratus/releases/tag/v8.0)
 [![7.0](https://img.shields.io/github/downloads/Tors3/Triumviratus/v7.0/total?label=v7.0)](https://github.com/Tors3/Triumviratus/releases/tag/v7.0)
