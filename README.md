@@ -218,8 +218,8 @@ It installs git if it is missing, checks Visual Studio 2022 with its clang compo
 downloads [`build/setup_toolchain.ps1`](build/setup_toolchain.ps1) and says how to run it), downloads the source and
 the network (checked by SHA-256 and MD5), and builds with PGO every variant your CPU can run, each one verified by
 `bench`. The executables are in `%USERPROFILE%\Triumviratus_release\variants\`, and a zip of the same folder is left on
-the Desktop. `-Variants` with one or more names builds only those, and `-Ref <tag or commit>` builds another version.
-The seven variants:
+the Desktop. `-Variants` with one or more names builds only those, and `-Ref <branch, tag or commit>` builds another
+version: `-Ref dev` builds the 9.0 development engine with Lex Hortensia. The seven variants:
 
 - `sse41`: x86-64 CPUs without AVX2;
 - `avx2-nopext`: AVX2 where PEXT is slow (AMD Zen 1 and Zen 2);
@@ -233,11 +233,12 @@ The seven variants:
 (checked by SHA-256 and MD5), checks the compiler and builds with PGO. Each variant's profile is recorded on a CPU
 that runs it: every machine builds and verifies the variants its CPU runs, then one machine joins the profiles into the
 universal executable, which the others verify by bench (instructions at the top of the script; from 8.1 on).
-`source/universal/build_universal.ps1` builds everything on one machine in one go. On `main`, `make -C source`
-builds the current development engine with Consilium Plebis. macOS and Linux builds come from the GitHub Actions
+`source/universal/build_universal.ps1` builds everything on one machine in one go. `make -C source` builds the engine
+of the branch with its network (Consilium Plebis on `main`, Lex Hortensia on `dev`), embedded when
+the `.nnue` file is in `source/`, otherwise read from beside the binary. macOS and Linux builds come from the GitHub Actions
 workflows [`macos.yml`](.github/workflows/macos.yml) and [`linux.yml`](.github/workflows/linux.yml).
 
-**Large pages (recommended).** The 8.1 network is large: about 250 MB of weights, and every evaluation reads rows
+**Large pages (recommended).** The network is large (about 250 MB of weights in 8.1, 205 MB in 9.0), and every evaluation reads rows
 scattered over the whole block, so on the normal 4 KB pages the processor loses time translating addresses. On 2 MB
 pages Triumviratus is about 7% faster at the same search tree (Xeon, 8.1 development build, 29 October 2026). On
 Windows they need the "Lock pages in memory" right: run `secpol.msc`, open *Local Policies > User Rights Assignment >
