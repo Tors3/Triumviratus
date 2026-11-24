@@ -549,7 +549,7 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
 #if defined(NN_PREBOARD)
   // The board before the first pending move, as the make saved it (the root is state 0, first >= 1 always).
   {
-    const U64 *pre = S.pre[first];
+    const std::uint64_t *pre = S.pre[first];   // the type of S.pre (U64 is unsigned long long, uint64_t is not on Linux)
     for (int t = 0; t < 6; t++)
       tb.type[t] = pre[t];
     tb.color[white] = pre[6];
