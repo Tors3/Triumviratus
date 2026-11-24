@@ -6,7 +6,7 @@
   "bench_possolver": null,
   "network": {
     "file": "nn-lex-hortensia.nnue",
-    "url": "",
+    "url": "https://github.com/Tors3/Triumviratus-Networks/releases/download/lex-hortensia/nn-lex-hortensia.nnue",
     "bytes": 205649601,
     "sha256": "5a33b3786b608819434cd8fc500054e94effa78509eb69ba0a9c089740a9590c",
     "md5": "ae75c7784d375701e1eb7310daaa49a7"
