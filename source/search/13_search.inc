@@ -38,17 +38,15 @@ struct NodeState {
   int  eval, eval_raw, signal;
   int  signal_x;                  // experimental corrections in the evaluation only, not in the selectivity (CorrExpertW)
   int  prev_to;
-  int  pc_miss[4], pc_miss_n;     // ProbCutMiss: captures the node's ProbCut searched and found below beta
+  int  pc_miss_n;                 // ProbCutMiss: how many captures pc_miss (below) holds
   int  excluded;
   int  prior_red;
   HashView h;
-  int  quiets[TRACKED], n_quiets;
-  int  quiet_score[TRACKED];      // HistGrad: ordering score of each quiet move tried (INT_MIN: not from a sorted stage)
+  int  n_quiets;                  // quiet moves in quiets (below)
   int  best_score;                // HistGrad: ordering score of the best move (INT_MIN: none)
-  unsigned char quiet_ctx[TRACKED];   // ThreatHist: threat context of each quiet move tried
   int  best_ctx;                  // ThreatHist: context of the best move (0 if tactical)
-  int  tacts[TRACKED], n_tacts;
-  U64  causal;                    // CausalRed: squares of the refutation of the last quiet move that failed low (0 = none)
+  int  n_tacts;                   // tactical moves in tacts (below)
+  U64  causal;                   // CausalRed: squares of the refutation of the last quiet move that failed low (0 = none)
   int  expert;                   // network expert for the node's material (net_phase), for the *Exp* margins
   int  disagree;                 // |psqt - positional| of the network on this node, -1 when the eval came from the hash
   // C2 search ideas (agent A): the Consilium Plebis experts of the node, read only when an idea needs them (g_c2_node).
@@ -68,6 +66,14 @@ struct NodeState {
   // R19 techniques (03/11/2026, 01_params.inc), written only when their lever is on.
   bool sing_drop;                // SingDropHash: the exclusion search came back above the hash value
   bool rep_seen;                 // CorrRepLearn: a repetition was in reach at entry
+  // The arrays last (25/11/2026, speed, same values): the scalars above, written at every node entry, fill the first
+  // lines of the structure; before, the 0.4 KB of arrays sat between them and every node touched five lines of its
+  // NodeState instead of two. The arrays are written only as moves are tried.
+  int  pc_miss[4];                // ProbCutMiss: captures the node's ProbCut searched and found below beta
+  int  quiets[TRACKED];           // quiet moves tried (for the maluses)
+  int  quiet_score[TRACKED];      // HistGrad: ordering score of each quiet move tried (INT_MIN: not from a sorted stage)
+  unsigned char quiet_ctx[TRACKED];   // ThreatHist: threat context of each quiet move tried
+  int  tacts[TRACKED];            // tactical moves tried
 };
 
 // -DTRIUMV_CORRSTATS -DTRIUMV_CORRNET_STATS (measurement build, one thread): what CorrNetW knows that the other
