@@ -142,11 +142,11 @@ static inline int fail_penalty(const NodeState &n) {
 // move. A best move the ordering already expected learns little, a surprising one a lot; a tried move rated low by the
 // ordering is barely punished, one rated high in full. HistGradMix blends this with the fixed amounts (1024 = full);
 // the factors average 1 over a uniform p, so the size of the update is kept. Factors /1024, clamped to [0, 3072].
-static inline int hist_grad_factors(const NodeState &n, int fq[TRACKED]) {
-  for (int i = 0; i < n.n_quiets; i++)
-    fq[i] = 1024;
-  if (!HistGradMix || n.best_score == INT_MIN)
-    return 1024;
+// (25/11/2026, speed, same factors) The softmax is out of line (hist_grad_softmax): inlined, its floating-point work
+// kept four values in xmm6-9 across the calls of std::exp, so on_node_outcome saved and restored those four registers at
+// every call, also for a capture, a fail low or a best move without an ordering score (the hash move, most often), which
+// never reach the softmax. Same float operations in the same order.
+__attribute__((noinline)) static int hist_grad_softmax(const NodeState &n, int fq[TRACKED]) {
   const float t = 1.0f / std::max(HistGradT, 1);
   int top = n.best_score, ranked = 1;
   for (int i = 0; i < n.n_quiets; i++)
@@ -160,6 +160,13 @@ static inline int hist_grad_factors(const NodeState &n, int fq[TRACKED]) {
     if (n.quiet_score[i] != INT_MIN)
       fq[i] = std::clamp(1024 + int(HistGradMix * (ranked * w[i] / z - 1.0f)), 0, 3072);
   return std::clamp(1024 + int(HistGradMix * (2.0f * (1.0f - w_best / z) - 1.0f)), 0, 3072);
+}
+static inline int hist_grad_factors(const NodeState &n, int fq[TRACKED]) {
+  for (int i = 0; i < n.n_quiets; i++)
+    fq[i] = 1024;
+  if (!HistGradMix || n.best_score == INT_MIN)
+    return 1024;
+  return hist_grad_softmax(n, fq);
 }
 
 // ----------------------------------------------------------------------------
