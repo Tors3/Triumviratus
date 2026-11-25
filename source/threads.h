@@ -36,18 +36,24 @@ constexpr int CAPT_NONE     = 6;             // captured type for promotions wit
 typedef int16_t PieceToRow[12][64];
 
 // State of one ply of the current path.
-struct NodeFrame {
+// (25/11/2026, speed, same values) 64 bytes and aligned to a cache line: one frame = one line. Before, 72 bytes: the
+// nine frames a node reads (f[-6] .. f[2]: continuation rows, static evaluations, counts) spread over ten or eleven
+// lines. Three fields are narrower, with the same values: captured holds -1..11, move_count at most the 218 moves of a
+// position, reduction a difference of depths below max_ply; cutoff_cnt keeps its int (it counts the cutoffs of all
+// the grandchildren of a node).
+struct alignas(64) NodeFrame {
     PieceToRow* cont_hist;        // continuation history chosen by the move leading to the child
     PieceToRow* cont_corr;        // continuation correction history, same key
     int  ply;
     int  move;                    // move made at this ply (0 = none, NULL_MOVE = null move)
-    int  captured;                // piece captured by that move (P..k), -1 = none
     int  excluded;                // excluded move (singular search)
     int  static_eval;
     int  stat_score;
-    int  move_count;
     int  cutoff_cnt;
-    int  reduction;
+    int  refute;                  // CausalRed: move that gave the beta cutoff in this node (0 = none)
+    int16_t move_count;
+    int16_t reduction;
+    signed char captured;         // piece captured by that move (P..k), -1 = none
     bool in_check;
     bool tt_pv;
     bool tt_hit;
@@ -56,8 +62,7 @@ struct NodeFrame {
     unsigned char ldse_path;      // Ldse extensions along the line up to this node
     unsigned char negext;         // the move being searched from this frame is extended by a negative reduction (NegExtMax)
     unsigned char negext_path;    // extensions from negative reduction along the line up to this node
-    int  refute;                  // CausalRed: move that gave the beta cutoff in this node (0 = none)
-    unsigned char hctx;           // ThreatHist: threat context of the move made at this ply (0 = none)
+    unsigned char hctx;          // ThreatHist: threat context of the move made at this ply (0 = none)
     // C2 regime selectivity (21/10/2026; 13_search.inc), written only when the option that reads them is on.
     unsigned char c2pair;         // C2SameRegImp: Consilium Plebis experts of this node (White | Black << 4)
     unsigned char settle;         // C2SettleHorizon: the move searched from this frame got the settling ply
@@ -65,6 +70,7 @@ struct NodeFrame {
     unsigned char nn_hold;        // C2HoldDepth / C2HoldQs: the children of this node keep its experts (06_nndirty.inc)
     unsigned char null_cuts;      // NmpSibCut: null-move cuts so far among the nodes of this frame, the children of one parent
 };
+static_assert(sizeof(NodeFrame) == 64, "NodeFrame: one cache line");
 
 // A root move with its line and the statistics collected on it.
 struct RootLine {
