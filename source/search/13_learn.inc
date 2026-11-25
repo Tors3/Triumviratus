@@ -252,12 +252,9 @@ static void on_hash_cut(ThreadData &td, NodeFrame *f, const NodeState &n) {
 // The static evaluation changed since the previous ply: the change, clamped and offset, teaches the opponent's quiet
 // move that led here (main statistic, and the pawn table when the node had no hash entry). Weight per expert (HlEval);
 // EvPen scales the penalties (negative change) apart from the rewards.
-static void on_eval_change(ThreadData &td, NodeFrame *f, const NodeState &n) {
-  if (!move_ok(f[-1].move) || f[-1].in_check || n.prior_capture)
-    return;
-  // EvalDiffShallow (R19 B2.b; 0 = always): deep nodes with a hash entry learn it only below that depth.
-  if (EvalDiffShallow && n.depth >= EvalDiffShallow && n.h.hit)
-    return;
+// (25/11/2026, speed, same updates) The tests of the event are inline (on_eval_change, below): every node that reaches
+// the evaluation gates asks, and after a capture, a check or a null move it learns nothing, without paying the call.
+__attribute__((noinline)) static void on_eval_change_learn(ThreadData &td, NodeFrame *f, const NodeState &n) {
   const Learner L(td, f, n.expert);
   const int change = std::clamp(-(f[-1].static_eval + f->static_eval), -EvalDiffLo, EvalDiffHi) + EvalDiffOfs;
   const int pm = f[-1].move;
@@ -268,6 +265,14 @@ static void on_eval_change(ThreadData &td, NodeFrame *f, const NodeState &n) {
   const int pc = td.piece_on[n.prev_to];
   if (!n.h.hit && pc % 6 != P && !get_move_promoted(pm))
     hist_learn(pawn_row(td)[pc][n.prev_to], change * EvalDiffPawnMul * w / 1024, LIM_PAWN, L.grav);
+}
+static inline void on_eval_change(ThreadData &td, NodeFrame *f, const NodeState &n) {
+  if (!move_ok(f[-1].move) || f[-1].in_check || n.prior_capture)
+    return;
+  // EvalDiffShallow (R19 B2.b; 0 = always): deep nodes with a hash entry learn it only below that depth.
+  if (EvalDiffShallow && n.depth >= EvalDiffShallow && n.h.hit)
+    return;
+  on_eval_change_learn(td, f, n);
 }
 
 // A reduced move cleared alpha and was searched again (ours, 19/10/2026): confirmed, it earns FollowFhBonus plus
