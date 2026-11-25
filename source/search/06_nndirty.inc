@@ -455,7 +455,7 @@ static inline void nn_make_dirty(ThreadData &td, int piece, int source, int targ
     int e1b = rt[cn_sig(n[1], bsh[1], r[1], q[1]) * 54 + cn_sig(n[0], bsh[0], r[0], q[0])];
     // Expert holds (25/10/2026, 01_params.inc, off): keep the parent's experts (C2HoldDepth, C2HoldQs: the frame said
     // so through td.nn_hold) while the true one is close enough. C2HoldRoot and C2HoldPv removed on 27/10/2026.
-    if (td.nn_hold) {
+    if ((C2HoldDepth || C2HoldQs) && td.nn_hold) {
       if (std::abs(e1w - e0w) <= C2HoldDist) e1w = e0w;
       if (std::abs(e1b - e0b) <= C2HoldDist) e1b = e0b;
     }

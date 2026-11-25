@@ -2735,7 +2735,9 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
   }
   // Expert holds (25/10/2026, 01_params.inc, off): the children of a shallow node (C2HoldDepth) keep this node's
   // experts (step_in passes the flag to the make).
-  f->nn_hold = (unsigned char)(C2HoldDepth && n.depth <= C2HoldDepth);
+  // (25/11/2026) Read by step_in only while a hold lever is on (12_quiesce.inc).
+  if (C2HoldDepth || C2HoldQs)
+    f->nn_hold = (unsigned char)(C2HoldDepth && n.depth <= C2HoldDepth);
 
   int v = node_open(td, f, n);
   if (v != NO_VALUE) return v;

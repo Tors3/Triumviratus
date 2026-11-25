@@ -272,9 +272,15 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
   }
   if (f->in_check && !legal && !td_make_move(td, m, u)) {
 #else
-  td.nn_hold = f->nn_hold;   // expert holds (C2HoldDepth, C2HoldQs): read by the make, cleared right after it
+  // Expert holds (C2HoldDepth, C2HoldQs): read by the make, cleared right after it. (25/11/2026, speed, same values)
+  // Only while a hold lever is on: otherwise td.nn_hold stays 0 and the frames' value is never read (a constant test in
+  // the release, where both levers are 0).
+  const bool holds = C2HoldDepth || C2HoldQs;
+  if (holds)
+    td.nn_hold = f->nn_hold;
   const int made = td_make_move(td, m, u, (legal || !f->in_check) && !(g_chess960 && get_move_castling(m)));
-  td.nn_hold = 0;
+  if (holds)
+    td.nn_hold = 0;
   if (!made) {
 #endif
     td.ply--;
@@ -563,7 +569,8 @@ static TRIUMV_SEARCH_CC int quiesce(ThreadData &td, NodeFrame *f, int alpha, int
   // ---- 1. Early exits -------------------------------------------------------
   td.pv_length[td.ply] = td.ply;
   // Expert holds: quiescence is below any depth limit (C2HoldDepth); C2HoldQs holds here only.
-  f->nn_hold = (unsigned char)(C2HoldDepth || C2HoldQs);
+  if (C2HoldDepth || C2HoldQs)   // read by step_in only while a hold lever is on (25/11/2026)
+    f->nn_hold = 1;
   if (alpha < contempt(td) && td_upcoming_repetition(td)) {   // a repetition is in reach: the draw is a floor
     alpha = draw_score(td);
     if (alpha >= beta)
