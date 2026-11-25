@@ -886,10 +886,8 @@ void nn_bind_node_net(int node) {
 
 void nn_set_pk_stale(void* handle, int on) { static_cast<CnPos*>(handle)->h->pkStale = on; }
 
-thread_local int nn_last_disagree = -1;
-
 int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
-                int side_white, int rule50) {
+                int side_white, int rule50, int* last_disagree) {
     CnPos*        p = static_cast<CnPos*>(handle);
     const NnBoard board(bb, occ, mailbox, side_white ? WHITE : BLACK);
     const int*    opt = g_opt_per_thread ? p->opt : nullptr;
@@ -918,7 +916,7 @@ int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long 
                    std::uint32_t(cn::pk_signature(NET_REF, *p->h, board.view(), 32, true)));
 #endif
     const int inc = nn_scale(board, ps, po, rule50, nullptr, opt);
-    nn_last_disagree  = std::abs(int(o.psqt) - int(o.positional));
+    *last_disagree    = std::abs(int(o.psqt) - int(o.positional));
 
     if (g_verify) {
         // Same position from scratch: final values and both accumulators must be identical.

@@ -213,6 +213,7 @@ struct alignas(128) ThreadData {
     // each search start). The tables are rebuilt only when the expert pair of the position changes.
     mutable int c2_see_pair;
     int        tt_move_hist;          // hash-move statistic (13_learn.inc)
+    int        nn_disagree = -1;      // |psqt - positional| of the last network evaluation (nn_pos_eval), -1 = none
     // Rete incrementale
     void* nnpos = nullptr;
     NnStack* nnstack = nullptr;   // stack of the dirty entries of the nnpos handle: written by make and unmake (06_nndirty.inc)

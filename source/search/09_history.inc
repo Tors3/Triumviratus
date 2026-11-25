@@ -33,7 +33,7 @@ static inline int td_nn_eval(ThreadData &td) {
     nn_dirty_catch_up(td);
   }
   nn_verify_sync(td);
-  return nn_pos_eval(td.nnpos, td.bitboards, td.occupancies, td.piece_on, td.side == white, td.fifty);
+  return nn_pos_eval(td.nnpos, td.bitboards, td.occupancies, td.piece_on, td.side == white, td.fifty, &td.nn_disagree);
 }
 
 // The evaluation is damped with the fifty-move counter: v * (199 - fifty) / 199. The hash keeps the value WITHOUT the
@@ -293,7 +293,7 @@ static inline bool c2_even_trade(const ThreadData &td, int m) {
 static inline int c2_pk_skip(const ThreadData &td) { return nn_pk_skip(td.nnpos, td.bitboards, td.side == white); }
 // Conversion push with the exact pawn-king effect (C2ConvPkSrc 1, 21/10/2026): the value of the current position,
 // side to move's view, positional units. _fresh only right after this position was evaluated by the network
-// (node_evaluate, nn_last_disagree >= 0); _now at any time (catches up the dirty stack, as td_nn_eval).
+// (node_evaluate, td.nn_disagree >= 0); _now at any time (catches up the dirty stack, as td_nn_eval).
 static inline bool c2_conv_exact() {   // per-node exact effect; not with C2ConvRoot (decided at the root only)
   return (C2ConvOrder | C2ConvRed) && C2ConvPkSrc == 1 && C2ConvEffW && !C2ConvRoot;
 }

@@ -873,11 +873,11 @@ static void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {
     n.eval = f->static_eval;
     n.eval_raw = n.h.hit ? n.h.eval_raw : tt_eval_none;
   } else {
-    nn_last_disagree = -1;
+    td.nn_disagree = -1;   // written by nn_pos_eval (consilium_bridge.h) only when the network evaluates
     if (C2PkStale)   // shallow node: a pawn-king miss reuses the last outputs (01_params.inc)
       nn_set_pk_stale(td.nnpos, n.depth <= C2PkStale);
     const int plain = node_eval(td, n.h, n.eval_raw);
-    n.disagree = nn_last_disagree;   // -1 when node_eval took the evaluation from the hash
+    n.disagree = td.nn_disagree;   // -1 when node_eval took the evaluation from the hash
     // CorrNetW (09/11/2026, OFF; 09_history.inc): the hidden state of a fresh evaluation and its correction, which
     // enters the evaluation only (signal_x).
     if ((CorrNetW || CN_SHADOW) && n.disagree >= 0) {

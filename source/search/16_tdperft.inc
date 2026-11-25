@@ -189,14 +189,14 @@ static inline void nnp_eval(ThreadData &td) {
 static U64 nnp_rec(ThreadData &td, int depth) {
   const bool evaluated = depth == 0 || td.hash_key % 3 == 0;
   if (evaluated) {
-    nn_last_disagree = -1;   // set again only by an incremental network evaluation (the fresh case below)
+    td.nn_disagree = -1;   // set again only by an incremental network evaluation (the fresh case below)
     nnp_eval(td);
   }
   // Conversion push (C2ConvPkSrc 1, 21/10/2026): the exact pawn-king effect the search would read, right after an
   // evaluation (fresh) and, at one internal node in seven not evaluated, on demand (now); the bridge compares both with
   // the value from scratch under nnueverify (a difference counts in "bad"). Only with the option set.
   if (C2ConvPkSrc && !nnp_lean) {
-    if (evaluated && nn_last_disagree >= 0)
+    if (evaluated && td.nn_disagree >= 0)
       c2_pk_effect_fresh(td);
     else if (!evaluated && td.hash_key % 7 == 0)
       c2_pk_effect_now(td);

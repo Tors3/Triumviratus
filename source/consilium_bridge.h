@@ -164,7 +164,7 @@ static inline int c2_conv_lean(int v, int from, int cap) {
 // The exact pawn-king effect (cn::pk_effect: what the subnetwork adds to the positional output, side to move's view,
 // positional units) of the thread's CURRENT position, for the search version (C2ConvPkSrc 1). Never a value left by
 // another position: nn_pk_effect_fresh is valid only right after nn_pos_eval evaluated this very position with the
-// network (incremental path; the search knows it from nn_last_disagree >= 0) and costs one pass of the layers after
+// network (incremental path; the search knows it from a last_disagree >= 0) and costs one pass of the layers after
 // l1 (none when C2ConvW already computed it in that evaluation); nn_pk_effect_now works at any time: it brings the
 // accumulators of the top state up to date (the children need them anyway), reruns the forward pass and adds that
 // pass (the engine must have caught up the dirty stack first, as for nn_pos_eval). 0 when no network is loaded.
@@ -193,13 +193,14 @@ void  nn_prefetch_move(const unsigned long long* bb, int phase, int pc, int from
 // Evaluate the current position (internal units, side to move). The network reads the engine's board: bb[12] in the
 // order P,N,B,R,Q,K,p,n,b,r,q,k, occ[3] = white/black/all, mailbox[64] with -1 = empty, all with a8 = 0. side_white and
 // rule50 are the search's. The dirty states up to this position must be complete (the engine's nn_dirty_catch_up).
+// *last_disagree: |psqt - positional| of this evaluation (19/10/2026): how much the two parts of the network disagree on
+// the position, read by the search (RdDisagree). Written only by an evaluation of the incremental network; the caller
+// resets it to -1 before an evaluation that may come from the hash instead of the network.
+// (25/11/2026, speed, same values) A field of the caller's thread (ThreadData::nn_disagree) instead of a thread_local of
+// this unit: with clang-cl every access to a thread_local of another unit went through the thread's TLS block and the
+// on-demand initialisation guard (gs:[0x58], the TLS index, a test), up to three times per evaluation of the search.
 int   nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
-                  int side_white, int rule50);
-
-// |psqt - positional| of the last nn_pos_eval on this thread (19/10/2026): how much the two parts of the network
-// disagree on the position, read by the search (RdDisagree). The caller resets it to -1 before an evaluation that may
-// come from the hash instead of the network.
-extern thread_local int nn_last_disagree;
+                  int side_white, int rule50, int* last_disagree);
 
 // nnueverify: evaluations compared and evaluations that differed since startup.
 unsigned long long nn_verify_count(void);
