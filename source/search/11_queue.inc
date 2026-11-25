@@ -80,21 +80,21 @@ struct MoveQueue {
   int           n_tact, n_all;   // tactical moves in [0, n_tact), quiet moves in [n_tact, n_all)
   int           cur;
   int           n_lose, cur_lose;
-  ScoredMove    list[256];
-  unsigned char losers[256];
+  // (25/11/2026, speed, same values) The scalars first and the two lists last: queue_start writes and queue_next reads
+  // the scalars at every node and move, and before, behind the 2.3 KB of the lists, they sat four lines away from the
+  // head of the structure. Only the order of the fields changes.
   // The opponent's attacks in the node's position, computed by score_quiets (06/10/2026, SEE of quiet moves):
   // opp_att = every square it attacks, opp_slider = those seen by its sliders. Valid when opp_ready.
   bool          opp_ready;
-  U64           opp_att, opp_slider;
-  // ThreatHist: threatened squares per type of our piece (09_history.inc), written by score_quiets from the same maps
-  // as the ordering; valid when menace_ready.
+  // ThreatHist: threatened squares per type of our piece (menace, below); valid when menace_ready.
   bool          menace_ready;
-  U64           menace[6];
-  // Futility by move class (FutThr*, 01_params.inc): the squares where our piece of each type is attacked by a lesser
-  // enemy piece, and whether one of our pieces stands on such a square. Written by score_quiets from the same maps as
-  // the ordering, only with a FutThr lever on; valid when thr_ready.
+  // Futility by move class (FutThr*): thr_lesser below, and whether one of our pieces stands on such a square; valid
+  // when thr_ready.
   bool          thr_ready, thr_hang;
-  U64           thr_lesser[6];
+  // LmrRank (block 2 of 8.1, 16/10/2026): rank_ok = the last move handed out is a quiet move of the sorted list, with
+  // ordering score last_score; quiet_top = the highest score among the node's quiet moves (fill_quiets).
+  bool          rank_ok;
+  int           last_score, quiet_top;
   // ProbCutMiss (01_params.inc): the captures the node's ProbCut searched and found below beta, set by move_loop
   // (pc_miss_n = 0 otherwise); queue_next hands them out with the losing captures.
   const int    *pc_miss;
@@ -102,15 +102,22 @@ struct MoveQueue {
   // (08/10/2026) Boundary between good and bad quiet moves, known after sorting (quiet_split >= 0), or -1 (the list
   // is walked comparing each score).
   int           quiet_split;
-  LegalNode     lgen;            // legal generator: pins, checks and masks of the node, shared by the stages
-  // LmrRank (block 2 of 8.1, 16/10/2026): rank_ok = the last move handed out is a quiet move of the sorted list, with
-  // ordering score last_score; quiet_top = the highest score among the node's quiet moves (fill_quiets).
-  bool          rank_ok;
-  int           last_score, quiet_top;
   // Expert of the node and group thresholds: written by fill_tactics / fill_evasions (ex, good_capt) and fill_quiets
   // (good_quiet), read by queue_next.
   int           ex, good_capt, good_quiet;
   int           c2_conv;         // C2 idea 3: the side to move is ahead (+1) or behind (-1), set by move_loop; else 0
+  U64           opp_att, opp_slider;
+  LegalNode     lgen;            // legal generator: pins, checks and masks of the node, shared by the stages
+  // ThreatHist: threatened squares per type of our piece (09_history.inc), written by score_quiets from the same maps
+  // as the ordering.
+  U64           menace[6];
+  // Futility by move class (FutThr*, 01_params.inc): the squares where our piece of each type is attacked by a lesser
+  // enemy piece. Written by score_quiets from the same maps as the ordering, only with a FutThr lever on.
+  U64           thr_lesser[6];
+  // list before losers, as before: the whole-vector stores of the ranking (rank_into_v) stay inside list's 256 slots,
+  // and the adjacency of the two lists is the old one.
+  ScoredMove    list[256];
+  unsigned char losers[256];
 };
 
 // -DTRIUMV_PCMISS_STATS (measurement build, one thread): how much ProbCutMiss touches. Printed at exit.
