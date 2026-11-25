@@ -179,17 +179,28 @@ static bool go_flag(const char* command, const char* key)
 // parse UCI command "go"
 void parse_go(char* command)
 {
+    // Audit 25/11/2026: a "go" that arrives while a search still runs (no "position" in between) used to clear and
+    // rewrite the limits under the running search; it is stopped and joined first, as "position" does.
+    stop_search_threads();
+    wait_for_search_done();
     reset_time_control();
     SearchLimits& L = g_limits;
+    // Audit 25/11/2026: millisecond fields are read as long long and clamped, so a clock above 2^31 ms no longer
+    // wraps to a negative value (an instant move), and a negative movestogo counts as none.
+    auto ms = [&](const char* key) { return (int)std::clamp<long long>(go_value(command, key), INT_MIN / 2, INT_MAX / 2); };
     // Negative clock (GUI with a margin): counts as minimum time, not as "no clock".
-    L.time[white] = (int)go_value(command, "wtime");
-    L.time[black] = (int)go_value(command, "btime");
+    L.time[white] = ms("wtime");
+    L.time[black] = ms("btime");
     if (go_flag(command, "wtime") && L.time[white] <= 0) L.time[white] = 1;
     if (go_flag(command, "btime") && L.time[black] <= 0) L.time[black] = 1;
-    L.inc[white]  = (int)go_value(command, "winc");
-    L.inc[black]  = (int)go_value(command, "binc");
-    L.movestogo   = (int)go_value(command, "movestogo");
-    L.movetime    = (int)go_value(command, "movetime");
+    L.inc[white]  = std::max(ms("winc"), 0);
+    L.inc[black]  = std::max(ms("binc"), 0);
+    L.movestogo   = std::max(ms("movestogo"), 0);
+    L.movetime    = ms("movetime");
+    // Audit 25/11/2026: movetime keeps the Move Overhead too (stopping, joining and printing take time after the stop),
+    // as the clock plan does; before, every "go movetime N" answered after N ms plus that time.
+    if (L.movetime > 0)
+        L.movetime = std::max(1, L.movetime - g_move_overhead_ms);
     L.mate        = (int)go_value(command, "mate");
     L.nodes       = (U64)go_value(command, "nodes");
     L.infinite    = go_flag(command, "infinite");

@@ -195,7 +195,9 @@ static bool c2_line_switches(const ThreadData &td, const int *line, int plies) {
 
 static void clock_plan(int us, int game_ply, int overhead) {
   if (!g_limits.time[us]) {
-    g_clock.optimum = g_clock.maximum = INT_MAX / 2;
+    // Audit 25/11/2026: only the opponent's clock was given ("go btime 60000" with White to move): the search had no
+    // limit at all. With no clock of our own we use the increment, or the minimum.
+    g_clock.optimum = g_clock.maximum = g_limits.time[us ^ 1] ? std::max(1, g_limits.inc[us] - overhead) : INT_MAX / 2;
     return;
   }
   const double clock = g_limits.time[us], inc = g_limits.inc[us];
@@ -247,6 +249,8 @@ static void clock_plan(int us, int game_ply, int overhead) {
 }
 
 static inline double lerp_clamped(double x, double x0, double x1, double y0, double y1, double lo, double hi) {
+  if (x1 == x0)   // audit 25/11/2026: equal ends (possible inside the option ranges in an SPSA) gave 0/0 = NaN
+    return std::clamp(x < x0 ? y0 : y1, lo, hi);
   return std::clamp(y0 + (y1 - y0) * (x - x0) / (x1 - x0), lo, hi);
 }
 
@@ -633,6 +637,10 @@ static void deepen(ThreadData &td) {
 #endif
   NodeFrame *root = &td.frames[FRAME_OFFSET];
   prepare_frames(td);
+  // Audit 25/11/2026: the network's chain back to this root before anything evaluates it. The root evaluations below
+  // (C2ConvRoot, the analysis mode's gold facts) ran before the per-iteration sync and read the previous search's root
+  // accumulators and PSQT, still marked as computed.
+  nn_root_sync(td);
   // SmpRouteShift (21/10/2026): the odd helpers evaluate with the shifted routing table (built in start_search), set
   // here, in the thread itself, before its first evaluation; every other thread with the network's table.
   nn_thread_router(SmpRouteShift && (td.thread_id & 1));

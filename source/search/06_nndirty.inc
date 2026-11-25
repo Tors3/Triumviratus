@@ -304,7 +304,13 @@ static inline void nn_threat_steps(NnTB &tb, const Look &look, const NnDirtyPiec
     // (29/10/2026, speed, same accumulators) Castling on four different squares (always in chess, often in Chess960):
     // a king move, then a rook move, each skipping the lines it closes and reopens itself. Removing both and putting
     // both back opened and closed again 1.4 tuples per castling move (bench), two rows per perspective each.
-    if (count_bits((1ULL << from) | (1ULL << dp.to) | (1ULL << dp.remove_sq) | (1ULL << dp.add_sq)) == 4) {
+    // Audit 25/11/2026: each step skips the slider lines through its own two squares, which holds only when nothing
+    // stands between them. In Chess960 the king can jump over its own rook (e.g. Kd1-g1 with Re1-f1): the lines through
+    // the king's squares then also pass the rook, and a queen or rook behind kept (or lost) a threat on it. Then the
+    // general path below.
+    const bool rook_between = dp.remove_sq > std::min(from, (int)dp.to) && dp.remove_sq < std::max(from, (int)dp.to);
+    if (!rook_between &&
+        count_bits((1ULL << from) | (1ULL << dp.to) | (1ULL << dp.remove_sq) | (1ULL << dp.add_sq)) == 4) {
       nn_step_move(tb, look, pc, from, dp.to, dts);
       nn_step_move(tb, look, dp.remove_pc, dp.remove_sq, dp.add_sq, dts);
       return;

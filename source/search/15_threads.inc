@@ -456,9 +456,14 @@ void search_position_mt(int depth) {
   if (!g_plan.skip)   // the plan after the search (10_plan.inc): the evaluation's verdict, the line's last squares
     plan_end(thread_data[0], line);
   opp_judge(line.score);   // ContemptOpp: before the new score replaces the previous one
-  g_clock.prev_best = line.score;
-  g_clock.prev_avg = line.avg_score;
-  g_clock.have_prev = true;
+  // Audit 25/11/2026: a search stopped before its first iteration (a ponder search stopped at once) leaves the
+  // -infinity sentinel as the root score; kept as the previous score it clamped the next move's trend factor to its
+  // floor (about a third less time). The previous move's values then stay as they were.
+  if (line.score != -infinity) {
+    g_clock.prev_best = line.score;
+    g_clock.prev_avg = line.avg_score;
+    g_clock.have_prev = true;
+  }
   if (bt != &thread_data[0])
     report_lines(*bt, std::max(1, bt->completed_depth));
 
