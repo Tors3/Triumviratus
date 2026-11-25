@@ -1838,12 +1838,10 @@ static void ordlog_oracle(ThreadData &td, NodeFrame *f, NodeState &n, int depth0
 
 // Push of a passed pawn to the 6th or 7th rank in an endgame (ours). The network sees passed pawns with its
 // PassedPawns block; the search would treat them as any quiet move and could reduce them by several plies.
-static bool passed_push(const ThreadData &td, int m) {
-  if (kPieceKind[move_piece(m)] != P || get_move_capture(m) || get_move_promoted(m))
-    return false;
-  const int to = move_to(m), us = td.side, row = to / 8, file = to % 8;   // row 0 = ottava traversa
-  if (us == white ? (row != 1 && row != 2) : (row != 5 && row != 6))
-    return false;
+// (25/11/2026, speed, same answers) Asked for every quiet move of the move loop, and false at once for all but a pawn
+// push to the 6th or 7th rank: that test is inline (passed_push), the material and file test out of line.
+__attribute__((noinline)) static bool passed_push_slow(const ThreadData &td, int m) {
+  const int to = move_to(m), us = td.side, file = to % 8;
   const int *pv = piece_values_mat(td);
   int npm = 0;
   for (int t = N; t <= Q; t++)
@@ -1856,6 +1854,14 @@ static bool passed_push(const ThreadData &td, int m) {
   const int row_start = to - file;
   const U64 ahead = us == white ? (1ULL << row_start) - 1 : ~((1ULL << (row_start + 8)) - 1);
   return !(files & ahead & td.bitboards[us == white ? p : P]);
+}
+static inline bool passed_push(const ThreadData &td, int m) {
+  if (kPieceKind[move_piece(m)] != P || get_move_capture(m) || get_move_promoted(m))
+    return false;
+  const int row = move_to(m) / 8;   // row 0 = ottava traversa
+  if (td.side == white ? (row != 1 && row != 2) : (row != 5 && row != 6))
+    return false;
+  return passed_push_slow(td, m);
 }
 
 // Is the move a back-and-forth shuffle without progress (same piece between the same squares)?
