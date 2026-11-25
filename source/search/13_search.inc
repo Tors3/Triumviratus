@@ -640,7 +640,11 @@ static void poll_limits(ThreadData &td) {
 // --------------------------------------------------------------------------
 // Stage 1: node entry. Returns a value if the node closes here.
 // --------------------------------------------------------------------------
-static TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
+// (25/11/2026, speed, same values) node_open, node_evaluate and node_close are always inline in explore, their only caller:
+// out of line they were three calls per node with six or seven saved registers each. To be measured on its own; the
+// frame of explore must stay under the 4 KB of the stack probe (checked in the disassembly).
+__attribute__((always_inline)) static inline TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f,
+                                                                            NodeState &n) {   // System V: 09_history.inc
   // The threshold is the draw value for the side to move (0 without Contempt): so alpha never drops (05/10/2026,
   // porting audit: with threshold 0 Contempt lowered alpha on the root side).
   if (!n.root && n.alpha < contempt(td) && td_upcoming_repetition(td)) {
@@ -885,7 +889,8 @@ __attribute__((always_inline)) static inline int tablebase_probe(ThreadData &td,
 // --------------------------------------------------------------------------
 // Stage 2: evaluation and cuts before the move loop.
 // --------------------------------------------------------------------------
-static TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
+__attribute__((always_inline)) static inline TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f,
+                                                                                 NodeState &n) {   // System V
   n.eval_raw = tt_eval_none;
   n.disagree = -1;
   n.net_ok = false;
@@ -2673,7 +2678,7 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
 // softens its value at the cutoff, in move_loop): let the statistics learn from the outcome of a node that did not fail
 // high, store the result, and teach the correction tables the error of the static evaluation.
 
-static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
+__attribute__((always_inline)) static inline int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {   // see node_open
   // A node that failed high (only a cutoff in move_loop gives best >= beta, and the softening keeps it there) has
   // already fetched its hash line, learned and softened its value. For the others the line of the node's hash bucket,
   // read at entry, has often left the cache after the subtree: it is fetched again now, with the statistics to update
