@@ -2457,6 +2457,28 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
         else
           r -= less;
       }
+      // LMR terms of the 9.0 plan, groups S3, S7, S8 (01_params.inc; baked 25/11/2026 at the values of their SPSA):
+      // improvement slope, hash entry missing or at least as deep as the node, few quiet moves, checks, cut nodes
+      // (early moves, many child cutoffs, endgame band) and the root alternatives. Same rule as the levers above.
+      if (LmrImpSlope | LmrTtNone | LmrTtDeep | LmrFewMoves | LmrCheckLess | LmrCutEarly | LmrCutCuts | LmrCutEnd |
+          RootAltLmr) {
+        int less = LmrImpSlope * imp_adj(f) / 64 + (gives ? LmrCheckLess : 0);
+        if (!val_known(n.h.value))
+          less += LmrTtNone;
+        else if (n.h.depth >= n.depth)
+          less += LmrTtDeep;
+        if (!tact)
+          less += LmrFewMoves * std::max(0, 30 - q.n_all) / 16;
+        if (n.cut)
+          less += (red_move_no <= 5 ? LmrCutEarly : 0) + (f[1].cutoff_cnt > 2 ? LmrCutCuts : 0) +
+                  (n.expert == 0 ? LmrCutEnd : 0);
+        if (n.root && root_rank >= 1 && root_rank <= 2)
+          less += RootAltLmr;
+        if (less > 0)
+          r = std::max(r - less, std::min(r, 0));
+        else
+          r -= less;
+      }
       // C2 search ideas 2, 3, 5, 7 (21/10/2026, agent A; all OFF by default, SPRT pending). Same rule as the levers
       // above: positive = less reduction, down to zero at most; negative = more.
       //  C2SwitchRed  the capture or promotion just made gave another expert to either perspective (the make's flag):

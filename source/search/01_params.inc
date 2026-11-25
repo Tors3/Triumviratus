@@ -907,6 +907,26 @@
   P(HashFiftyFrom, 40, 0, 100)           /* move counter, one every Step plies above From (0 = off)      */ \
   P(PassedPushRed, 1125, 0, 4096)           /* endgames: less reduction and no pruning for the push of a */ \
   P(PassedPushNpm, 5133, 0, 12000)       /* passed pawn to the 6th/7th, below this non-pawn material     */ \
+  /* LMR terms of the 9.0 plan, groups S3, S7 and S8 (18/11/2026, written off; values from their joint SPSA, run   */ \
+  /* 20261118_115627 up to iteration ~1328 of 1500, vector = mean of iterations 1261-1309). In 1/1024 ply,         */ \
+  /* positive = less reduction (down to zero at most), negative = more; the block is in move_loop (13_search.inc). */ \
+  /*   LmrImpSlope  minus this * improvement / 64          LmrTtNone   no hash value at the node                    */ \
+  /*   LmrTtDeep    hash entry at least as deep as the node   LmrFewMoves  quiet moves, * max(0, 30 - moves) / 16     */ \
+  /*   LmrCheckLess checking moves                          LmrCutEarly cut node, move number <= 5                  */ \
+  /*   LmrCutCuts   cut node, the child had 3+ cutoffs      LmrCutEnd   cut node, endgame band (expert 0)           */ \
+  /*   RootAltLmr   root moves 2-3 of the previous iteration's order                                                 */ \
+  /* BAKE 25/11/2026 (author, accepted at 30k games without LLR closure): SPRT of the vector against all 0 at     */ \
+  /* 10+0.1, four parts pooled, +1.40 +- 1.93 over 30,268 games, LLR +1.76 of 2.94 (socket 0 -0.09, socket 1      */ \
+  /* +2.89). Kept as parameters for later tuning.                                                                    */ \
+  P(LmrImpSlope, 74, -1024, 1024)                                                                          \
+  P(LmrTtNone, 197, -2048, 2048)                                                                           \
+  P(LmrTtDeep, 200, -2048, 2048)                                                                           \
+  P(LmrFewMoves, 32, -1024, 1024)                                                                          \
+  P(LmrCheckLess, -68, -2048, 2048)                                                                        \
+  P(LmrCutEarly, 296, -2048, 2048)                                                                         \
+  P(LmrCutCuts, 80, -2048, 2048)                                                                           \
+  P(LmrCutEnd, -47, -2048, 2048)                                                                           \
+  P(RootAltLmr, -481, -4096, 4096)                                                                         \
   /* Our ideas of 04/10/2026 (docs/audit_8.0/M_STUDIO_IDEE_RICERCA.md), all OFF by default:                 \
      at 0 the tree is identical (bench 141196) and in the release the code disappears. They are turned on one   \
      at a time in the SPRTs of the plan (STATO_PROGETTO.md 4.0quinquies). Removed on 05/10/2026 because          \

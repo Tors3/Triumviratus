@@ -139,3 +139,25 @@ SPRT at weight 8000 against off: +2.70 ± 2.15 Elo over 24,698 games (8+0.08, UH
 271761 → 302771. The weight stays a parameter, for the SPSA of the correction block that follows the single tests of
 its two extensions (the opponent's plan over three moves, our own two last moves) and of the long-term plan in the
 reduction, all written and off.
+
+### 2.3 Nine late-move-reduction terms, 25 November 2026
+
+Nine terms of the late-move reduction, written on 18 November 2026 (9.0 plan, groups S3, S7 and S8) and tuned
+together by one SPSA (up to iteration ~1328 of 1500; the vector is the mean of iterations 1261-1309), in 1/1024 ply,
+positive meaning less reduction:
+
+| term | where it acts | value |
+|---|---|---:|
+| `LmrImpSlope` | the improvement of the static evaluation (times improvement / 64) | 74 |
+| `LmrTtNone` | no hash value at the node | 197 |
+| `LmrTtDeep` | a hash entry at least as deep as the node | 200 |
+| `LmrFewMoves` | quiet moves when the node has few moves (times max(0, 30 − moves) / 16) | 32 |
+| `LmrCheckLess` | checking moves | −68 |
+| `LmrCutEarly` | cut nodes, move number up to 5 | 296 |
+| `LmrCutCuts` | cut nodes whose child had three or more cutoffs | 80 |
+| `LmrCutEnd` | cut nodes in the endgame band | −47 |
+| `RootAltLmr` | root moves 2 and 3 of the previous iteration's order | −481 |
+
+SPRT of the vector against all terms at zero, in four parts pooled (10+0.1, UHO openings, [−1, 2]): +1.40 ± 1.93 Elo
+over 30,268 games, LLR +1.76 of 2.94. The author accepted it at 30,000 games without the LLR closing. Bench 302771 →
+168444 (with the nine terms at zero the bench is 302771 again). The terms stay parameters for later tuning.
