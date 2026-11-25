@@ -251,11 +251,11 @@ static void init_cycle_tables() {
 // min(fifty, plies since the null move) plies), on our flat history: repetition_table[repetition_index] is the
 // position one ply ago, [repetition_index - d] the one d + 1 plies ago. Entries pushed by null moves are inert: their
 // key difference is side and en passant only, never two piece keys.
-static bool td_upcoming_repetition(ThreadData &td) {
+// (25/11/2026, speed, same logic) Called at most nodes of the search and of the quiescence (whenever alpha is below
+// the draw), and most calls end on the window test: that test is inline (td_upcoming_repetition, below) and only a
+// window of three plies or more pays the call, as in drawn_here (12_quiesce.inc).
+__attribute__((noinline)) static bool td_upcoming_repetition_slow(ThreadData &td, int window) {
   PROF_GUARD(prof_rep);
-  const int window = std::min(std::min(td.fifty, td.plies_from_null), td.repetition_index);
-  if (window < 3)
-    return false;
   const U64 now = td.hash_key;
   const U64 *hist = td.repetition_table + td.repetition_index;   // hist[-d]: d + 1 plies ago
   // Key change made by the opponent's moves inside the window; a cycle closable by one move of ours needs their
@@ -284,6 +284,12 @@ static bool td_upcoming_repetition(ThreadData &td) {
         return true;
   }
   return false;
+}
+static inline bool td_upcoming_repetition(ThreadData &td) {
+  const int window = std::min(std::min(td.fifty, td.plies_from_null), td.repetition_index);
+  if (window < 3)
+    return false;
+  return td_upcoming_repetition_slow(td, window);
 }
 
 // Draw by repetition. The current position is repeated if it appears again in the reversible window
