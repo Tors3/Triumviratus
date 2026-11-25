@@ -1144,12 +1144,11 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
 // (Microsoft x64) function that calls them must preserve xmm6-15 for its own caller, and capture_probe, out of line,
 // saved and restored all ten at every call, even when it returned at once on depth (8 pushes, 10 vector stores and 10
 // loads). Its only caller is explore's pruning (System V), which keeps nothing in vector registers across it.
+// (25/11/2026, speed, same values) The gates (depth, beta, hash value) are inline in capture_probe below: most nodes are
+// shallower than ProbCutMinDepth and no longer call the search part, with its 3 KB frame and eight saved registers.
 template <bool AN>
-static TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
-  const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
-                       by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
-  if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
-    return NO_VALUE;
+__attribute__((noinline)) static TRIUMV_SEARCH_CC int capture_probe_search(ThreadData &td, NodeFrame *f, NodeState &n,
+                                                                         int cut_beta) {
   PCMISS_STAT(g_pcmiss.probes++);
   MoveQueue q;
   queue_start(q, td, f, n.h.move, n.depth, QK_CUTS);
@@ -1206,6 +1205,14 @@ static TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f, NodeStat
     }
   }
   return NO_VALUE;
+}
+template <bool AN>
+static inline int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+  const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
+                       by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
+  if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
+    return NO_VALUE;
+  return capture_probe_search<AN>(td, f, n, cut_beta);
 }
 
 template <bool AN>
