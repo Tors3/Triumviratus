@@ -2220,6 +2220,34 @@ static int g_passed_scale = 100;
 void set_passed_scale(int pct) { g_passed_scale = std::clamp(pct, 50, 200); }
 int  passed_scale() { return g_passed_scale; }
 
+// What this build does to the weights of a file at load time (split out of load_memory on 26/11/2026, same value), so
+// that the Linux file alias of the shared copy (shared_net.h, file_alias) carries it as well: that name holds only the
+// identity of the file on disk, and a build with another order of the rows mapped a foreign layout (garbage eval).
+std::uint64_t layout_id() {
+    // The order of w1g depends on the instruction set (l0_group): builds for different sets must not share a copy.
+    std::uint64_t layout = 0;   // differs between the AVX-512, AVX2 and plain orders of w1g
+    for (int g = 0; g < L1 / 4; g++) layout = layout * 1099511628211ULL + std::uint64_t(l0_group(g));
+    std::uint64_t h = layout;
+#ifdef CN_W1
+    h ^= 0x5731'0000'0000'0000ULL;   // interleaved int8 rows: another layout of the same file
+#endif
+#ifdef CN_W2
+    h ^= 0x0032'5732'0000'0000ULL;   // and their low bytes stored + 128 (CN_W2)
+#endif
+#ifdef CN_THRGROUP_TABLE
+    h ^= THR_GROUP_ID;   // and so does the order of the threat groups
+#endif
+#ifdef CN_PPORDER_TABLE
+    h ^= PP_ORDER_ID;   // and the order of the pawn-pair rows
+#endif
+#ifdef CN_W1_CLIP
+    h ^= 0x4331'0000'0000'0000ULL ^ (std::uint64_t(CN_W1_CLIP) << 32);   // cut l1 weights: another network
+#endif
+    if (g_passed_scale != 100)   // other weights from the same file: the caches of the handles must not match
+        h ^= 0x5053'0000'0000'0000ULL ^ (std::uint64_t(g_passed_scale) << 32);
+    return h;
+}
+
 bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::string* err) {
     CN_LOADT(all, "load_memory");
     Reader r{data, size};
@@ -2407,27 +2435,7 @@ bool load_memory(const unsigned char* data, std::size_t size, Net* net, std::str
         h = (h ^ w) * 1099511628211ULL;
     }
     for (; i < size; i++) h = (h ^ data[i]) * 1099511628211ULL;
-    // The order of w1g depends on the instruction set (l0_group): builds for different sets must not share a copy.
-    std::uint64_t layout = 0;   // differs between the AVX-512, AVX2 and plain orders of w1g
-    for (int g = 0; g < L1 / 4; g++) layout = layout * 1099511628211ULL + std::uint64_t(l0_group(g));
-    h ^= layout;
-#ifdef CN_W1
-    h ^= 0x5731'0000'0000'0000ULL;   // interleaved int8 rows: another layout of the same file
-#endif
-#ifdef CN_W2
-    h ^= 0x0032'5732'0000'0000ULL;   // and their low bytes stored + 128 (CN_W2)
-#endif
-#ifdef CN_THRGROUP_TABLE
-    h ^= THR_GROUP_ID;   // and so does the order of the threat groups
-#endif
-#ifdef CN_PPORDER_TABLE
-    h ^= PP_ORDER_ID;   // and the order of the pawn-pair rows
-#endif
-#ifdef CN_W1_CLIP
-    h ^= 0x4331'0000'0000'0000ULL ^ (std::uint64_t(CN_W1_CLIP) << 32);   // cut l1 weights: another network
-#endif
-    if (g_passed_scale != 100)   // other weights from the same file: the caches of the handles must not match
-        h ^= 0x5053'0000'0000'0000ULL ^ (std::uint64_t(g_passed_scale) << 32);
+    h ^= layout_id();
     net->contentHash = h | 1;   // never 0: 0 marks an empty cache in the handle
     return true;
 }

@@ -153,9 +153,11 @@ static int load_net_impl(const char* path) {
 #if defined(TRIUMV_SHARED_NET) && defined(__linux__)
     // Linux (01/11/2026): the shared weights of this file, when another process already made them, are mapped
     // without loading the file (shared_net.h, attach_by_file): no private copy at the start of each engine.
+    // (audit 26/11/2026) The alias carries cn::layout_id() (it carried only PassedScale): an avx2 and an avx512
+    // build, or two commits with another row order, reading the same file no longer map each other's layout.
     {
         std::string st;
-        const void* sh = TriumvShm::attach_by_file(path, std::uint64_t(cn::passed_scale()), sizeof(cn::Net), st);
+        const void* sh = TriumvShm::attach_by_file(path, cn::layout_id(), sizeof(cn::Net), st);
         if (sh) {
             cn::adopt(*static_cast<const cn::Net*>(sh));   // the router copy and the pawn-king signals, as a load sets them
             cn::Net* old = g_cn;
@@ -182,13 +184,24 @@ static int load_net_impl(const char* path) {
     bool        ok;
     {
         std::ifstream f(path, std::ios::binary);
-        if (f.good())
+        std::string p(path);
+        const size_t sl = p.find_last_of("/\\");
+        const std::string base = sl == std::string::npos ? p : p.substr(sl + 1);
+        if (f.good()) {
             ok = cn::load_file(path, net, &err);
-        else {
+#if defined(TRIUMV_EMBED_RESOURCE) || defined(TRIUMV_EMBED_INCBIN)
+            // (audit 26/11/2026) A file under the default name that does not load (truncated, stale, another format)
+            // stopped the engine at startup ("no embedded net in this build"): the embedded copy is used instead,
+            // with a warning.
+            if (!ok && base == CN_DEFAULT_NET_FILE && gEmbeddedNNUEData) {
+                std::printf("info string WARNING: %s is not a valid network (%s): using the embedded network\n", path,
+                            err.c_str());
+                std::fflush(stdout);
+                ok = cn::load_memory(gEmbeddedNNUEData, gEmbeddedNNUESize, net, &err);
+            }
+#endif
+        } else {
             // No file: the embedded network, but only under the default name.
-            std::string p(path);
-            const size_t sl = p.find_last_of("/\\");
-            const std::string base = sl == std::string::npos ? p : p.substr(sl + 1);
 #if defined(TRIUMV_EMBED_RESOURCE) || defined(TRIUMV_EMBED_INCBIN)
             ok = base == CN_DEFAULT_NET_FILE && gEmbeddedNNUEData
               && cn::load_memory(gEmbeddedNNUEData, gEmbeddedNNUESize, net, &err);
@@ -217,7 +230,7 @@ static int load_net_impl(const char* path) {
         std::string st;
 #ifdef __linux__   // with the file alias for the next processes (attach_by_file above)
         const void* sh = TriumvShm::attach(g_cn, sizeof(cn::Net), g_cn->contentHash ^ std::uint64_t(sizeof(cn::Net)), st,
-                                           path, std::uint64_t(cn::passed_scale()));
+                                           path, cn::layout_id());
 #else
         const void* sh = TriumvShm::attach(g_cn, sizeof(cn::Net), g_cn->contentHash ^ std::uint64_t(sizeof(cn::Net)), st);
 #endif

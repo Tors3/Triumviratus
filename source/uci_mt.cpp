@@ -49,6 +49,13 @@ int g_move_overhead_ms = 10;
 // parse user/GUI move string input (e.g. "e7e8q")
 int parse_move(char* move_string)
 {
+    // (audit 26/11/2026) A token shorter than four characters is no move (the squares were read past its end), and
+    // the promotion letter is taken in either case ("a7a8Q" was refused and dropped the rest of the move list).
+    for (int i = 0; i < 4; i++)
+        if (!move_string[i] || move_string[i] == ' ')
+            return 0;
+    const char promo_letter = (move_string[4] >= 'A' && move_string[4] <= 'Z') ? char(move_string[4] - 'A' + 'a')
+                                                                              : move_string[4];
     moves move_list[1];
     generate_moves(move_list);
 
@@ -68,13 +75,13 @@ int parse_move(char* move_string)
 
             if (promoted_piece)
             {
-                if ((promoted_piece == Q || promoted_piece == q) && move_string[4] == 'q')
+                if ((promoted_piece == Q || promoted_piece == q) && promo_letter == 'q')
                     return move;
-                else if ((promoted_piece == R || promoted_piece == r) && move_string[4] == 'r')
+                else if ((promoted_piece == R || promoted_piece == r) && promo_letter == 'r')
                     return move;
-                else if ((promoted_piece == B || promoted_piece == b) && move_string[4] == 'b')
+                else if ((promoted_piece == B || promoted_piece == b) && promo_letter == 'b')
                     return move;
-                else if ((promoted_piece == N || promoted_piece == n) && move_string[4] == 'n')
+                else if ((promoted_piece == N || promoted_piece == n) && promo_letter == 'n')
                     return move;
                 continue;
             }
@@ -129,7 +136,13 @@ void parse_position(char* command)
             repetition_index++;
             repetition_table[repetition_index] = hash_key;
 
-            make_move(move, all_moves);
+            // (audit 26/11/2026) A pseudo-legal but illegal move (a pinned piece, the king into check) was taken back
+            // by make_move without notice and its repetition entry kept: the next moves were then played by the other
+            // side. The list now stops there, like at a token that is not a move.
+            if (!make_move(move, all_moves)) {
+                repetition_index--;
+                break;
+            }
 
             while (*current_char && *current_char != ' ') current_char++;
             // AUDIT D (T6): several spaces between moves are allowed by the protocol; before, a double space
@@ -215,7 +228,7 @@ void parse_go(char* command)
         while (*p == ' ') p++;
         while (*p && g_searchmoves_count < 256)
         {
-            char tok[8];
+            char tok[8] = {};   // (audit 26/11/2026) zeroed: parse_move reads up to tok[4]
             int n = 0;
             while (p[n] && p[n] != ' ' && n < 7) { tok[n] = p[n]; n++; }
             tok[n] = '\0';
@@ -1036,6 +1049,11 @@ void uci_loop()
             char* e = val + strlen(val);              // trim stray CR/space/newline
             while (e > val && (e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\n')) *--e = '\0';
             std::string resolved = resolve_net_path(val);
+            // (audit 26/11/2026) The default name with no file on disk is the embedded network: after a switch to
+            // another file, coming back to the default printed "not found (kept current net)" and the other network
+            // kept playing while the GUI showed the default.
+            if (resolved.empty() && strcmp(val, nn_default_net_name()) == 0)
+                resolved = val;
             // 08/10/2026: the same network already loaded is not reloaded. fastchess resends EvalFile after EVERY
             // ucinewgame: the side with the external network reloaded it at every game (~0.6 s, 245 MB of large pages
             // allocated and freed, shared area detached and reattached), the other side never. In the SPRT ft2avg of

@@ -179,8 +179,11 @@ void parse_fen(const char* fen)
 
             if ((*fen >= 'a' && *fen <= 'z') || (*fen >= 'A' && *fen <= 'Z'))
             {
+                // (audit 26/11/2026) An unknown letter maps to '?' (63): it wrote bitboards[63], past the array, into
+                // another global. It is skipped (the square stays empty).
                 int piece = mapCharToPiece(*fen);
-                set_bit(bitboards[piece], square);
+                if (piece >= P && piece <= k)
+                    set_bit(bitboards[piece], square);
                 fen++;
             }
 
@@ -208,9 +211,11 @@ void parse_fen(const char* fen)
     }
 
     // Skip space and parse side to move
-    fen++;
+    // (audit 26/11/2026) Every step below stops at the end of the string: a FEN cut short ("<placement> w") made the
+    // castling loop and the en passant field read past the terminator, out of the input buffer.
+    if (*fen) fen++;
     (*fen == 'w') ? (side = white) : (side = black);
-    fen += 2;
+    for (int i = 0; i < 2 && *fen; i++) fen++;
 
     // Parse castling rights
     // Chess960 (chess960.h): X-FEN or Shredder-FEN, king and rook squares read from the board and carried into the
@@ -226,7 +231,7 @@ void parse_fen(const char* fen)
     else
     {
         c960_reset_standard();
-        while (*fen != ' ')
+        while (*fen && *fen != ' ')
         {
             switch (*fen)
             {
@@ -241,22 +246,23 @@ void parse_fen(const char* fen)
     }
 
     // Skip space and parse en passant square
-    fen++;
+    if (*fen) fen++;
 
-    if (*fen != '-')
+    if (*fen && *fen != '-')
     {
         int file = fen[0] - 'a';
         int rank = 8 - (fen[1] - '0');
         // AUDIT D (26/09/2026): an en passant square inconsistent with the side to move (e3 with White to move)
         // made a friendly pawn "capture en passant" and crashed the engine. It is ignored, as SF does.
-        const bool ep_ok = (side == white && fen[1] == '6') || (side == black && fen[1] == '3');
+        // (audit 26/11/2026) The file is checked too: "z6" or "A6" gave a square off the board.
+        const bool ep_ok = file >= 0 && file < 8 && ((side == white && fen[1] == '6') || (side == black && fen[1] == '3'));
         enpassant = ep_ok ? rank * 8 + file : no_sq;
-        fen += 2;
+        fen += fen[1] ? 2 : 1;
     }
     else
     {
         enpassant = no_sq;
-        fen++;
+        if (*fen) fen++;
     }
 
     // Skip space and parse halfmove clock (fifty-move counter)

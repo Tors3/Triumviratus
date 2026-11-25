@@ -194,9 +194,10 @@ int main()
     const char* loadArg = netPath.empty() ? netName : netPath.c_str();
     if (!nn_load_net(loadArg))
     {
-        std::cerr << "FATAL: NNUE net not found/invalid (no " << netName
-                  << " next to the executable/project root, and no embedded net in "
-                  << "this build). Place the file and restart." << std::endl;
+        // (audit 26/11/2026) The message named only the missing-file case; the reason is in the info string above.
+        std::cerr << "FATAL: NNUE net " << loadArg << " could not be loaded (see the info string above; with no "
+                  << netName << " next to the executable/project root this build has no embedded net). "
+                  << "Place a valid file and restart." << std::endl;
         return 1;
     }
     if (!g_startup_quiet) {

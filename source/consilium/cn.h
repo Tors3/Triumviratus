@@ -106,6 +106,9 @@ void adopt(const Net& net);
 // as it is. Read by the next load_*: the bridge reloads the network when the option changes.
 void set_passed_scale(int pct);
 int  passed_scale();
+// Layout of the loaded weights in this build (row orders, int8 forms, PassedScale): part of contentHash and of the
+// Linux file alias of the shared copy.
+std::uint64_t layout_id();
 
 // The engine's board (consilium_bridge.h): twelve piece bitboards P..k, occupancy white/black/all, mailbox (-1 = empty).
 struct Board {
