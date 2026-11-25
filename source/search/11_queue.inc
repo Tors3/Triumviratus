@@ -1181,7 +1181,12 @@ static inline void queue_prefetch(const MoveQueue &q, int m) {
 }
 
 // Next pseudo-legal move, 0 when the queue is empty. The hash move is handed out once.
-static int queue_next(MoveQueue &q) {
+// (25/11/2026, speed, same moves) queue_next (below) runs ~2.1 times per node, and out of line it paid eight saved
+// registers and the setup of its constants at every call, also when it only handed out the next move of a range that
+// needs no test. Those two cases, the next quiet move of a sorted range (quiet_split known) and the next capture of the
+// quiescence and of the evasions (QS_DRAIN outside ProbCut), are inline in queue_next and run the same steps as the
+// state machine; every other call goes to queue_next_full.
+__attribute__((noinline)) static int queue_next_full(MoveQueue &q) {
   ThreadData &td = *q.td;
   q.rank_ok = false;   // LmrRank: set back to true only by the exits of the sorted quiet moves (below)
   for (;;) {
@@ -1300,4 +1305,25 @@ static int queue_next(MoveQueue &q) {
       return 0;
     }
   }
+}
+static inline int queue_next(MoveQueue &q) {
+  const int step = q.step;
+  if (step == QS_QUIET_HIGH || step == QS_QUIET_LOW) {
+    // The sorted ranges of QS_QUIET_HIGH [.., quiet_split) and QS_QUIET_LOW [.., n_all), as in queue_next_full.
+    const int end = step == QS_QUIET_HIGH ? q.quiet_split : q.n_all;
+    if (q.quiet_split >= 0 && !q.quiets_off && q.cur < end) {
+      const ScoredMove sm = q.list[q.cur++];
+      if (q.cur < q.n_all)
+        queue_prefetch(q, q.list[q.cur].move);
+      q.rank_ok = true, q.last_score = sm.score;
+      return sm.move;
+    }
+  } else if (step == QS_DRAIN && q.kind != QK_CUTS && q.cur < q.n_tact) {
+    q.rank_ok = false;
+    const ScoredMove sm = q.list[q.cur++];
+    if (q.cur < q.n_tact)
+      queue_prefetch(q, q.list[q.cur].move);
+    return sm.move;
+  }
+  return queue_next_full(q);
 }
