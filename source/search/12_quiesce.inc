@@ -578,8 +578,12 @@ __attribute__((always_inline)) static inline bool qs_worth(ThreadData &td, const
 // QCHK (AnQsChecks, analysis mode, 09/10/2026, our idea): at the first quiescence ply called by the main search, quiet
 // moves that give check with SEE >= 0 are tried after the tactical ones; the child (in check) is a normal quiescence.
 // QCHK = false is the plain quiescence.
+// noinline (25/11/2026, speed, same values): explore<true> (analysis mode, also `go infinite`) had put quiesce<true>, its
+// only call, in line, and with it a second MoveQueue: the frame of explore<true> passed the 4 KB of the stack probe
+// (4,104-4,136 bytes against 4,088 before the inlining patches of 25/11), so every node called __chkstk. Out of line,
+// as quiesce<false> always was, the frame stays below. The game search (explore<false>) is unchanged.
 template <bool QCHK = false>
-static TRIUMV_SEARCH_CC int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
+__attribute__((noinline)) static TRIUMV_SEARCH_CC int quiesce(ThreadData &td, NodeFrame *f, int alpha, int beta, bool pv) {
   // ---- 1. Early exits -------------------------------------------------------
   td.pv_length[td.ply] = td.ply;
   // Expert holds: quiescence is below any depth limit (C2HoldDepth); C2HoldQs holds here only.
