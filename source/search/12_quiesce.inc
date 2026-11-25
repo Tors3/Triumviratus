@@ -143,7 +143,9 @@ struct MoveSafety {
 };
 
 // Pins on our king, for legal_before.
-static void safety_pins(ThreadData &td, MoveSafety &s) {
+// (25/11/2026, speed, same values) Out of line: it runs at most once per node, and inlined into legal_before its loop
+// kept legal_before (the hash move's test, about once per node) out of line in turn, with its saved registers.
+__attribute__((noinline)) static void safety_pins(ThreadData &td, MoveSafety &s) {
   const int us = td.side, eoff = us == white ? 6 : 0;
   const U64 occ = td.occupancies[both];
   U64 snipers = (empty_rook_att[s.our_king] & (td.bitboards[R + eoff] | td.bitboards[Q + eoff])) |
