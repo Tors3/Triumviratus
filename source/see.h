@@ -70,6 +70,51 @@ int td_see(ThreadData& td, int move);
 
 // F-008: THRESHOLD SEE with early exit (SF see_ge style). Returns 1 if
 // td_see(move) >= threshold, 0 otherwise - without simulating the full exchange.
-int td_see_ge(ThreadData& td, int move, int threshold);
+// (25/11/2026, speed, same answers) The two bounds of the resolved list, which decide most calls before any attacker is
+// looked up (see_ge_impl, see.cpp), are tested here inline with the same values; only an undecided exchange calls the
+// whole test (td_see_ge_walk), which starts again from the same bounds. Before, every call (~0.9 per node) paid the
+// out-of-line function with eight saved registers.
+const int* see_values_ext(const ThreadData& td);   // see.cpp: the values the exchange evaluation reads (kings 20000)
+int td_see_ge_walk(ThreadData& td, int move, int threshold);
+#ifdef TRIUMV_RELEASE
+// The release reads constant tables when every per-expert offset is 0 (the same rule as see.cpp, g_const_values).
+static constexpr bool see_values_all_const() {
+    for (int t = 0; t < 5; t++)
+        for (int e = 0; e < 8; e++)
+            if (see_val_offsets[t][e]) return false;
+    return true;
+}
+alignas(64) static constexpr int see_val16_const[16] = {see_piece_values[0], see_piece_values[1], see_piece_values[2],
+    see_piece_values[3], see_piece_values[4], see_piece_values[5], see_piece_values[6], see_piece_values[7],
+    see_piece_values[8], see_piece_values[9], see_piece_values[10], see_piece_values[11], 0, 0, 0, 0};
+static inline const int* see_values_of(const ThreadData& td) {
+    if constexpr (see_values_all_const()) return see_val16_const;
+    return see_values_ext(td);
+}
+#else
+static inline const int* see_values_of(const ThreadData& td) { return see_values_ext(td); }
+#endif
+static inline int td_see_ge(ThreadData& td, int move, int threshold) {
+    const int to = get_move_target(move);
+    int piece = get_move_piece(move);
+    const int* const val = see_values_of(td);
+    int captured = td.piece_on[to], capsq = to;
+    if (get_move_enpassant(move)) {
+        captured = (td.side == white) ? p : P;
+        capsq = (td.side == white) ? to + 8 : to - 8;
+    }
+    int promo_gain = 0;
+    if (get_move_promoted(move)) {
+        const int promoted = get_move_promoted(move);
+        promo_gain = val[promoted] - val[piece];
+        piece = promoted;
+    }
+    const int gain0 = ((captured != -1) ? val[captured] + pawn_struct_adj(td, capsq, captured) : 0) + promo_gain;
+    if (gain0 < threshold)
+        return 0;
+    if (gain0 - val[piece] >= threshold)
+        return 1;
+    return td_see_ge_walk(td, move, threshold);
+}
 
 #endif

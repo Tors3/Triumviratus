@@ -408,6 +408,8 @@ static int see_ge_impl(ThreadData& td, int move, int threshold) {
 
 // (27/10/2026) The previous index form see_ge_prev and its call-by-call check (-DTRIUMV_VERIFY_SEE2) were removed:
 // the swap list above has been the only form since 20/10 (copy in _backup/Triumviratus_8.1_pre_testo_nostro_2026-10-27).
-int td_see_ge(ThreadData& td, int move, int threshold) {
+// The whole test, for the exchanges the inline bounds of td_see_ge (see.h) leave undecided (25/11/2026).
+int td_see_ge_walk(ThreadData& td, int move, int threshold) {
     return see_ge_impl(td, move, threshold);
 }
+const int* see_values_ext(const ThreadData& td) { return see_values(td); }
