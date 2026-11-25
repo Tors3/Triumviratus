@@ -4,7 +4,10 @@
 // SeePinned (05/10/2026): pinned pieces and pinners of both colours, once per position, for the SEE (see.cpp). For each
 // king, the enemy sliders on its lines on an empty board are the snipers; a sniper with exactly one piece in between,
 // and that piece ours, pins it.
-static void see_pins_update(ThreadData &td) {
+// (25/11/2026, speed, same values) Out of line: it runs at most once per position, while see_holds below runs ~0.9 times
+// per node. Inlined into see_holds, its loop made see_holds too large to be inlined in turn (499 bytes out of line,
+// with a full prologue at every exchange test of the queue and of the gates).
+__attribute__((noinline)) static void see_pins_update(ThreadData &td) {
   for (int c = white; c <= black; c++) {
     const int off = c == white ? 0 : 6, eoff = 6 - off;
     const int ksq = get_ls1b_index(td.bitboards[K + off]);
