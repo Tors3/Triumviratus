@@ -1140,8 +1140,12 @@ static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
 // Capture probe (ProbCut): a capture that clears a raised beta in quiescence and then in a reduced search cuts the
 // node. The raise has a term per expert (ProbCutExp, ours at 0); the search is ProbCutRed plies shallower, and
 // ProbCutRedImp more when the node is improving.
+// (25/11/2026, speed, same values) In the System V convention, as explore and quiesce (12_quiesce.inc): an ordinary
+// (Microsoft x64) function that calls them must preserve xmm6-15 for its own caller, and capture_probe, out of line,
+// saved and restored all ten at every call, even when it returned at once on depth (8 pushes, 10 vector stores and 10
+// loads). Its only caller is explore's pruning (System V), which keeps nothing in vector registers across it.
 template <bool AN>
-static int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
   if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
