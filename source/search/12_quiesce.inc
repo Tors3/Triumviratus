@@ -71,7 +71,10 @@ static inline void hash_read(const ThreadData &td, HashView &h) {
 }
 
 static inline void hash_write(const ThreadData &td, int value, bool pv, int bound, int depth, int move, int eval_raw) {
-  store_tt(tt_key(td), move, to_hash_value(value, td.ply), depth + HD_SHIFT, bound, 0, pv, eval_raw);
+  // Audit 25/11/2026: the depth field has 8 bits. With some lever values inside their ranges (ProbCutRed 6,
+  // ProbCutRedImp 4 at depth 3) the stored depth went below 0 and wrapped to ~255: a quiescence-level value became the
+  // deepest entry of the table. The defaults never leave [0, 255].
+  store_tt(tt_key(td), move, to_hash_value(value, td.ply), std::clamp(depth + HD_SHIFT, 0, 255), bound, 0, pv, eval_raw);
 }
 
 // Takes one ply off the entry: a bound that did not cut at sufficient depth is worth less.
@@ -267,14 +270,17 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
   // played, the king was captured a ply later and the network saw a position without a king). Chess960 castling always
   // goes through the make. With -DTRIUMV_VERIFY_LEGAL the make always repeats the test and prints every disagreement.
 #ifdef TRIUMV_VERIFY_LEGAL
-  if ((!f->in_check || legal) && !td_make_move(td, m, u)) {
+  // Chess960 castling is left to the make in the normal path too (legal_before_slow accepts every one), so it is not
+  // "taken as legal" here either (audit 25/11/2026: the check printed a false alarm at every 960 castling).
+  const bool known_legal = (!f->in_check || legal) && !(g_chess960 && get_move_castling(m));
+  if (known_legal && !td_make_move(td, m, u)) {
     printf("info string LEGALITY WRONG: move %d taken as legal\n", m);
     fflush(stdout);
     td.ply--;
     td.repetition_index--;
     return false;
   }
-  if (f->in_check && !legal && !td_make_move(td, m, u)) {
+  if (!known_legal && !td_make_move(td, m, u)) {
 #else
   // Expert holds (C2HoldDepth, C2HoldQs): read by the make, cleared right after it. (25/11/2026, speed, same values)
   // Only while a hold lever is on: otherwise td.nn_hold stays 0 and the frames' value is never read (a constant test in

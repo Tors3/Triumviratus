@@ -334,6 +334,18 @@ void parse_fen(const char* fen)
     if (enpassant != no_sq &&
         !(pawn_attacks[side ^ 1][enpassant] & bitboards[side == white ? P : p]))
         enpassant = no_sq;
+    // Audit 25/11/2026: the square must also be one a double push can have left behind: the opponent's pawn on the
+    // square it reached, the passed square and the pawn's start square empty. Otherwise the en passant capture removed
+    // a pawn that was not there, or put two pieces on one square ("4k3/8/8/4P3/8/8/8/4K3 w - d6 0 1" was played e5d6).
+    if (enpassant != no_sq) {
+        U64 all = 0;
+        for (int pc = P; pc <= k; pc++)
+            all |= bitboards[pc];
+        const int reached = side == white ? enpassant + 8 : enpassant - 8;   // a8 = 0: White captures towards row 0
+        const int start = side == white ? enpassant - 8 : enpassant + 8;
+        if (!(bitboards[side == white ? p : P] >> reached & 1) || (all >> enpassant & 1) || (all >> start & 1))
+            enpassant = no_sq;
+    }
 
     // AUDIT D (27/09/2026): castling rights inconsistent with the board. The engine knows only classic
     // castling (king on e1/e8, rooks in the corners); a Chess960 or wrong FEN with "KQkq" and the king elsewhere

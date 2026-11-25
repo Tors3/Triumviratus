@@ -1062,7 +1062,7 @@
      In the release they are constexpr like the other parameters; in dev the table of the reciprocals of HistDiv* is \
      recomputed at every setoption (param_tables_refresh, 13_search.inc). They serve the SPSAs.                      \
      Limits of the statistics (09_history.inc, hist_learn) */                                                    \
-  P(HistLimQuiet, 7183, 2000, 20000)     /* quiet histories (butterfly, low ply, per expert)               */ \
+  P(HistLimQuiet, 7183, 2000, 10000)     /* quiet histories (max 10000: exactness of the low-ply reciprocal) */ \
   P(HistLimCapt, 10692, 3000, 30000)     /* capture history                                                */ \
   P(HistLimFollow, 30000, 8000, 32000)   /* continuation histories (int16: at most 32767)                  */ \
   /* Learner::followups (13_learn.inc): weight per distance 1..6 plies and factor by the number of distances already rewarding */ \
@@ -1666,7 +1666,24 @@
   /* -- pruning and reductions --                                                                                  */ \
   P(PriorRedHigh, 3, 1, 8)               /* parent reduced >= this many plies, opponent not worsening: depth+1 */ \
   P(PriorRedLow, 2, 1, 8)                /* parent reduced >= this, the two evals above PriorRedEvalSum: depth-1 */ \
-  P(PriorRedMinDepth, 2, 1, 8)           /* ... only from this depth                                        */ \
+  P(PriorRedMinDepth, 2, 2, 8)           /* ... only from this depth (min 2, audit 25/11: 1 gave depth 0, OOB) */ \
+  /* Audit 25/11/2026: corrections of defects that change the tree, OFF by default (0 = the old tree, bench 168444), */ \
+  /* each to be tested by its own SPRT.                                                                              */ \
+  /*   AuditEvalNone  a node in check takes f[-2].static_eval as its own, and at plies 0-1 that frame lies before    */ \
+  /*                  the root with VAL_NONE (32001): in its children opp_worse and the PriorRedEvalSum step were    */ \
+  /*                  always true, improving and the LmrGap term saturated. 1 = an unknown evaluation counts as      */ \
+  /*                  unknown (no hindsight step, not improving, no LmrGap term).                                    */ \
+  /*   AuditTtNone    the LmrTtPvAlpha term read "hash value > alpha" also when the entry has no value (VAL_NONE,   */ \
+  /*                  evaluation-only entries); 1 = only a known value counts.                                       */ \
+  /*   AuditRootCuts  ProbCut and the small ProbCut of the hash (hash_bound_cut) also ran at the root, where they    */ \
+  /*                  ignore the root list (searchmoves, MultiPV lines) and return without recording a root move;  */ \
+  /*                  1 = not at the root.                                                                           */ \
+  P(AuditEvalNone, 0, 0, 1)                                                                                \
+  P(AuditTtNone, 0, 0, 1)                                                                                  \
+  P(AuditRootCuts, 0, 0, 1)                                                                                \
+  /*   AuditPromoIdx  after a promotion the history writers that read the board index the promoted piece, the      */ \
+  /*                  readers the pawn (13_learn.inc prev_piece_idx); 1 = the pawn everywhere.                       */ \
+  P(AuditPromoIdx, 0, 0, 1)                                                                                \
   P(SmallPcSlack, 4, 0, 8)               /* hash lower bound >= beta + margin cuts this short of depth      */ \
   /* Structure of the node (27-28/10/2026, docs/audit_8.1/R11 §4.2: the four top engines compared all take the hash   */ \
   /*  cutoff and the tablebases before the static evaluation, none has the hash-bound cut before the move loop, three */ \

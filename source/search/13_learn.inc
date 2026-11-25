@@ -29,6 +29,14 @@
 // followups (the continuation tables of the six moves before), the pawn-structure table and, with C2StructHistW,
 // the structure table.
 
+// The piece of the previous move (frame f[-1]) as the history tables index it. The writers that read the board take
+// the piece on the destination square, which after a promotion is the new piece, while the readers and the other
+// writers index a move by move_piece, the pawn. AuditPromoIdx (audit 25/11/2026, OFF; 01_params.inc) makes them agree.
+static inline int prev_piece_idx(const ThreadData &td, const NodeFrame *f, int prev_to) {
+  const int pm = f[-1].move;
+  return (AuditPromoIdx && move_ok(pm) && get_move_promoted(pm)) ? move_piece(pm) : td.piece_on[prev_to];
+}
+
 // The writer of one node: its thread, frame and expert. Built where an event happens; the gravity of the quiet and
 // continuation statistics is read once for the expert.
 struct Learner {
@@ -58,7 +66,9 @@ struct Learner {
         continue;
       int16_t &e = (*back->cont_hist)[pc][to];
       rated_well += e > 0;
-      const int part = amount * dist_w[d] * agree_w[rated_well] / 65536 * group_w[d] / 1024;
+      // 64-bit product (audit 25/11/2026): at the defaults it reaches ~80% of INT_MAX, and with ContDist/ContAgree
+      // levers near the top of their ranges it overflowed; the truncations are the same as before.
+      const int part = (int)((long long)amount * dist_w[d] * agree_w[rated_well] / 65536 * group_w[d] / 1024);
       hist_learn(e, part + (d == 1) * near_extra, LIM_FOLLOW, grav);
     }
   }
@@ -207,7 +217,7 @@ static void on_best_move(const Learner &L, const NodeState &n) {
     L.capture(bm, reward * by_exp4(n.expert, HlCBonus0, HlCBonus1, HlCBonus2, HlCBonus3) / 1024);
 
   if (n.prev_to >= 0 && L.f[-1].move_count == 1 + (L.f[-1].tt_hit ? 1 : 0) && !n.prior_capture)
-    L.followups(L.f - 1, L.td.piece_on[n.prev_to], n.prev_to, -penalty * PrevContMalus / 1024);
+    L.followups(L.f - 1, prev_piece_idx(L.td, L.f, n.prev_to), n.prev_to, -penalty * PrevContMalus / 1024);
 
   const int capt_penalty = by_exp4(n.expert, HlCMalus0, HlCMalus1, HlCMalus2, HlCMalus3);
   for (int i = 0; i < n.n_tacts; i++)
@@ -228,9 +238,10 @@ static void on_prior_refuted(const Learner &L, const NodeState &n) {
               PriorScaleOppEval * below_theirs;
   scale = std::max(scale, 0) * by_exp4(n.expert, PrGain0, PrGain1, PrGain2, PrGain3) / 1024;
   const int amount = hist_amount(n.expert, n.depth, PriorBonusDepthMul, PriorBonusSub, PriorBonusMax) * scale;
-  const int prev = f[-1].move, pc = L.td.piece_on[n.prev_to];
-  L.followups(L.f - 1, pc, n.prev_to, amount * PriorContW / 16384);
-  qh_push(L.td, L.td.side ^ 1, quiet_key(prev), f[-1].hctx, amount * PriorQuietW / 32768, L.grav);
+  const int prev = f[-1].move, pc = prev_piece_idx(L.td, f, n.prev_to);
+  // 64-bit products (audit 25/11/2026): amount reaches ~2e6, so PriorQuietW near the top of its range overflowed.
+  L.followups(L.f - 1, pc, n.prev_to, (int)((long long)amount * PriorContW / 16384));
+  qh_push(L.td, L.td.side ^ 1, quiet_key(prev), f[-1].hctx, (int)((long long)amount * PriorQuietW / 32768), L.grav);
   if (pc % 6 != P && !get_move_promoted(prev))
     hist_learn(pawn_row(L.td)[pc][n.prev_to], amount * PriorPawnW / 8192, LIM_PAWN, L.grav);
 }
@@ -251,7 +262,7 @@ static void on_node_outcome(ThreadData &td, NodeFrame *f, const NodeState &n) {
   if (!n.prior_capture)
     on_prior_refuted(L, n);
   else
-    hist_learn(td.capt_hist[td.piece_on[n.prev_to]][n.prev_to][f[-1].captured % 6],
+    hist_learn(td.capt_hist[prev_piece_idx(td, f, n.prev_to)][n.prev_to][f[-1].captured % 6],
                by_exp4(n.expert, PrCapt0, PrCapt1, PrCapt2, PrCapt3), LIM_CAPT, hist_cgrav(n.expert));
 }
 

@@ -501,7 +501,8 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
                                 bool gives, bool passer, int node_red) {
   // The node.
   if (f->tt_pv)
-    r -= LmrTtPvSub + deep_term(td, DeepTtPv) + n.pv * LmrTtPvPv + (n.h.value > n.alpha) * LmrTtPvAlpha +
+    r -= LmrTtPvSub + deep_term(td, DeepTtPv) + n.pv * LmrTtPvPv +
+         (n.h.value > n.alpha && (!AuditTtNone || val_known(n.h.value))) * LmrTtPvAlpha +   // AuditTtNone: 01_params.inc
          (n.h.depth >= n.depth) * (LmrTtPvDepth + n.cut * LmrTtPvCut);
   r += e_lmr_offset(td) - n.moves * LmrMoveCount - std::abs(n.signal) / LmrCorrDiv;
   if (n.cut)
@@ -515,7 +516,7 @@ static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const 
   else if (m == n.h.move && !n.sing_drop)   // SingDropHash: a hash move the exclusion search beat gets no bonus
     r -= LmrTTMove;
   r -= f->stat_score * LmrStatDiv / 4096;
-  if (!tact && !val_decided(n.alpha))
+  if (!tact && !val_decided(n.alpha) && !(AuditEvalNone && n.eval == VAL_NONE))   // AuditEvalNone: 01_params.inc
     r += LmrGapMul * std::clamp(n.alpha - n.eval, -LmrGapLo, LmrGapHi);
   if (n.all) {
     // r * LmrAllNode / (256 * depth + LmrAllDivBase), truncated toward zero, as a multiplication by the 40-bit
@@ -663,7 +664,8 @@ static TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f, NodeState &n
 
   if (!n.root) {
     if (stop_threads.load(std::memory_order_relaxed) || td.ply >= max_ply || drawn_here(td, n.in_check))
-      return (td.ply >= max_ply && !n.in_check) ? static_evaluate(td) : draw_score(td);
+      // At the maximum ply a repetition or the fifty-move rule still scores as a draw (audit 25/11/2026).
+      return (td.ply >= max_ply && !n.in_check && !drawn_here(td, n.in_check)) ? static_evaluate(td) : draw_score(td);
     // BAKE INSUFMATERIAL (11/10/2026, agent AE): insufficient material after a capture (12_quiesce.inc).
     if (f[-1].captured >= 0 && insufficient_material(td))
       return draw_score(td);
@@ -923,15 +925,19 @@ static TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f, NodeSta
   // The opponent's view got worse since its own evaluation: read by the hindsight step below (the node's own trend,
   // improving, is set after the hash cutoff and the tablebases, node_trend).
   n.opp_worse = f->static_eval > -f[-1].static_eval;
+  // AuditEvalNone (audit 25/11/2026, OFF; 01_params.inc): with an unknown evaluation here or at the parent (VAL_NONE,
+  // inherited in check from the frames before the root) there is no trend to read and no hindsight step.
+  bool c2_prior_ok = true;
+  if (AuditEvalNone && (f->static_eval == VAL_NONE || f[-1].static_eval == VAL_NONE))
+    n.opp_worse = false, c2_prior_ok = false;
   // C2 idea 7 (regime selectivity, 21/10/2026; OFF by default, SPRT pending): the comparisons with earlier plies only
   // inside one expert pair. Frames before the root carry no pair, hence the ply guards.
-  bool c2_prior_ok = true;
   if (C2SameRegImp) {
     const int sr = C2SameRegImp, pair = f->c2pair;
     const bool switched = f->ply >= 1 && f[-1].c2pair != pair;
     if ((sr & 2) && switched)
       n.opp_worse = false;
-    c2_prior_ok = !((sr & 4) && switched);
+    c2_prior_ok = c2_prior_ok && !((sr & 4) && switched);
   }
   // C2 idea 8 (regime selectivity): material direction of the node, read by the null move, the pruning of single
   // moves and the reductions.
@@ -965,6 +971,8 @@ static inline void node_trend(const NodeFrame *f, NodeState &n) {
     if (!n.in_check && f->ply >= 2 && f[-2].c2pair != pair)
       n.improving = (f->ply >= 4 && f[-4].c2pair == pair) ? f->static_eval > f[-4].static_eval : (C2SameRegImp & 8) != 0;
   }
+  if (AuditEvalNone && (f->static_eval == VAL_NONE || f[-2].static_eval == VAL_NONE))   // 01_params.inc
+    n.improving = false;
 }
 
 // --------------------------------------------------------------------------
@@ -1211,6 +1219,10 @@ __attribute__((noinline)) static TRIUMV_SEARCH_CC int capture_probe_search(Threa
         v = -explore<AN>(td, f + 1, -cut_beta, -cut_beta + 1, cut_depth, !n.cut, false);
     }
     step_out(td, m, u);
+    // Audit 25/11/2026: after the stop flag the verification search returns a meaningless value (the draw score of
+    // node_open); it must not become a lower bound in the hash table, which survives into the next move.
+    if (stop_threads.load(std::memory_order_relaxed))
+      return NO_VALUE;
     PCMISS_STAT(g_pcmiss.tried++);
     PCMISS_STAT(g_pcmiss.recorded += v < n.beta);
     if (v < cut_beta) {
@@ -1234,7 +1246,8 @@ __attribute__((always_inline)) static inline TRIUMV_SEARCH_CC int capture_probe(
                                                                                 NodeState &n) {
   const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
-  if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
+  if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta) ||
+      (AuditRootCuts && n.root))   // AuditRootCuts (01_params.inc): no ProbCut at the root
     return NO_VALUE;
   return capture_probe_search<AN>(td, f, n, cut_beta);
 }
@@ -1944,6 +1957,10 @@ static TRIUMV_SEARCH_CC int singular_probe(ThreadData &td, NodeFrame *f, NodeSta
   f->excluded = m;
   const int v = explore<AN>(td, f, s_beta - 1, s_beta, s_depth, n.cut, false);
   f->excluded = 0;
+  // Audit 25/11/2026: a stopped exclusion search returns the draw score; it must neither extend nor cut nor teach the
+  // corrections (on_multi_cut), whose tables live on into the next move.
+  if (stop_threads.load(std::memory_order_relaxed))
+    return 0;
 
   if (v < s_beta) {
     // Extra plies: a ladder on the gap under the bar. The first rung is a threshold built from the node facts, plus
@@ -1991,6 +2008,11 @@ static TRIUMV_SEARCH_CC int singular_probe(ThreadData &td, NodeFrame *f, NodeSta
 // Updates the root move just searched (statistics, line, best-move changes).
 // Blend of a running average with a fresh value, the fresh one weighing w/32 (truncated toward zero).
 static inline long long blend32(long long old, long long fresh, int w) { return (fresh * w + old * (32 - w)) / 32; }
+
+// |score| of a root line for the mate-hunt mode. Audit 25/11/2026: a line that failed low keeps the -infinity sentinel
+// as its score (root_record), whose absolute value passed HuntScore and switched the hunt on under every secondary line
+// of a MultiPV search (and of the analysis mode); an unknown score now counts as 0.
+static inline int root_hunt_abs(const RootLine &r) { return r.score == -infinity ? 0 : std::abs(r.score); }
 
 // Bookkeeping of one searched root move (rewritten in our structure 27/10/2026, same results): the effort spent on it,
 // the two running averages read by the aspiration window (score, and signed square for its width), and, for the first
@@ -2603,7 +2625,7 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
       n.causal = causal_mask(td, f[1].refute);
     if (n.root) {
       root_record(td, n, m, value, td.nodes - nodes_before, n.moves);
-      td.hunt_abs = std::abs(td.root[td.pv_idx].score);   // explore: the copy read by the nodes below the root
+      td.hunt_abs = root_hunt_abs(td.root[td.pv_idx]);   // explore: the copy read by the nodes below the root
     }
 
     const int nudge = (value == n.best && td.ply + NudgePly >= td.root_depth && (int(td.nodes) & 14) == 0 &&
@@ -2773,10 +2795,10 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
   // written here at the root and after every root_record (move_loop), the only writer of the root scores while a
   // search is under way; the iteration loop (14_deepen.inc) changes them only between searches, before the next root.
   if (n.root)
-    td.hunt_abs = std::abs(td.root[td.pv_idx].score);
+    td.hunt_abs = root_hunt_abs(td.root[td.pv_idx]);
 #ifdef TRIUMV_VERIFY_HUNT   // check: the copy is the root line's value at every node
-  if (td.hunt_abs != std::abs(td.root[td.pv_idx].score)) {
-    printf("info string HUNT WRONG: copy %d root %d\n", td.hunt_abs, std::abs(td.root[td.pv_idx].score));
+  if (td.hunt_abs != root_hunt_abs(td.root[td.pv_idx])) {
+    printf("info string HUNT WRONG: copy %d root %d\n", td.hunt_abs, root_hunt_abs(td.root[td.pv_idx]));
     fflush(stdout);
     abort();
   }
@@ -2840,7 +2862,7 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
     if ((v = prune_before_moves<AN>(td, f, n)) != NO_VALUE) return v;
   }
 
-  if ((v = hash_bound_cut(n)) != NO_VALUE)
+  if (!(AuditRootCuts && n.root) && (v = hash_bound_cut(n)) != NO_VALUE)   // AuditRootCuts: 01_params.inc
     return v;
 
   if ((v = move_loop<AN>(td, f, n)) != NO_VALUE)
