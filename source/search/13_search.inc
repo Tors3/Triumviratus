@@ -774,7 +774,10 @@ static bool hash_child_agrees(ThreadData &td, const NodeState &n) {
   return agrees;
 }
 
-static int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
+// (25/11/2026, speed, same values) Asked at every node after its evaluation and almost always answered by the first test
+// (a PV node, an exclusion search, an entry not deep enough or without a value): with HashNearMiss off that test is
+// inline in hash_cutoff below, and only the other nodes call this function.
+__attribute__((noinline)) static int hash_cutoff_full(ThreadData &td, NodeFrame *f, NodeState &n) {
   const HashView &h = n.h;
   const int need = n.depth - (h.value <= n.beta ? HashLowSlack : 0);
   const bool deep = h.depth > need;
@@ -799,6 +802,13 @@ static int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
       !hash_child_agrees(td, n))
     return NO_VALUE;
   return hash_cut_value(n);
+}
+static inline int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
+  const HashView &h = n.h;
+  const bool deep = h.depth > n.depth - (h.value <= n.beta ? HashLowSlack : 0);
+  if (!HashNearMiss && (n.pv || n.excluded || !deep || !val_known(h.value)))
+    return NO_VALUE;
+  return hash_cutoff_full(td, f, n);
 }
 
 // Once a move has raised alpha, the remaining moves of the node are searched shallower (AlphaRedLo < depth <
