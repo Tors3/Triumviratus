@@ -2531,8 +2531,10 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
       return 0;
     if (CausalRed && !tact && value <= n.alpha && f[1].refute)
       n.causal = causal_mask(td, f[1].refute);
-    if (n.root)
+    if (n.root) {
       root_record(td, n, m, value, td.nodes - nodes_before, n.moves);
+      td.hunt_abs = std::abs(td.root[td.pv_idx].score);   // explore: the copy read by the nodes below the root
+    }
 
     const int nudge = (value == n.best && td.ply + NudgePly >= td.root_depth && (int(td.nodes) & 14) == 0 &&
                        !val_won(std::abs(value) + 1)) ? 1 : 0;
@@ -2696,7 +2698,20 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
   n.depth = std::min(depth, max_ply - 1);
   n.in_check = f->in_check;
   n.prior_capture = f[-1].captured >= 0;
-  n.hunt_mate = td.root_depth >= (AN ? td.hunt_from : HuntDepth) && std::abs(td.root[td.pv_idx].score) >= HuntScore;
+  // (25/11/2026, speed, same values) |score| of the current root line: read from the root line only at the root, and
+  // from its copy td.hunt_abs everywhere else (one cache line of the 256 root lines less per node). The copy is
+  // written here at the root and after every root_record (move_loop), the only writer of the root scores while a
+  // search is under way; the iteration loop (14_deepen.inc) changes them only between searches, before the next root.
+  if (n.root)
+    td.hunt_abs = std::abs(td.root[td.pv_idx].score);
+#ifdef TRIUMV_VERIFY_HUNT   // check: the copy is the root line's value at every node
+  if (td.hunt_abs != std::abs(td.root[td.pv_idx].score)) {
+    printf("info string HUNT WRONG: copy %d root %d\n", td.hunt_abs, std::abs(td.root[td.pv_idx].score));
+    fflush(stdout);
+    abort();
+  }
+#endif
+  n.hunt_mate = td.root_depth >= (AN ? td.hunt_from : HuntDepth) && td.hunt_abs >= HuntScore;
   n.best = -infinity;
   n.best_move = 0;
   n.best_ctx = 0;

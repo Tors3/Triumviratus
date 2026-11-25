@@ -169,6 +169,7 @@ struct alignas(128) ThreadData {
     int  root_depth;
     int  completed_depth;
     int  root_delta;
+    int  hunt_abs = 0;                // |root[pv_idx].score|, kept by explore at the root and after root_record
     // (28/10/2026 night) LmrDeltaMul / root_delta of a null window, with the two values it came from (move_loop
     // divides again only when one of them changes).
     int  rw1_delta = 0, rw1_mul = 0, rw1_term = 0;
