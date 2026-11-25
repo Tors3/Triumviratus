@@ -72,7 +72,13 @@ struct Learner {
     qh_push(td, td.side, key, ctx, amount, grav);
     if (f->ply < LOW_PLY_SIZE)
       hist_learn(td.low_ply_hist[f->ply][key], amount * LowPlyScale / 1024 * aux / 1024, LIM_QUIET, grav);
+    // (25/11/2026, speed, same updates) Inline here, the update of every quiet move: out of line it was a second call
+    // with eight saved registers inside this one. The other callers keep the call.
+#if defined(__clang__)
+    [[clang::always_inline]] followups(f, pc, to, amount * ContUpdScale / 1024 * aux / 1024);
+#else
     followups(f, pc, to, amount * ContUpdScale / 1024 * aux / 1024);
+#endif
     const int pawn_scale = amount > PawnHistSplit ? PawnBonusScale : PawnMalusScale;
     hist_learn(pawn_row(td)[pc][to], amount * pawn_scale / 1024 * aux / 1024, LIM_PAWN, grav);
     if (C2StructHistW)   // C2 ordering idea 6: the structure table learns only while the ordering reads it
