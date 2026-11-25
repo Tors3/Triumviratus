@@ -212,9 +212,11 @@ static inline bool legal_before(ThreadData &td, MoveSafety &s, int m) {
   return !(s.pinned >> from & 1) || on_line(from, move_to(m), s.our_king);
 }
 
-static bool checks_before(ThreadData &td, MoveSafety &s, int m) {
-  PROF_GUARD(prof_gc);
-  if (!s.ready) safety_init(td, s);
+// (25/11/2026, speed, same answers) checks_before runs ~1.8 times per node (every move of the search and of the
+// quiescence) and was out of line with a full prologue (seven saved registers) for the promotion, en passant and
+// castling cases; the common move needs two table tests. As for legal_before above: the common case inline, the three
+// rare kinds of move in checks_before_slow, which repeats the whole test.
+__attribute__((noinline)) static bool checks_before_slow(ThreadData &td, MoveSafety &s, int m) {
   const int from = move_from(m), to = move_to(m), pc = move_piece(m), pt = pc - (td.side == white ? 0 : 6);
   const bool castling = get_move_castling(m) != 0;
   if (!castling && (s.checks.chk[pt] >> to & 1))
@@ -247,6 +249,15 @@ static bool checks_before(ThreadData &td, MoveSafety &s, int m) {
     return s.checks.chk[R] >> rt & 1;
   }
   return false;
+}
+
+static inline bool checks_before(ThreadData &td, MoveSafety &s, int m) {
+  PROF_GUARD(prof_gc);
+  if (!s.ready) safety_init(td, s);
+  if (m & 0xCF0000)   // castling (bit 23), en passant (bit 22), promotion (bits 16-19): the full test
+    return checks_before_slow(td, s, m);
+  const int from = move_from(m), to = move_to(m), pt = move_piece(m) - (td.side == white ? 0 : 6);
+  return (s.checks.chk[pt] >> to & 1) || ((s.checks.disc >> from & 1) && !on_line(from, to, s.their_king));
 }
 
 // ============================================================================
