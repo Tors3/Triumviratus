@@ -199,8 +199,15 @@ void  nn_prefetch_move(const unsigned long long* bb, int phase, int pc, int from
 // (25/11/2026, speed, same values) A field of the caller's thread (ThreadData::nn_disagree) instead of a thread_local of
 // this unit: with clang-cl every access to a thread_local of another unit went through the thread's TLS block and the
 // on-demand initialisation guard (gs:[0x58], the TLS index, a test), up to three times per evaluation of the search.
-int   nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
-                  int side_white, int rule50, int* last_disagree);
+// (25/11/2026, speed, same values) In the System V convention on Windows (clang), as cn::evaluate it calls and the
+// search functions that call it (consilium/cn.h, CN_EVAL_CC): no callee-saved xmm6-15 to keep along the chain.
+#if defined(_WIN64) && defined(__clang__)
+    #define NN_EVAL_CC __attribute__((sysv_abi))
+#else
+    #define NN_EVAL_CC
+#endif
+NN_EVAL_CC int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
+                           int side_white, int rule50, int* last_disagree);
 
 // nnueverify: evaluations compared and evaluations that differed since startup.
 unsigned long long nn_verify_count(void);

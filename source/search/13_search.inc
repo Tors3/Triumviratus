@@ -636,7 +636,7 @@ static void poll_limits(ThreadData &td) {
 // --------------------------------------------------------------------------
 // Stage 1: node entry. Returns a value if the node closes here.
 // --------------------------------------------------------------------------
-static int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
   // The threshold is the draw value for the side to move (0 without Contempt): so alpha never drops (05/10/2026,
   // porting audit: with threshold 0 Contempt lowered alpha on the root side).
   if (!n.root && n.alpha < contempt(td) && td_upcoming_repetition(td)) {
@@ -863,7 +863,7 @@ static int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
 // --------------------------------------------------------------------------
 // Stage 2: evaluation and cuts before the move loop.
 // --------------------------------------------------------------------------
-static void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
   n.eval_raw = tt_eval_none;
   n.disagree = -1;
   n.net_ok = false;

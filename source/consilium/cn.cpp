@@ -2811,7 +2811,7 @@ inline void cancel_pairs(RowList& L) {
 
 }  // namespace
 
-Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {
+CN_EVAL_CC Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {   // System V: see cn.h
     CN_TIME(0);
     CN_AST(g_applyStats.evals++);
     {   // The pawn-king entry is read at the end: asked for now, so it arrives under the accumulator work (21/10/2026).

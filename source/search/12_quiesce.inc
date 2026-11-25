@@ -2,17 +2,8 @@
 // and back) and the quiescence search (block 5 of 8.1, in our form since 17/10/2026).
 // Part of threads.cpp: NOT a translation unit of its own.
 
-// (17/11/2026, speed, same values) The recursive search functions (quiesce, explore, move_loop) use the System V
-// calling convention on Windows: it has no callee-saved xmm6-15, so their prologues and epilogues no longer save and
-// restore vector registers at every node (explore saved five per call). Calls between the three follow the same
-// convention; a call to an ordinary function still finds xmm6-15 preserved by that callee. Xeon (PGO, xperf 6 rounds,
-// three code layouts): -0.08% cycles per node in the middlegame, -0.26% in endgames (every layout), -0.2/-0.3%
-// instructions, bench unchanged.
-#if defined(_WIN32) && defined(__clang__)
-#define TRIUMV_SEARCH_CC __attribute__((sysv_abi))
-#else
-#define TRIUMV_SEARCH_CC
-#endif
+// TRIUMV_SEARCH_CC, the System V convention of the recursive search functions: defined in 09_history.inc (since
+// 25/11/2026 the evaluation path uses it too).
 
 // ============================================================================
 // HASH TABLE: reading and writing in the units and conventions of the search

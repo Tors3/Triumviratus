@@ -1,6 +1,24 @@
 // search/09_history.inc -- Static evaluation, move statistics, correction of the evaluation.
 // Part of threads.cpp: NOT a translation unit of its own.
 
+// (17/11/2026, speed, same values) The recursive search functions (quiesce, explore, move_loop) use the System V
+// calling convention on Windows: it has no callee-saved xmm6-15, so their prologues and epilogues no longer save and
+// restore vector registers at every node (explore saved five per call). Calls between the three follow the same
+// convention; a call to an ordinary function still finds xmm6-15 preserved by that callee. Xeon (PGO, xperf 6 rounds,
+// three code layouts): -0.08% cycles per node in the middlegame, -0.26% in endgames (every layout), -0.2/-0.3%
+// instructions, bench unchanged.
+// (25/11/2026, speed, same values) The evaluation path too: node_open and node_evaluate (13_search.inc),
+// static_evaluate (below), nn_pos_eval (bridge) and cn::evaluate. cn::evaluate, an ordinary function calling the System
+// V leaves of the network, saved and restored the ten xmm6-15 at every evaluation; with the whole chain in System V
+// nobody has them to keep. An ordinary function on the chain would have to save them in turn, so every caller on the
+// hot path is in the same convention (the others, at the root and in the plan, are cold).
+// (Moved here from 12_quiesce.inc on 25/11/2026: static_evaluate below needs it.)
+#if defined(_WIN32) && defined(__clang__)
+#define TRIUMV_SEARCH_CC __attribute__((sysv_abi))
+#else
+#define TRIUMV_SEARCH_CC
+#endif
+
 // ============================================================================
 // EVALUATION
 // ============================================================================
@@ -104,7 +122,7 @@ static inline int eg_scale(const ThreadData &td) {
   return 100;
 }
 
-static inline int static_evaluate(ThreadData &td) {
+static inline TRIUMV_SEARCH_CC int static_evaluate(ThreadData &td) {
   int v = (int)((long long)(net_evaluate(td) - C2StmOffset) * EvalUnits / 1024);
   if (EgScaleOcb != 100 || EgScaleRook != 100 || EgScaleWing != 100) {
     const int s = eg_scale(td);

@@ -886,8 +886,8 @@ void nn_bind_node_net(int node) {
 
 void nn_set_pk_stale(void* handle, int on) { static_cast<CnPos*>(handle)->h->pkStale = on; }
 
-int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
-                int side_white, int rule50, int* last_disagree) {
+NN_EVAL_CC int nn_pos_eval(void* handle, const unsigned long long* bb, const unsigned long long* occ, const int* mailbox,
+                           int side_white, int rule50, int* last_disagree) {   // System V: see the header
     CnPos*        p = static_cast<CnPos*>(handle);
     const NnBoard board(bb, occ, mailbox, side_white ? WHITE : BLACK);
     const int*    opt = g_opt_per_thread ? p->opt : nullptr;

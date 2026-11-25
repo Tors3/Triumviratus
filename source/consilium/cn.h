@@ -190,9 +190,20 @@ struct Out {
     int positional;
 };
 
+// (25/11/2026, speed, same values) evaluate in the System V convention on Windows (clang), as the network's internal
+// leaves (CN_LEAF, cn.cpp) and the search path that calls it (nn_pos_eval in the bridge, the engine's static_evaluate,
+// node_evaluate, node_open, explore, quiesce): System V has no callee-saved xmm6-15, and evaluate, an ordinary Windows
+// function calling System V leaves, saved and restored all ten at every evaluation. Its callers keep no vector value
+// across the call. Elsewhere it is empty.
+#if defined(_WIN64) && defined(__clang__)
+    #define CN_EVAL_CC __attribute__((sysv_abi))
+#else
+    #define CN_EVAL_CC
+#endif
+
 void init();                      // index tables (once, at startup)
 void reset(Handle& h);            // back to the root: one state, nothing computed
-Out  evaluate(const Net& net, Handle& h, const Board& b, bool want_x1 = false);       // incremental along the stack
+CN_EVAL_CC Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1 = false);   // incremental along the stack
 Out  evaluate_refresh(const Net& net, const Board& b, Acc acc[2]);  // from scratch, both perspectives
 bool same_accumulators(const Handle& h, const Acc acc[2]);       // nnueverify: top of the stack == refresh
 // Memory hint from the make: the HalfKA rows of a move (board before the move, phase after it). No state changes.
