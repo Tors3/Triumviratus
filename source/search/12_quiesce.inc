@@ -314,17 +314,8 @@ static inline bool step_in(ThreadData &td, NodeFrame *f, int m, UndoInfo &u, boo
   return true;
 }
 
-// always_inline (25/11/2026): with the unmake inside, the inliner left step_out itself out of line (a call per node
-// again, seen in the disassembly); both are forced into the steps of the search.
-__attribute__((always_inline)) static inline void step_out(ThreadData &td, int m, UndoInfo &u) {
-  // (25/11/2026, speed, same values) The unmake inline at the steps of the search only (once per node; the inliner left
-  // it out of line, a call with three saved registers). The other callers (validations, root, perft) keep the call. To
-  // be measured on its own, as red_final_v80.
-#if defined(__clang__)
-  [[clang::always_inline]] td_unmake_move(td, m, u);
-#else
+static inline void step_out(ThreadData &td, int m, UndoInfo &u) {
   td_unmake_move(td, m, u);
-#endif
   td.ply--;
   td.repetition_index--;
 }

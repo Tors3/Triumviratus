@@ -497,12 +497,8 @@ static inline int red_entry_v80(const ThreadData &td, const NodeFrame *f, const 
   return r + by_expert(n.expert, LmrExp0, LmrExp1, LmrExp2, LmrExp3) + cell_off(C2C_LMR, n);
 }
 
-// (25/11/2026, speed, same values) Always inline: called once per searched move (~0.9 per node) from move_loop, it was left
-// out of line by the inliner, with nine arguments (five through the stack) and four saved registers per call. To be
-// measured on its own: the larger move_loop may need more spills.
-__attribute__((always_inline)) static inline int red_final_v80(const ThreadData &td, const NodeFrame *f,
-                                                               const NodeState &n, int m, int r, bool tact, bool gives,
-                                                               bool passer, int node_red) {
+static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const NodeState &n, int m, int r, bool tact,
+                                bool gives, bool passer, int node_red) {
   // The node.
   if (f->tt_pv)
     r -= LmrTtPvSub + deep_term(td, DeepTtPv) + n.pv * LmrTtPvPv + (n.h.value > n.alpha) * LmrTtPvAlpha +
@@ -640,11 +636,7 @@ static void poll_limits(ThreadData &td) {
 // --------------------------------------------------------------------------
 // Stage 1: node entry. Returns a value if the node closes here.
 // --------------------------------------------------------------------------
-// (25/11/2026, speed, same values) node_open, node_evaluate and node_close are always inline in explore, their only caller:
-// out of line they were three calls per node with six or seven saved registers each. To be measured on its own; the
-// frame of explore must stay under the 4 KB of the stack probe (checked in the disassembly).
-__attribute__((always_inline)) static inline TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f,
-                                                                            NodeState &n) {   // System V: 09_history.inc
+static TRIUMV_SEARCH_CC int node_open(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
   // The threshold is the draw value for the side to move (0 without Contempt): so alpha never drops (05/10/2026,
   // porting audit: with threshold 0 Contempt lowered alpha on the root side).
   if (!n.root && n.alpha < contempt(td) && td_upcoming_repetition(td)) {
@@ -889,8 +881,7 @@ __attribute__((always_inline)) static inline int tablebase_probe(ThreadData &td,
 // --------------------------------------------------------------------------
 // Stage 2: evaluation and cuts before the move loop.
 // --------------------------------------------------------------------------
-__attribute__((always_inline)) static inline TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f,
-                                                                                 NodeState &n) {   // System V
+static TRIUMV_SEARCH_CC void node_evaluate(ThreadData &td, NodeFrame *f, NodeState &n) {   // System V: 09_history.inc
   n.eval_raw = tt_eval_none;
   n.disagree = -1;
   n.net_ok = false;
@@ -2678,7 +2669,7 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
 // softens its value at the cutoff, in move_loop): let the statistics learn from the outcome of a node that did not fail
 // high, store the result, and teach the correction tables the error of the static evaluation.
 
-__attribute__((always_inline)) static inline int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {   // see node_open
+static int node_close(ThreadData &td, NodeFrame *f, NodeState &n) {
   // A node that failed high (only a cutoff in move_loop gives best >= beta, and the softening keeps it there) has
   // already fetched its hash line, learned and softened its value. For the others the line of the node's hash bucket,
   // read at entry, has often left the cache after the subtree: it is fetched again now, with the statistics to update
