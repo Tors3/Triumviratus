@@ -32,7 +32,10 @@ __attribute__((noinline)) static void see_pins_update(ThreadData &td) {
 
 // SEE with the convention of the search: castling and en passant count 0. Promotions go to the SEE, which adds the
 // promotion gain (17/10/2026, review by Bastiii; before, they counted 0 too).
-static inline bool see_holds(ThreadData &td, int m, int threshold) {
+// always_inline (25/11/2026, speed, same answers): with its rare parts out of line (see_pins_update above, the exchange
+// walk in see.cpp) it is a few tests and the two bounds of the threshold SEE, yet the callers' budget left it out of line
+// (209 bytes, three saved registers), ~0.9 calls per node.
+__attribute__((always_inline)) static inline bool see_holds(ThreadData &td, int m, int threshold) {
   if (get_move_castling(m) || get_move_enpassant(m))
     return 0 >= threshold;
   PROF_GUARD(prof_see);
