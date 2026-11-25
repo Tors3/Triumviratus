@@ -430,6 +430,16 @@ static inline int ttm_grav(int e)    { return by_exp4(e, TtmGrav0, TtmGrav1, Ttm
 // closer to the limit (keeps more); higher G: it forgets sooner. The int16 clamp never acts at G = 1024.
 // (20/10/2026) The quotient in double instead of the 64-bit division (same values, checked call by call) was neutral
 // in the release build on the Xeon (-0.15% cycles in the middlegame, -0.03% in endgames): not kept.
+// (25/11/2026, speed, same values) Every gravity parameter is 1024 in the release: then the test of the gravity is a
+// constant and the general path below is never compiled into the updates.
+#ifdef TRIUMV_RELEASE
+static constexpr bool kGravFlat = HlGrav0 == 1024 && HlGrav1 == 1024 && HlGrav2 == 1024 && HlGrav3 == 1024 &&
+                                  HlCGrav0 == 1024 && HlCGrav1 == 1024 && HlCGrav2 == 1024 && HlCGrav3 == 1024 &&
+                                  CorrGrav0 == 1024 && CorrGrav1 == 1024 && CorrGrav2 == 1024 && CorrGrav3 == 1024 &&
+                                  TtmGrav0 == 1024 && TtmGrav1 == 1024 && TtmGrav2 == 1024 && TtmGrav3 == 1024;
+#else
+static constexpr bool kGravFlat = false;
+#endif
 static inline void hist_learn(int16_t &e, int bonus, int limit, int grav) {
   const int b = std::clamp(bonus, -limit, limit);
   const int v = e;
@@ -439,9 +449,21 @@ static inline void hist_learn(int16_t &e, int bonus, int limit, int grav) {
   // limit of 01_params.inc). -0.8% / -1.5% cycles (mg / eg) on the Xeon avx2 variant. On AVX-512 it measured +0.2% /
   // +0.4% on 29/10 and was kept off there; (17/11/2026) on AVX-512 too, measured together with the scalar history
   // reads of quiet_vec_score (11_queue.inc, the numbers are there).
-  if (grav == 1024) {
+  // (25/11/2026, speed, same values) No clamp to +-32767 on this path: it never acts. With |v| <= 32767 and |b| <=
+  // limit <= 32767 the result v + b - trunc(v|b|/limit) keeps |result| <= 32767: when v and b have the same sign,
+  // |result| < |v|(1 - |b|/limit) + |b| + 1 <= 32767 - |b|(32767 - limit)/limit + 1, an integer below 32768; with
+  // opposite signs |result| <= max(|v|, |b|). Every writer keeps |v| <= 32767 (the general path clamps, the starting
+  // values and the decay between searches stay inside), so the invariant holds. -DTRIUMV_VERIFY_HISTCLAMP checks it.
+  if (kGravFlat || grav == 1024) {
     const int pull = v * (b < 0 ? -b : b) / limit;
-    e = (int16_t)std::clamp(v + b - pull, -32767, 32767);
+#ifdef TRIUMV_VERIFY_HISTCLAMP
+    if (v + b - pull < -32767 || v + b - pull > 32767) {
+      printf("info string HISTCLAMP WRONG: v %d b %d limit %d\n", v, b, limit);
+      fflush(stdout);
+      abort();
+    }
+#endif
+    e = (int16_t)(v + b - pull);
     return;
   }
 #endif
@@ -451,7 +473,9 @@ static inline void hist_learn(int16_t &e, int bonus, int limit, int grav) {
 // Same rule for an int statistic (tt_move_hist).
 static inline void hist_learn(int &e, int bonus, int limit, int grav) {
   const int b = std::clamp(bonus, -limit, limit);
-  const long long pull = (long long)e * (b < 0 ? -b : b) * grav / ((long long)limit * 1024);
+  // At G = 1024 (kGravFlat) x * 1024 / (limit * 1024) truncates as x / limit: the same quotient (25/11/2026).
+  const long long pull = kGravFlat ? (long long)e * (b < 0 ? -b : b) / limit
+                                   : (long long)e * (b < 0 ? -b : b) * grav / ((long long)limit * 1024);
   e = (int)((long long)e + b - pull);
 }
 
