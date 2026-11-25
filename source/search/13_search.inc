@@ -497,8 +497,12 @@ static inline int red_entry_v80(const ThreadData &td, const NodeFrame *f, const 
   return r + by_expert(n.expert, LmrExp0, LmrExp1, LmrExp2, LmrExp3) + cell_off(C2C_LMR, n);
 }
 
-static inline int red_final_v80(const ThreadData &td, const NodeFrame *f, const NodeState &n, int m, int r, bool tact,
-                                bool gives, bool passer, int node_red) {
+// (25/11/2026, speed, same values) Always inline: called once per searched move (~0.9 per node) from move_loop, it was left
+// out of line by the inliner, with nine arguments (five through the stack) and four saved registers per call. To be
+// measured on its own: the larger move_loop may need more spills.
+__attribute__((always_inline)) static inline int red_final_v80(const ThreadData &td, const NodeFrame *f,
+                                                               const NodeState &n, int m, int r, bool tact, bool gives,
+                                                               bool passer, int node_red) {
   // The node.
   if (f->tt_pv)
     r -= LmrTtPvSub + deep_term(td, DeepTtPv) + n.pv * LmrTtPvPv + (n.h.value > n.alpha) * LmrTtPvAlpha +
