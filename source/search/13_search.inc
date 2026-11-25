@@ -840,14 +840,9 @@ static inline int hash_bound_cut(const NodeState &n) {
 }
 
 // Tablebases in interior nodes.
-static int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
-  if (n.root || n.excluded)
-    return NO_VALUE;
-  unsigned men = syzygy_max_pieces();
-  if (g_syzygy_probe_limit >= 0 && (unsigned)g_syzygy_probe_limit < men)
-    men = (unsigned)g_syzygy_probe_limit;
-  if (!men || td.castle || td.fifty || g_tb_root_draw_search)   // TbDrawSearch: no probe while choosing among draws
-    return NO_VALUE;
+// (25/11/2026, speed, same values) The tests that need no probe (no tables, castling rights, a fifty-move counter, the
+// root) are inline in tablebase_probe below, asked at every node; this part runs only when a probe may follow.
+__attribute__((noinline)) static int tablebase_probe_full(ThreadData &td, NodeFrame *f, NodeState &n, unsigned men) {
   const unsigned pieces = (unsigned)count_bits(td.occupancies[both]);
   if (pieces > men || (pieces == men && n.depth < g_syzygy_probe_depth))
     return NO_VALUE;
@@ -872,6 +867,16 @@ static int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
       n.cap_value = tb;
   }
   return NO_VALUE;
+}
+static inline int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+  if (n.root || n.excluded)
+    return NO_VALUE;
+  unsigned men = syzygy_max_pieces();
+  if (g_syzygy_probe_limit >= 0 && (unsigned)g_syzygy_probe_limit < men)
+    men = (unsigned)g_syzygy_probe_limit;
+  if (!men || td.castle || td.fifty || g_tb_root_draw_search)   // TbDrawSearch: no probe while choosing among draws
+    return NO_VALUE;
+  return tablebase_probe_full(td, f, n, men);
 }
 
 // --------------------------------------------------------------------------
