@@ -94,6 +94,13 @@ inline U64 pack_tt_data(int move, int score, int depth, int flag, int age, int p
         ((U64)(pv & 0x1) << 63);
 }
 
+// The data word as it enters the check word: kw = (tag << 16 | eval16) ^ tt_bind(data). Audit 25/11/2026: with the plain
+// data, two threads storing the same position with data words that differed only in their low 16 bits (the low bits of
+// the move) left a torn pair (one thread's data, the other's kw) whose tag still matched, and the eval16 read back was
+// the XOR of the two moves: a garbage static evaluation. The low 16 bits now also enter the tag field, so such a pair
+// fails the tag check like any other torn pair. A single thread reads exactly what it wrote, as before.
+inline U64 tt_bind(U64 data) { return data ^ ((data & 0xFFFFULL) << 16); }
+
 inline int unpack_move(U64 data) { return data & 0xFFFFFF; }
 inline int unpack_score(U64 data) { return ((data >> 24) & 0xFFFF) - 32768; }
 inline int unpack_depth(U64 data) { return (data >> 40) & 0xFF; }
@@ -308,7 +315,8 @@ inline int tt_ways() { return TT_WAYS; }
 #include <immintrin.h>
 inline unsigned tt_match4(__m512i v, U64 tag, __m512i& w) {
     const __m512i sw = _mm512_shuffle_epi32(v, _MM_PERM_BADC);   // in every way: [data, kw]
-    w = _mm512_xor_si512(v, sw);                                  // corsie pari: kw ^ data
+    w = _mm512_xor_si512(_mm512_xor_si512(v, sw),                 // even lanes: kw ^ tt_bind(data)
+                         _mm512_slli_epi64(_mm512_and_si512(sw, _mm512_set1_epi64(0xFFFF)), 16));
     const __m512i o = _mm512_or_si512(v, sw);                     // kw | data (0 = via vuota)
     const __mmask8 tag_ok = _mm512_mask_cmpeq_epu64_mask(0x55, _mm512_srli_epi64(w, 16), _mm512_set1_epi64((long long)tag));
     return (unsigned)_mm512_mask_test_epi64_mask(tag_ok, o, o);
@@ -328,7 +336,9 @@ inline unsigned tt_match4_avx2(const void* bucket, U64 tag, U64* dv, U64* wv) {
     const __m256i v0 = _mm256_load_si256(reinterpret_cast<const __m256i*>(bucket));
     const __m256i v1 = _mm256_load_si256(reinterpret_cast<const __m256i*>(bucket) + 1);
     const __m256i s0 = _mm256_shuffle_epi32(v0, _MM_SHUFFLE(1, 0, 3, 2)), s1 = _mm256_shuffle_epi32(v1, _MM_SHUFFLE(1, 0, 3, 2));
-    const __m256i w0 = _mm256_xor_si256(v0, s0), w1 = _mm256_xor_si256(v1, s1);   // even qwords: kw ^ data
+    const __m256i lo = _mm256_set1_epi64x(0xFFFF);   // even qwords: kw ^ tt_bind(data)
+    const __m256i w0 = _mm256_xor_si256(_mm256_xor_si256(v0, s0), _mm256_slli_epi64(_mm256_and_si256(s0, lo), 16));
+    const __m256i w1 = _mm256_xor_si256(_mm256_xor_si256(v1, s1), _mm256_slli_epi64(_mm256_and_si256(s1, lo), 16));
     const __m256i z = _mm256_setzero_si256(), T = _mm256_set1_epi64x((long long)tag);
     const __m256i h0 = _mm256_andnot_si256(_mm256_cmpeq_epi64(_mm256_or_si256(v0, s0), z),
                                            _mm256_cmpeq_epi64(_mm256_srli_epi64(w0, 16), T));
@@ -354,7 +364,7 @@ inline tt_entry* tt_find(U64 key) {
     unsigned found = 0;
     for (int i = 0; i < TT_WAYS; i++) {
         const U64 k = b[i].kw, d = b[i].data;
-        found |= (unsigned)((((k ^ d) >> 16) == tag) & ((k | d) != 0)) << i;
+        found |= (unsigned)((((k ^ tt_bind(d)) >> 16) == tag) & ((k | d) != 0)) << i;
     }
     return found ? &b[get_ls1b_index(found)] : nullptr;
 }
@@ -397,7 +407,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
             const U64 data = tt_lane(v4, lane + 1);
             const U64 wi   = tt_lane(w4, lane);
 #ifdef TRIUMV_VERIFY_TTSTORE   // (a single thread) the words extracted from the register are those of the way
-            if (data != entry->data || wi != (entry->kw ^ entry->data)) {
+            if (data != entry->data || wi != (entry->kw ^ tt_bind(entry->data))) {
                 printf("info string TTVEC: parole diverse\n"); fflush(stdout); abort();
             }
 #endif
@@ -410,7 +420,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
             if (g_tt_age_refresh && unpack_age(data) != current_age) {
                 U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
                 entry->data = new_data;
-                entry->kw   = wi ^ new_data;
+                entry->kw   = wi ^ tt_bind(new_data);
             }
             if (tt_flag == hash_flag_none) return false;   // entry eval-only (EvalTTWrite)
             return true;
@@ -442,7 +452,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
             if (g_tt_age_refresh && unpack_age(data) != current_age) {
                 U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
                 entry->data = new_data;
-                entry->kw   = wi ^ new_data;
+                entry->kw   = wi ^ tt_bind(new_data);
             }
             if (tt_flag == hash_flag_none) return false;   // entry eval-only (EvalTTWrite)
             return true;
@@ -459,7 +469,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
     for (int i = 0; i < TT_WAYS; i++) {
         const U64 k = b[i].kw;
         d[i] = b[i].data;
-        w[i] = k ^ d[i];
+        w[i] = k ^ tt_bind(d[i]);
         found |= (unsigned)(((w[i] >> 16) == tag) & ((k | d[i]) != 0)) << i;
     }
     if (found) {
@@ -475,7 +485,7 @@ inline bool probe_tt(U64 hash_key, int& tt_move, int& tt_score, int& tt_depth, i
         if (g_tt_age_refresh && unpack_age(data) != current_age) {
             U64 new_data = (data & ~(0x1FULL << 58)) | ((U64)(current_age & 0x1F) << 58);
             entry->data = new_data;
-            entry->kw   = w[i] ^ new_data;
+            entry->kw   = w[i] ^ tt_bind(new_data);
         }
         if (tt_flag == hash_flag_none) return false;   // entry eval-only (EvalTTWrite)
         return true;
@@ -526,7 +536,7 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
     for (int i = 0; i < TT_WAYS; i++) {
         kk[i] = b[i].kw;
         dd[i] = b[i].data;
-        found |= (unsigned)((((kk[i] ^ dd[i]) >> 16) == tag) & ((kk[i] | dd[i]) != 0)) << i;
+        found |= (unsigned)((((kk[i] ^ tt_bind(dd[i])) >> 16) == tag) & ((kk[i] | dd[i]) != 0)) << i;
     }
 #endif
     tt_entry* entry;
@@ -536,7 +546,7 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         if (entry != tt_find(hash_key)) { printf("info string TTSTORE: via diversa\n"); fflush(stdout); abort(); }
 #endif
         const U64 old_data = entry->data;
-        const U64 old_w    = entry->kw ^ old_data;
+        const U64 old_w    = entry->kw ^ tt_bind(old_data);
         // 17/10/2026 (review by Bastiii): with more threads another store can rewrite this way between the scan above
         // and these two reads, and then old_w is garbage. The words are used only if they still carry our tag;
         // otherwise the entry is simply overwritten below. With one thread the tag always matches: identical tree.
@@ -553,7 +563,7 @@ inline void store_tt(U64 hash_key, int move, int score, int depth, int flag, int
         if (unpack_age(old_data) == current_age && unpack_depth(old_data) > depth + keep_margin && flag != hash_flag_exact) {
             // Keeps the deeper entry; updates the eval if it was missing.
             const U64 w  = (old_w & ~0xFFFFULL) | (U64)ev16;
-            if (w != old_w) entry->kw = w ^ old_data;
+            if (w != old_w) entry->kw = w ^ tt_bind(old_data);
             return;
         }
     } else {
@@ -582,7 +592,7 @@ write_entry:
     const U64 new_data = pack_tt_data(move, score, depth, flag, current_age, pv ? 1 : 0);
     const U64 w = (tt_tag(hash_key) << 16) | (U64)ev16;
     entry->data = new_data;
-    entry->kw   = w ^ new_data;
+    entry->kw   = w ^ tt_bind(new_data);
 }
 
 
@@ -595,13 +605,13 @@ inline void tt_cache_eval(U64 hash_key, int unadjusted) {
     if (entry) {
         const U64 d = entry->data;
         if (unpack_flag(d) == hash_flag_none)
-            entry->kw = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ d;
+            entry->kw = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ tt_bind(d);
         return;
     }
     entry = tt_victim(hash_key);
     const U64 d = pack_tt_data(0, 0, 0, hash_flag_none, current_age, 0);
     entry->data = d;
-    entry->kw   = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ d;
+    entry->kw   = ((tt_tag(hash_key) << 16) | (U64)ev16) ^ tt_bind(d);
 }
 
 inline int get_tt_move(U64 hash_key) {

@@ -85,9 +85,9 @@ static inline void hash_soften(U64 key) {
   const int dep = unpack_depth(d);
   if (dep == 0) return;
   const U64 nd = (d & ~(0xFFULL << 40)) | ((U64)(dep - 1) << 40);
-  const U64 w = e->kw ^ d;
+  const U64 w = e->kw ^ tt_bind(d);   // tt_bind: tt.h
   e->data = nd;
-  e->kw = w ^ nd;
+  e->kw = w ^ tt_bind(nd);
 }
 
 // Static evaluation of the node: from the hash when present, otherwise from the network. raw = the form stored in the
