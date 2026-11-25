@@ -803,7 +803,10 @@ __attribute__((noinline)) static int hash_cutoff_full(ThreadData &td, NodeFrame 
     return NO_VALUE;
   return hash_cut_value(n);
 }
-static inline int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
+// The small gates of the stages (hash_cutoff, tablebase_probe, capture_probe) are always inline (25/11/2026): each has
+// one caller in explore, and the inliner, at the end of its budget for explore, had left the gate of capture_probe out of
+// line, a call to a test of a few instructions.
+__attribute__((always_inline)) static inline int hash_cutoff(ThreadData &td, NodeFrame *f, NodeState &n) {
   const HashView &h = n.h;
   const bool deep = h.depth > n.depth - (h.value <= n.beta ? HashLowSlack : 0);
   if (!HashNearMiss && (n.pv || n.excluded || !deep || !val_known(h.value)))
@@ -868,7 +871,7 @@ __attribute__((noinline)) static int tablebase_probe_full(ThreadData &td, NodeFr
   }
   return NO_VALUE;
 }
-static inline int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+__attribute__((always_inline)) static inline int tablebase_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   if (n.root || n.excluded)
     return NO_VALUE;
   unsigned men = syzygy_max_pieces();
@@ -1231,7 +1234,8 @@ __attribute__((noinline)) static TRIUMV_SEARCH_CC int capture_probe_search(Threa
   return NO_VALUE;
 }
 template <bool AN>
-static inline TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+__attribute__((always_inline)) static inline TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f,
+                                                                                NodeState &n) {
   const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
   if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
