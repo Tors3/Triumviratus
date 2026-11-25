@@ -964,7 +964,12 @@ static inline void node_trend(const NodeFrame *f, NodeState &n) {
 // between the two outputs of the network (RfpDisagree, ours, off). gd_razor and gd_rfp_pct belong to the analysis
 // mode (AnGold) and are neutral in games; n.crystal is always false outside AnCrystal.
 template <bool AN>
-static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n);
+static TRIUMV_SEARCH_CC int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n);
+// (25/11/2026, speed, same values) Every function of the pruning that calls explore or quiesce (reverse_futility and
+// eval_gates via quiesce, null_probe, capture_probe, prune_before_moves, singular_probe) is in the System V convention
+// too (09_history.inc): when the inliner leaves one of them out of line, as an ordinary Windows function it would save
+// and restore xmm6-15 at every call (seen on 25/11 for null_probe and the gates of capture_probe, 10 vector stores and
+// 10 loads each). Whether they are inlined or not, nothing is saved.
 
 // Order of ours (27/10/2026): reverse futility first, razoring after. At the current values the two cannot both fire
 // (razoring needs the evaluation below alpha minus a positive margin, reverse futility at or above beta), so the tree
@@ -975,7 +980,7 @@ static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n);
 // before the quiescence search of razoring, which reads those statistics, and it is taken by every node that reaches
 // the gates, as before.
 template <bool AN>
-static int eval_gates(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int eval_gates(ThreadData &td, NodeFrame *f, NodeState &n) {
   int held = NO_VALUE;
   bool razor_on = false;
   if (!(AN && n.crystal)) {
@@ -999,7 +1004,7 @@ static int eval_gates(ThreadData &td, NodeFrame *f, NodeState &n) {
 }
 
 template <bool AN>
-static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int max_depth = n.hunt_mate ? RfpHuntDepth : e_rfp_max_depth(td);
   // Verified extension (24/11/2026, baked from the RfpQsExt option at 4): up to 4 plies past the depth limit the rule
   // still applies, but its verdict must be confirmed by a null-window quiescence search at beta (below, before the
@@ -1070,7 +1075,7 @@ static int reverse_futility(ThreadData &td, NodeFrame *f, NodeState &n) {
 // per expert, NmpExp, ours at 0), a piece other than pawns, beta not deep in a loss, and the endgame rules that skip
 // the null move with very few legal moves. DeepNmp is in 1024ths of a ply, rounded with ten bits of the key.
 template <bool AN>
-static int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int null_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int us = td.side;
   const bool pieces = td.occupancies[us] & ~td.bitboards[us == white ? P : p] & ~td.bitboards[us == white ? K : k];
   int floor = n.beta - NmpDepthMul * n.depth - e_nmp_improving(td) * n.improving + NmpBase +
@@ -1207,7 +1212,7 @@ __attribute__((noinline)) static TRIUMV_SEARCH_CC int capture_probe_search(Threa
   return NO_VALUE;
 }
 template <bool AN>
-static inline int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
+static inline TRIUMV_SEARCH_CC int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
   const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
   if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta))
@@ -1216,7 +1221,7 @@ static inline int capture_probe(ThreadData &td, NodeFrame *f, NodeState &n) {
 }
 
 template <bool AN>
-static int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
+static TRIUMV_SEARCH_CC int prune_before_moves(ThreadData &td, NodeFrame *f, NodeState &n) {
   int v;   // the evaluation gates also hold the lesson of the evaluation change (on_eval_change)
   if ((v = eval_gates<AN>(td, f, n)) != NO_VALUE)
     return v;
@@ -1888,7 +1893,8 @@ static inline bool shuffles(const ThreadData &td, const NodeFrame *f, int m) {
 // as extension 0, and only in that case tries the LDSE (Ldse*).
 static constexpr int SING_SKIPPED = -99;
 template <bool AN>
-static int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int new_depth, int *cutoff) {
+static TRIUMV_SEARCH_CC int singular_probe(ThreadData &td, NodeFrame *f, NodeState &n, int m, int new_depth,
+                                           int *cutoff) {
   // Block 4 of 8.1 in our form (19/10/2026). The hash move is tested for being the only good move: the other moves are
   // searched at about half depth against a bar below the hash value (the exclusion search). Three outcomes:
   //  - every other move stays under the bar: the hash move is extended, by more plies the further they stay under;
