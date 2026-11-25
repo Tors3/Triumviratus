@@ -195,7 +195,13 @@ static void on_best_move(const Learner &L, const NodeState &n) {
     int p = penalty * by_exp4(n.expert, HlQMalus0, HlQMalus1, HlQMalus2, HlQMalus3) / 1024;
     for (int i = 0; i < n.n_quiets; i++) {
       p = p * decay / 1024;
+      // (25/11/2026, speed, same updates) Inline in this loop: one call with seven saved registers per quiet move tried
+      // before the best one.
+#if defined(__clang__)
+      [[clang::always_inline]] L.quiet(n.quiets[i], -p * fq[i] / 1024, n.quiet_ctx[i]);
+#else
       L.quiet(n.quiets[i], -p * fq[i] / 1024, n.quiet_ctx[i]);
+#endif
     }
   } else
     L.capture(bm, reward * by_exp4(n.expert, HlCBonus0, HlCBonus1, HlCBonus2, HlCBonus3) / 1024);
