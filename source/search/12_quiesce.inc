@@ -530,7 +530,10 @@ static inline int qs_pull(int value, int beta, int mix) { return (mix * value + 
 
 // Is move m worth a search? 'seen' counts the legal moves met so far, m included. A skipped plain capture can still
 // raise 'best' to the value it was sure to reach. While the side to move is being mated, every move is searched.
-static inline bool qs_worth(ThreadData &td, const QsWalk &w, int m, bool gives, int seen, int alpha, int &best) {
+// (25/11/2026, speed, same answers) Always inline: its only caller is the walk of quiesce, once per move, and the
+// inliner had left it out of line with seven saved registers and the best value through memory.
+__attribute__((always_inline)) static inline bool qs_worth(ThreadData &td, const QsWalk &w, int m, bool gives, int seen,
+                                                           int alpha, int &best) {
   if (val_lost(best))
     return true;
   // R19 B3 (QsSeeHist off at 0, QsSeeCorr on since 03/11/2026): both exchange tests below move by `ease`: the
