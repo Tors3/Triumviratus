@@ -161,3 +161,41 @@ positive meaning less reduction:
 SPRT of the vector against all terms at zero, in four parts pooled (10+0.1, UHO openings, [−1, 2]): +1.40 ± 1.93 Elo
 over 30,268 games, LLR +1.76 of 2.94. The author accepted it at 30,000 games without the LLR closing. Bench 302771 →
 168444 (with the nine terms at zero the bench is 302771 again). The terms stay parameters for later tuning.
+
+## 3. Correctness fixes of the 25 November 2026 audit
+
+A code audit of dev 223220b (search, quiescence, histories, move ordering, hash table, the network's incremental state,
+time management) found the defects below. Every fix in 3.1 keeps the search identical where the defect does not occur:
+bench 168444 in dev and release builds, the same node counts on 200 positions at a fixed depth, perft, perft960,
+tdperft and nnperft. The changes that alter the tree are in 3.2, behind options that are off by default.
+
+### 3.1 Fixes (always on)
+
+| defect | effect | evidence | fix |
+|---|---|---|---|
+| ProbCut stored the result of a verification search that the stop flag had cut short | after a stop every child returns the draw score; ProbCut wrote it as a lower bound (0 or ±1) into the hash table, which is kept between moves, so the next search could cut on a false value | 11 such entries in 480 fixed-node searches, at verified depths up to 10 | no store and no return after the stop (`capture_probe_search`) |
+| The singular (exclusion) search also learned after a stop | the draw score of a stopped search could extend, cut, or teach the correction tables through `on_multi_cut` | by reading (same mechanism) | return at once after the stop (`singular_probe`) |
+| Torn hash entries with several threads | two threads storing the same position with data words that differ only in their low 16 bits (the low bits of the move) could leave an entry that still passed the tag check, with a meaningless static evaluation | by the bit layout | the low 16 bits of the data word also enter the tag check (`tt_bind`, all 14 sites including the vector probes); xperf cost +0.25% / −0.18% cycles per node (avx512, middlegame / endgames) and +0.16% / +0.39% (avx2) |
+| Chess960 castling where the king jumps over its own rook (e.g. Kd1–g1 with Re1–f1) | the fast incremental update of castling skipped slider lines that the jumped rook still blocked: the opponent's accumulator kept or lost a threat feature | nnperft 3 on `6k1/8/8/8/8/8/8/R2KR2Q w KQ - 0 1`: 72 wrong evaluations, now 0 | the fast path only when the rook is not between the king's squares |
+| Mate-hunt mode switched on by a sentinel score | under MultiPV a secondary line that failed low keeps −infinity as its score, and its absolute value passed `HuntScore` | node counts at MultiPV 2 depended on `HuntDepth` (536,402 against 688,758); now the same | an unknown root score counts as 0 |
+| En passant square from a FEN without a pawn to capture | `4k3/8/8/4P3/8/8/8/4K3 w - d6 0 1` was played e5d6, removing a pawn that was not there | reproduced | the square needs the opponent's pawn on the square it reached and the passed and start squares empty |
+| Time: `go movetime` ignored the Move Overhead | the answer came after the full movetime plus stopping and printing | 299 ms for movetime 300 with overhead 30, now 270 ms | the overhead is taken off movetime |
+| Time: only the opponent's clock given | the search had no limit | no answer in 30 s; now 971 ms with a 1 s increment | our increment, or 1 ms |
+| Time: clocks above 2^31 ms, negative movestogo | the value wrapped to a negative number: an instant move | reproduced | values read as 64-bit and clamped |
+| Time: `go` sent while a search still ran | the limits were rewritten under the running search | by reading | the running search is stopped and joined first |
+| Time: a search stopped before its first iteration | its −infinity root score became the "previous score" and cut the next move's time by about a third | by reading | the previous score is kept only when known |
+| Root evaluations before the network sync | `C2ConvRoot` and the analysis gold facts evaluated the root with the previous search's accumulators | by reading (both off in games) | `nn_root_sync` at the start of `deepen` |
+| A repetition at the maximum ply | scored as the static evaluation instead of a draw | by reading | the draw comes first |
+| Defects reachable only with option values inside their ranges (they matter for SPSA runs) | the 8-bit depth field of the hash table wrapped to ~255 for a negative ProbCut depth; an int overflow in the prior-move reward; depth 0 and an out-of-bounds read with `PriorRedMinDepth` 1; inexact low-ply reciprocal above `HistLimQuiet` 10,000; 0/0 in the time interpolation when two ends are equal | by reading and arithmetic | depth clamped, 64-bit products, ranges narrowed, the division guarded |
+| `TRIUMV_VERIFY_LEGAL` (verification builds) | reported every Chess960 castling as a false legality error | 276 of 400 positions | Chess960 castling excluded, as in the normal path |
+
+### 3.2 Changes of the tree, off by default (`Audit*` options, each needs its own SPRT)
+
+| option | defect | bench when on |
+|---|---|---:|
+| `AuditEvalNone` | a node in check takes the static evaluation of two plies back, and at plies 0–1 that frame lies before the root with VAL_NONE (32001): in its children the hindsight depth steps fired always, and `improving` and the `LmrGap` term saturated (every check given by a root move) | 194598 |
+| `AuditTtNone` | the `LmrTtPvAlpha` reduction term read "hash value above alpha" also for entries without a value | 245917 |
+| `AuditRootCuts` | ProbCut and the hash-bound cut also ran at the root, where they ignore the root move list (searchmoves, MultiPV) | 168444 |
+| `AuditPromoIdx` | after a promotion some history writers indexed the promoted piece, the readers the pawn | 333951 |
+
+An SPRT of all fixes with the four options on against 223220b is running (8+0.08, [−1, 2]).
