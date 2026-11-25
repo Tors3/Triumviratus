@@ -192,8 +192,12 @@ static inline bool see_holds_q(ThreadData &td, const MoveQueue &q, int m, int th
 // 16 comparisons at a time -> mask -> popcount, no tail. The key is written in the first pass, in the current slot of
 // the high list, and counts only if the move enters it. Same keys, same positions; -0.70% cycles per node.
 // Returns how many moves went into the sorted part (score >= limit).
+// noinline (25/11/2026, speed, same order), here and on both rank_into_v below: with a PGO profile the compiler put the
+// rankings, with their key arrays (1.6 KB here, 3.2 KB in rank_into_v), in line in fill_tactics, fill_quiets and
+// fill_evasions, whose frames grew to 5.5-5.9 KB, over the 4 KB of the stack probe: every fill of a queue called
+// __chkstk (seen in the disassembly of a PGO build with symbols). Out of line, every frame stays below 4 KB.
 template <bool Wide>
-static int rank_into(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
+__attribute__((noinline)) static int rank_into(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
   PROF_GUARD(prof_mp);
   using Key = std::conditional_t<Wide, long long, int>;
   alignas(64) Key key[256 + 16];   // 16 extra slots for the INT_MIN padding of the vector path
@@ -286,7 +290,7 @@ static inline __m256i pack8_idx(unsigned mask) {
 // keys per comparison, as in rank_into. Xeon, avx2 variant (PGO, xperf), with the AVX2 compaction, hist_learn and TT
 // below: -2.2% cycles per node in the middlegame and in endgames.
 #define TRIUMV_HAVE_RANKV 1
-static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
+__attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
   PROF_GUARD(prof_mp);
   alignas(32) int key[256 + 8], hmv[256 + 8], hsc[256 + 8];
   unsigned char up[32];
@@ -333,7 +337,7 @@ static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int
 #endif
 #if defined(__AVX512F__)
 #define TRIUMV_HAVE_RANKV 1
-static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
+__attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
   PROF_GUARD(prof_mp);
   alignas(64) int key[256 + 16], hmv[256 + 16], hsc[256 + 16];
   __mmask16 up[16];
