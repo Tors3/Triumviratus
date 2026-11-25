@@ -147,21 +147,16 @@ struct alignas(128) ThreadData {
     int plies_from_null;
     int seldepth;
 
-    U64 repetition_table[2048];
+    // HOT SCALARS (25/11/2026, speed, same values): the scalars the search reads or writes at every node or move, in
+    // one block right after the board and its keys. Before, they lay behind the arrays they were declared with (the
+    // repetition table, the frames and PV table, the 256 root lines, last_pv, lt_red_log, the histories): about nine
+    // cache lines spread over 3 MB, each one evicted by the network's weights at an evaluation and fetched again. Here
+    // they fill five consecutive lines. Only the place of the fields changes: no code reads ThreadData by offset except
+    // the static_asserts on the keys and on the board, whose fields this block does not touch.
     int repetition_index;
-
     int ply;
     U64 nodes;
     U64 tb_hits;
-
-    // Cammino corrente
-    NodeFrame frames[max_ply + 16];
-    int pv_length[max_ply + 8];
-    int pv_table[max_ply + 8][max_ply + 8];
-    signed char chk_hint[max_ply + 8];   // check on the child already computed by the parent (-1 = unknown)
-
-    // Root
-    RootLine root[256];
     int  root_count;
     int  pv_idx;
     int  pv_last;
@@ -174,7 +169,6 @@ struct alignas(128) ThreadData {
     int  sel_depth;
     int  nmp_min_ply;
     U64  best_move_changes;
-    int  last_pv[max_ply + 4];        // line of the previous iteration for the move pv_idx
     int  last_pv_len;
     int  opt[2];                      // optimism of this thread (white side, black)
     int  root_side;                   // colour to move at the root (Contempt)
@@ -203,14 +197,37 @@ struct alignas(128) ThreadData {
     int  lt_lmr_not_improving, lt_lmr_offset, lt_lmr_all_node, lt_lmr_no_tt_full;
     int  lt_nmp_improving, lt_quiet_fut_alpha, lt_rfp_max_depth, lt_nmp_verify_depth;
     int  lt_lmr_log_mul;              // effective value from which lt_red_log was built
-    int  lt_red_log[256];             // reduction table of the thread when LmrLogMulLt != 0
     // SeePinned (05/10/2026): pinned pieces and pinners of both colours, computed once per position.
     U64  see_pin_key;                 // position for which the fields below hold
     U64  see_pinned[2];               // pieces of each colour pinned to their own king
     U64  see_pinners[2];              // sliders of each colour that pin an enemy piece
-    // --- C2 piece values (agent SEE) --- (21/10/2026): the per-thread table of the regime piece values (see.cpp),
-    // rebuilt only when the expert pair of the position changes; -1 = to rebuild (set at each search start).
-    mutable int c2_see_pair;          // expert pair (White | Black << 4) the two tables below were built for
+    // --- C2 piece values (agent SEE) --- (21/10/2026): the expert pair (White | Black << 4) the per-thread tables of
+    // the regime piece values (c2_see_val, c2_see_off, mat_val below; see.cpp) were built for, -1 = to rebuild (set at
+    // each search start). The tables are rebuilt only when the expert pair of the position changes.
+    mutable int c2_see_pair;
+    int        tt_move_hist;          // hash-move statistic (13_learn.inc)
+    // Rete incrementale
+    void* nnpos = nullptr;
+    NnStack* nnstack = nullptr;   // stack of the dirty entries of the nnpos handle: written by make and unmake (06_nndirty.inc)
+    // Expert holds (25/10/2026, 06_nndirty.inc): the frame's nn_hold for the make in progress (step_in sets it and
+    // clears it after the make, so the makes outside the search see 0). The root's experts of C2HoldRoot went with it
+    // on 27/10/2026.
+    unsigned char nn_hold = 0;
+
+    U64 repetition_table[2048];
+
+    // Cammino corrente
+    NodeFrame frames[max_ply + 16];
+    int pv_length[max_ply + 8];
+    int pv_table[max_ply + 8][max_ply + 8];
+    signed char chk_hint[max_ply + 8];   // check on the child already computed by the parent (-1 = unknown)
+
+    // Root
+    RootLine root[256];
+    int  last_pv[max_ply + 4];        // line of the previous iteration for the move pv_idx
+    int  lt_red_log[256];             // reduction table of the thread when LmrLogMulLt != 0 (lt_lmr_log_mul above)
+    // --- C2 piece values (agent SEE) --- (21/10/2026): the per-thread tables of the regime piece values (see.cpp), for
+    // the expert pair c2_see_pair above.
     mutable int c2_see_val[16];       // SEE value per piece code: SeeVal* + offset of the owner's regime
     mutable int c2_see_off[16];       // the offset alone; codes 12..15 = 0
     mutable int mat_val[16];          // material value per piece code (kings 0): the table the search reads
@@ -227,15 +244,7 @@ struct alignas(128) ThreadData {
     int16_t    capt_hist[12][64][7];
     PieceToRow cont_corr[NO_PC + 1][64];
     PieceToRow cont_corr_own[12][64];   // CorrContOwnW (24/11/2026): our move at -4 x our move at -2, per thread
-    int        tt_move_hist;
-
-    // Rete incrementale
-    void* nnpos = nullptr;
-    NnStack* nnstack = nullptr;   // stack of the dirty entries of the nnpos handle: written by make and unmake (06_nndirty.inc)
-    // Expert holds (25/10/2026, 06_nndirty.inc): the frame's nn_hold for the make in progress (step_in sets it and
-    // clears it after the make, so the makes outside the search see 0). The root's experts of C2HoldRoot went with it
-    // on 27/10/2026.
-    unsigned char nn_hold = 0;
+    // (tt_move_hist and the network handle with its stack: in the hot block above, 25/11/2026.)
     // E1 (15/10/2026, speed at identical tree): REMOVED the per-thread evaluation cache (EVC8, 512 KB).
     // Counters: bench 20 2,519,149 lookups and 12 hits; a game of 40 plies at 500k nodes (cache never cleared
     // between moves) 9,382,726 lookups and 62 hits, and a perfect cache would have caught only 0.5% more. The
