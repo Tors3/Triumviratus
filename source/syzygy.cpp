@@ -205,9 +205,9 @@ bool syzygy_probe_root(int& best_move, int& score, int* keep_moves, int* n_keep)
     if (!matched) return false;
 
     best_move = matched;
-    score = (wdl == TB_WIN) ?  TB_VALUE_WIN
-          : (wdl == TB_LOSS) ? -TB_VALUE_WIN
-          : 0;
+    // (audit 26/11/2026) The same mapping as the in-search probe: with Syzygy50MoveRule=false a cursed win (blessed
+    // loss) is a win (loss) here too; it was always 0, so TbDrawSearch also took such a root for a draw.
+    score = wdl_to_score(wdl, 0);
     // TbDrawSearch (28/10/2026): every legal move with the same WDL as the best one (the moves that keep the result),
     // matched against the move list like the best move; the caller searches among them when the root is drawn.
     if (keep_moves && n_keep) {

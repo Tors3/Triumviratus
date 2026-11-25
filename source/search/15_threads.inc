@@ -160,8 +160,12 @@ void launch_search(int depth) {
   // more than one move keeps it, the normal search runs among those moves only (as "go searchmoves") with the in-search
   // tablebase probe off for that search, so the network can choose the draw that leaves the opponent most chances to
   // go wrong, instead of the DTZ move (every draw has DTZ 0). 0: the DTZ move at once, as before.
+  // (audit 26/11/2026) No instant move when the GUI restricts or widens the root (searchmoves, MultiPV > 1: the DTZ
+  // move ignored the list and printed one line) or when SyzygyProbeLimit is below the root piece count (the limit
+  // held only inside the search). Games with the default options take the same path as before.
   g_tb_root_draw_search = false;
-  if (!g_limits.infinite && !g_limits.ponder) {
+  if (!g_limits.infinite && !g_limits.ponder && !g_searchmoves_count && g_multipv == 1
+      && count_bits(occupancies[both]) <= g_syzygy_probe_limit) {
     int tb_move = 0, tb_score = 0, keep[256], n_keep = 0;
     const bool want_keep = TbDrawSearch && !g_searchmoves_count;
     const bool probed = syzygy_probe_root(tb_move, tb_score, want_keep ? keep : nullptr, want_keep ? &n_keep : nullptr);
@@ -307,13 +311,19 @@ static ThreadData *pick_thread() {
   // Order of preference between the line of thread i and that of the current choice (rewritten 27/10/2026 as one
   // comparison, same choices): a complete decided result beats everything, and between two of them the larger one
   // (the shorter mate); a lost score never replaces anything; otherwise more support wins, then the longer line.
+  // (audit 26/11/2026) The rule now does what it says: only a decided WIN beats everything (an exact loss beat every
+  // undecided line), wins compare by score (the shorter mate), and a held decided loss gives way to any higher score
+  // (the comparison by absolute value preferred the faster mate against us, and a loss to a win).
   auto decided = [](const RootLine &l) { return l.score != -infinity && val_decided(l.score) && !l.lower && !l.upper; };
+  auto won = [&](const RootLine &l) { return decided(l) && l.score > 0; };
   auto prefer = [&](int i, int cur) {
     const RootLine &cand = thread_data[i].root[0], &held = thread_data[cur].root[0];
-    if (decided(held))
-      return decided(cand) && std::abs(cand.score) > std::abs(held.score);
-    if (decided(cand))
+    if (won(held))
+      return won(cand) && cand.score > held.score;
+    if (won(cand))
       return true;
+    if (decided(held))
+      return cand.score > held.score;
     if (val_lost(cand.score))
       return false;
     if (support[i] != support[cur])
@@ -441,8 +451,12 @@ void search_position_mt(int depth) {
     g_helper_workers.push_back(new SearchWorker());
   for (int i = 1; i < num_threads; i++)
     g_helper_workers[i - 1]->run([i] { thread_main(i); });
+  // (audit 26/11/2026) With one thread the main thread reads the copy of the load: after a NumaSpread search with
+  // several threads it kept the node copy of the network in use then, also after EvalFile or PassedScale.
   if (num_threads > 1)
     numa_bind_thread(0);
+  else
+    nn_bind_node_net(-1);
   deepen(thread_data[0]);
 
   // "go infinite" and ponder: the bestmove waits for stop or ponderhit.

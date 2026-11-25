@@ -147,7 +147,12 @@ static int numa_search_nodes() {
 #if defined(_WIN32)
     ULONG     hi = 0;
     DWORD_PTR pm = 0, sm = 0;
-    if (GetNumaHighestNodeNumber(&hi) && GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm) && pm == sm)
+    // (audit 26/11/2026) The masks cover only the primary processor group: a process pinned to one whole group (one
+    // socket of a machine with more than 64 processors, "start /node 1 /affinity FFFFFFFFFF") read pm == sm and its
+    // threads were moved to the other socket. The process must also span every group (Windows 11 default).
+    USHORT groups[64], n_groups = 64;
+    if (GetNumaHighestNodeNumber(&hi) && GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm) && pm == sm &&
+        GetProcessGroupAffinity(GetCurrentProcess(), &n_groups, groups) && n_groups == GetActiveProcessorGroupCount())
       n = std::min(int(hi) + 1, 64);
 #elif defined(__linux__)
     int       hi = 0;

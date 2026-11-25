@@ -22,6 +22,7 @@
 #define LARGE_PAGES_H_INCLUDED
 
 #include <cstddef>
+#include <mutex>
 
 void* large_pages_alloc(std::size_t size);
 void  large_pages_free(void* mem);
@@ -34,8 +35,16 @@ bool  large_pages_available();
 bool   lock_memory_privilege_enable(void** saved);   // true when enabled; *saved = state to restore (or nullptr)
 void   lock_memory_privilege_restore(void* saved);
 size_t large_page_minimum();
+// (audit 26/11/2026) One caller at a time: the privilege is a property of the process token, and two threads moving
+// their network handles at once (NumaSpread) enabled and restored it under each other, so some allocations fell back
+// to normal pages.
+inline std::recursive_mutex& lock_memory_privilege_mutex() {
+    static std::recursive_mutex m;
+    return m;
+}
 template <class F, class G>
 auto with_lock_memory_privilege(F&& fn, G&& fallback) -> decltype(fallback()) {
+    std::lock_guard<std::recursive_mutex> lock(lock_memory_privilege_mutex());
     const size_t lp = large_page_minimum();
     void*        saved = nullptr;
     if (!lp || !lock_memory_privilege_enable(&saved)) return fallback();
