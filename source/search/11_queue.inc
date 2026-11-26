@@ -1408,6 +1408,16 @@ static inline int queue_next(MoveQueue &q) {
       q.rank_ok = true, q.last_score = sm.score;
       return sm.move;
     }
+#if defined(USE_AVX512) && !defined(USE_VNNI)
+  } else if (step == QS_HASH && q.hash_move) {
+    // (26/11/2026, speed, same moves) The hash move, first move of a node that has one, as in QS_HASH of
+    // queue_next_full: when it cuts, the node never calls the out-of-line function. avx512 build only: Xeon xperf,
+    // three rounds, -0.36% cycles per node in the middlegame on average; on the Zen 4 (avx512icl) it was level in the
+    // middlegame and worse in endgames, and the other builds are not measured.
+    q.rank_ok = false;
+    q.step    = q.kind == QK_EVADE ? QS_EVADE_FILL : q.kind == QK_MAIN ? QS_TACT_FILL : QS_ONLY_TACT_FILL;
+    return q.hash_move;
+#endif
   } else if (step == QS_DRAIN && q.kind != QK_CUTS && q.cur < q.n_tact) {
     q.rank_ok = false;
     const ScoredMove sm = q.list[q.cur++];
