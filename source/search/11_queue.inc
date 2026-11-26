@@ -460,11 +460,18 @@ __attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv,
 }
 #endif
 
-// The ranking the fills call: the vector code on AVX-512 and AVX2 from 8 moves, rank_into otherwise (same output).
+// The ranking the fills call: the vector code on AVX-512 and AVX2 from RANKV_MIN moves, rank_into otherwise (same
+// output). (26/11/2026, measurement variant) AVX-512 from 2 moves: the sorting network has a fixed cost, while the
+// scalar counting of the short lists (the captures of a quiescence node) is n x n comparisons with data branches.
+#if defined(__AVX512F__)
+  #define RANKV_MIN 2
+#else
+  #define RANKV_MIN 8
+#endif
 static inline int rank_list(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
 #if defined(TRIUMV_HAVE_RANKV)
 #if defined(TRIUMV_VERIFY_RANK)   // check: the same list and size as rank_into
-  if (n >= 8) {
+  if (n >= RANKV_MIN) {
     ScoredMove chk[256];
     const int a = rank_into_v(out, mv, sc, n, limit), b = rank_into<false>(chk, mv, sc, n, limit);
     bool same = a == b;
@@ -478,7 +485,7 @@ static inline int rank_list(ScoredMove *out, const int *mv, const int *sc, int n
     return a;
   }
 #else
-  if (n >= 8)
+  if (n >= RANKV_MIN)
     return rank_into_v(out, mv, sc, n, limit);
 #endif
 #endif

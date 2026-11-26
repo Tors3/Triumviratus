@@ -218,17 +218,23 @@ static inline void nn_piece_threats(const NnTB &tb, const Look &look, int pc, bo
   const U64 seers = (diag & (tb.type[NN_BISHOP] | tb.type[NN_QUEEN])) | (orth & (tb.type[NN_ROOK] | tb.type[NN_QUEEN]));
 
   if constexpr (Lines) {
+    // (26/11/2026, speed, same tuples) Without a branch on the data: the tuple of every seer is written in the current
+    // slot and counted only when it is a feature (a piece behind s, the line not containing the whole move, a
+    // queen victim only for a queen seer). With no piece behind, square 63 stands in and nothing is counted. The
+    // counter is a local: built without strict aliasing, dts->n was read back after every store into the list.
+    std::uint32_t *const list = dts->list;
+    int n = dts->n;
     for (U64 rest = seers & ~skip_seers; rest; rest &= rest - 1) {
       const int from = get_ls1b_index(rest);
       const U64 line = NN_RAY(from, s);
       const U64 behind = line & (diag | orth) & targets_any;
-      if (!behind || (line & whole_move) == whole_move)
-        continue;
-      const int target = get_ls1b_index(behind);
+      const int target = get_ls1b_index(behind | (1ULL << 63));
       const int seer = look(from), victim = look(target);
-      if (nn_can_slider_threat(victim, seer))
-        nn_add_threat(dts, !put, seer, victim, from, target);
+      const int ok = int(behind != 0) & int((line & whole_move) != whole_move) & int(nn_can_slider_threat(victim, seer));
+      list[n] = nn_threat(seer, victim & 15, from, target, !put);
+      n += ok;
     }
+    dts->n = n;
   }
   if (kind == NN_KING)
     return;
