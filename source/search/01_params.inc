@@ -1682,9 +1682,10 @@
   /*                  bench 168444 unchanged.                                                                         */ \
   P(AuditEvalNone, 0, 0, 1)                                                                                \
   P(AuditTtNone, 0, 0, 1)                                                                                  \
-  /*   AuditPromoIdx  after a promotion the history writers that read the board index the promoted piece, the      */ \
-  /*                  readers the pawn (13_learn.inc prev_piece_idx); 1 = the pawn everywhere.                       */ \
-  P(AuditPromoIdx, 0, 0, 1)                                                                                \
+  /*   AuditPromoIdx  BAKED and retired as an option on 26/11/2026 (author: "lo accetterei"): after a promotion the   */ \
+  /*                  history writers that read the board indexed the promoted piece, the readers the pawn         */ \
+  /*                  (13_learn.inc prev_piece_idx): now the pawn everywhere. A correction, tested as one (it does  */ \
+  /*                  not lose); bench 168444 -> 333951.                                                             */ \
   P(SmallPcSlack, 4, 0, 8)               /* hash lower bound >= beta + margin cuts this short of depth      */ \
   /* Structure of the node (27-28/10/2026, docs/audit_8.1/R11 §4.2: the four top engines compared all take the hash   */ \
   /*  cutoff and the tablebases before the static evaluation, none has the hash-bound cut before the move loop, three */ \

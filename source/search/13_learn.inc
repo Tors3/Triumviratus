@@ -31,10 +31,11 @@
 
 // The piece of the previous move (frame f[-1]) as the history tables index it. The writers that read the board take
 // the piece on the destination square, which after a promotion is the new piece, while the readers and the other
-// writers index a move by move_piece, the pawn. AuditPromoIdx (audit 25/11/2026, OFF; 01_params.inc) makes them agree.
+// writers index a move by move_piece, the pawn. Since the AuditPromoIdx bake (26/11/2026; 01_params.inc) they agree:
+// after a promotion the pawn everywhere.
 static inline int prev_piece_idx(const ThreadData &td, const NodeFrame *f, int prev_to) {
   const int pm = f[-1].move;
-  return (AuditPromoIdx && move_ok(pm) && get_move_promoted(pm)) ? move_piece(pm) : td.piece_on[prev_to];
+  return (move_ok(pm) && get_move_promoted(pm)) ? move_piece(pm) : td.piece_on[prev_to];
 }
 
 // The writer of one node: its thread, frame and expert. Built where an event happens; the gravity of the quiet and
