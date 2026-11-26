@@ -1247,7 +1247,7 @@ __attribute__((always_inline)) static inline TRIUMV_SEARCH_CC int capture_probe(
   const int cut_beta = n.beta + ProbCutMargin - ProbCutImproving * n.improving + ProbCutDepth * n.depth / 16 +
                        by_expert(n.expert, ProbCutExp0, ProbCutExp1, ProbCutExp2, ProbCutExp3) + cell_off(C2C_PCUT, n);
   if (n.depth < ProbCutMinDepth || val_decided(n.beta) || (val_known(n.h.value) && n.h.value < cut_beta) ||
-      (AuditRootCuts && n.root))   // AuditRootCuts (01_params.inc): no ProbCut at the root
+      n.root)   // no ProbCut at the root (AuditRootCuts, baked 26/11/2026; 01_params.inc)
     return NO_VALUE;
   return capture_probe_search<AN>(td, f, n, cut_beta);
 }
@@ -2862,7 +2862,7 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
     if ((v = prune_before_moves<AN>(td, f, n)) != NO_VALUE) return v;
   }
 
-  if (!(AuditRootCuts && n.root) && (v = hash_bound_cut(n)) != NO_VALUE)   // AuditRootCuts: 01_params.inc
+  if (!n.root && (v = hash_bound_cut(n)) != NO_VALUE)   // not at the root (AuditRootCuts, baked 26/11/2026)
     return v;
 
   if ((v = move_loop<AN>(td, f, n)) != NO_VALUE)

@@ -195,7 +195,14 @@ tdperft and nnperft. The changes that alter the tree are in 3.2, behind options 
 |---|---|---:|
 | `AuditEvalNone` | a node in check takes the static evaluation of two plies back, and at plies 0–1 that frame lies before the root with VAL_NONE (32001): in its children the hindsight depth steps fired always, and `improving` and the `LmrGap` term saturated (every check given by a root move) | 194598 |
 | `AuditTtNone` | the `LmrTtPvAlpha` reduction term read "hash value above alpha" also for entries without a value | 245917 |
-| `AuditRootCuts` | ProbCut and the hash-bound cut also ran at the root, where they ignore the root move list (searchmoves, MultiPV) | 168444 |
+| `AuditRootCuts` (baked 26/11) | ProbCut and the hash-bound cut also ran at the root, where they ignore the root move list (searchmoves, MultiPV) | 168444 |
 | `AuditPromoIdx` | after a promotion some history writers indexed the promoted piece, the readers the pawn | 333951 |
 
-An SPRT of all fixes with the four options on against 223220b is running (8+0.08, [−1, 2]).
+The SPRT of all fixes with the four options on against 223220b was stopped at −0.26 ± 4.60 over 5,420 games (8+0.08
+and 6+0.06): the options are tested one at a time, each against the same build with the option off (3+0.03, 20+20,
+Hash 64, [−1, 2]):
+
+| option | result | decision |
+|---|---|---|
+| `AuditEvalNone` | −1.16 ± 3.23 over 11,418 games | stopped; to retry at a longer time control |
+| `AuditRootCuts` | +1.38 ± 1.95 over 30,000 games | baked, option retired |

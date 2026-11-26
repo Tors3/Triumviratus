@@ -1675,12 +1675,13 @@
   /*                  unknown (no hindsight step, not improving, no LmrGap term).                                    */ \
   /*   AuditTtNone    the LmrTtPvAlpha term read "hash value > alpha" also when the entry has no value (VAL_NONE,   */ \
   /*                  evaluation-only entries); 1 = only a known value counts.                                       */ \
-  /*   AuditRootCuts  ProbCut and the small ProbCut of the hash (hash_bound_cut) also ran at the root, where they    */ \
-  /*                  ignore the root list (searchmoves, MultiPV lines) and return without recording a root move;  */ \
-  /*                  1 = not at the root.                                                                           */ \
+  /*   AuditRootCuts  BAKED and retired as an option on 26/11/2026 (author: "bakarlo a 30.000 partite"): ProbCut and  */ \
+  /*                  the small ProbCut of the hash (hash_bound_cut) no longer run at the root, where they ignored   */ \
+  /*                  the root list (searchmoves, MultiPV lines) and returned without recording a root move. SPRT  */ \
+  /*                  3+0.03, 20 games at a time, Hash 64, [-1, 2]: +1.38 +- 1.95 over 30,000 games (LLR +1.70);   */ \
+  /*                  bench 168444 unchanged.                                                                         */ \
   P(AuditEvalNone, 0, 0, 1)                                                                                \
   P(AuditTtNone, 0, 0, 1)                                                                                  \
-  P(AuditRootCuts, 0, 0, 1)                                                                                \
   /*   AuditPromoIdx  after a promotion the history writers that read the board index the promoted piece, the      */ \
   /*                  readers the pawn (13_learn.inc prev_piece_idx); 1 = the pawn everywhere.                       */ \
   P(AuditPromoIdx, 0, 0, 1)                                                                                \
