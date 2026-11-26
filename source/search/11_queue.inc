@@ -577,8 +577,19 @@ struct QuietVecIn {
   const int *mval;                                    // 16 piece codes
 };
 // sc[] = history sum + threat term; flags[g] = lanes of group g that score_quiets finishes in scalar.
+// (26/11/2026, speed, same scores) avx512icl only: the history sum is added after the group loop, in scalar from the
+// move word. In the form kept for avx512 the indices go from the register to two arrays read back one by one, and the
+// 16 sums written one by one are read back at once by a 64-byte load, which cannot take its data from narrower stores.
+// xperf cycles per node vs 0aaaed0: Zen 4 icl middlegame -0.04%, endgame -1.43%; Xeon avx512 +0.26% / +0.09%.
+#if defined(USE_AVX512ICL)
+  #define QVS_HIST_AFTER 1
+#else
+  #define QVS_HIST_AFTER 0
+#endif
 static inline void quiet_vec_score(const QuietVecIn &in, const int *mv, int *sc, int n, unsigned short *flags) {
+#if !QVS_HIST_AFTER
   const __m512i pk_tab = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3);   // kPromoKind
+#endif
   const __m512i LES = _mm512_maskz_loadu_epi64(0x3F, in.lesser), CHK = _mm512_maskz_loadu_epi64(0x3F, in.chk),
                 KN = _mm512_maskz_loadu_epi64(0x3F, in.kn_to), SH = _mm512_set1_epi64((long long)in.shield);
   const __m512i MV = _mm512_loadu_si512(in.mval);
@@ -586,6 +597,7 @@ static inline void quiet_vec_score(const QuietVecIn &in, const int *mv, int *sc,
   for (int i = 0, g = 0; i < n; i += 16, g++) {
     const __mmask16 k = n - i >= 16 ? (__mmask16)0xFFFF : (__mmask16)((1u << (n - i)) - 1);
     const __m512i m = _mm512_maskz_loadu_epi32(k, mv + i);
+#if !QVS_HIST_AFTER
     // histories: pc * 64 + to indexes the piece-to rows, the quiet key the main table
     const __m512i pidx = _mm512_and_si512(_mm512_srli_epi32(m, 6), _mm512_set1_epi32(0x3ff));
     const __m512i pkind =
@@ -605,6 +617,7 @@ static inline void quiet_vec_score(const QuietVecIn &in, const int *mv, int *sc,
     // hs / 1024 truncated toward zero: 1023 is added to the negative sums before the arithmetic shift
     __m512i qv = _mm512_srai_epi32(
         _mm512_add_epi32(hs, _mm512_and_si512(_mm512_srai_epi32(hs, 31), _mm512_set1_epi32(1023))), 10);
+#endif
     // squares and piece type of each lane; the bit tests on 64-bit maps run in two halves of 8 lanes
     const __m512i from = _mm512_and_si512(m, m63), to = _mm512_and_si512(_mm512_srli_epi32(m, 6), m63);
     const __m512i pc = _mm512_and_si512(_mm512_srli_epi32(m, 12), _mm512_set1_epi32(15));
@@ -626,10 +639,25 @@ static inline void quiet_vec_score(const QuietVecIn &in, const int *mv, int *sc,
     // threat term: (mval[pc] * (thr_esc * from_t - thr_ent * to_t)) >> 6 (weights in 1/64, as the scalar path)
     const __m512i th = _mm512_sub_epi32(_mm512_maskz_mov_epi32((__mmask16)fm, _mm512_set1_epi32(in.thr_esc)),
                                         _mm512_maskz_mov_epi32((__mmask16)tm, _mm512_set1_epi32(in.thr_ent)));
+#if QVS_HIST_AFTER
+    const __m512i qv = _mm512_srai_epi32(_mm512_mullo_epi32(th, _mm512_permutexvar_epi32(pc, MV)), 6);
+#else
     qv = _mm512_add_epi32(qv, _mm512_srai_epi32(_mm512_mullo_epi32(th, _mm512_permutexvar_epi32(pc, MV)), 6));
+#endif
     _mm512_mask_storeu_epi32(sc + i, k, qv);
     flags[g] = (unsigned short)((cm | km) & k);
   }
+#if QVS_HIST_AFTER
+  // The seven history reads per move, scalar, from the move word: pc * 64 + to indexes the piece-to rows, the quiet
+  // key (from, to, promotion kind) the main table. Same 32-bit sum, same terms; the sum / 1024 truncates toward zero
+  // as the vector form does, and integer addition gives the same score in any order.
+  for (int j = 0; j < n; j++) {
+    const int mj = mv[j], p = (mj >> 6) & 0x3ff, key = (mj & 0xfff) | (kPromoKind[(mj >> 16) & 15] << 12);
+    const int hs = in.qh[key] * in.w_main + in.pw[p] * in.w_pawn + (in.h1[p] + in.h2[p]) * in.w_near +
+                   (in.h3[p] + in.h4[p] + in.h6[p]) * in.w_far;
+    sc[j] += hs / 1024;
+  }
+#endif
 }
 #endif
 
