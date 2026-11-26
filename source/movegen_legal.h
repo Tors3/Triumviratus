@@ -36,6 +36,11 @@
 #include "attacks.h"
 #include "defs.h"
 #include "magic.h"
+// Vector emission of the targets (ListSink::emit_vec) on AVX-512 builds; -DTRIUMV_NO_MOVEGEN_VEC keeps the loops.
+#if defined(__AVX512F__) && defined(__AVX512BW__) && !defined(TRIUMV_NO_MOVEGEN_VEC)
+#include <immintrin.h>
+#define LEGALGEN_VEC 1
+#endif
 
 namespace legalgen {
 
@@ -120,32 +125,46 @@ enum Kind { K_QUIET, K_DOUBLE, K_CASTLE, K_CAPTURE, K_EP, K_PROMO, K_PROMO_CAPTU
 
 // ALL: every legal move. TACTICS / QUIETS: the stages of fill_tactics and fill_quiets. Tactics are captures, en
 // passant, capture-promotions and the queen push-promotion; quiets are moves to empty squares, double pushes,
-// castling and all four push-promotions.
-enum Stage { ALL, TACTICS, QUIETS };
+// castling and all four push-promotions. QUIETS_NQ (26/11/2026) is QUIETS without the queen push-promotion, which the
+// tactics stage already holds: the list fill_quiets used to compact after the generation.
+enum Stage { ALL, TACTICS, QUIETS, QUIETS_NQ };
 
 // Writes move words into a list, keeping the kinds of its stage. Kinds it drops cost nothing: the call is removed
 // at compile time.
+// (26/11/2026, speed, same lists) `skip` is a move the list must not hold: the hash move, which the queue hands out
+// before the stages. It is dropped where it would be written (its target bit leaves the targets of its piece, or its
+// single slot counts 0), so the fills no longer read every list again to compact it. -1 (no such move) matches no
+// move word: every word is below 2^24. Same lists, same order as the old compaction.
 template <Stage S>
 struct ListSink {
     int* out;
     int  n = 0;
-    explicit ListSink(int* o) : out(o) {}
+    int  skip;
+    explicit ListSink(int* o, int s = -1) : out(o), skip(s) {}
 
     template <Kind K>
     static constexpr bool keeps() {
         if constexpr (S == TACTICS)
             return K == K_CAPTURE || K == K_EP || K == K_PROMO_CAPTURE || K == K_PROMO;
-        else if constexpr (S == QUIETS)
+        else if constexpr (S == QUIETS || S == QUIETS_NQ)
             return K == K_QUIET || K == K_DOUBLE || K == K_CASTLE || K == K_PROMO;
         else
             return true;
     }
     // One move per bit of `to`; base holds from, piece and flags. Captures are sparse (a piece has none 68% of the
     // time, one 25%, as counted for AA4): the first is written unconditionally and counted only if it exists (bit 63
-    // stands in when there is none), so the loop exit is predictable; the rest go through the loop.
+    // stands in when there is none), so the loop exit is predictable; the rest go through the loop. The quiet targets
+    // of a piece (dense: 4-15 per piece) go through the vector emission where there is one.
     template <Kind K>
     void targets(int base, U64 to) {
         if constexpr (keeps<K>()) {
+            to = unskip(base, to, 0);
+#if defined(LEGALGEN_VEC)
+            if constexpr (K == K_QUIET) {
+                emit_vec(base, to, 0);
+                return;
+            }
+#endif
             if constexpr (K == K_CAPTURE && S == TACTICS) {
                 out[n] = base | (lsb(to | (1ULL << 63)) << MV_TO);
                 n += to != 0;
@@ -164,19 +183,26 @@ struct ListSink {
     }
     template <Kind K>
     void one(int move) {
-        if constexpr (keeps<K>())
-            out[n++] = move;
+        if constexpr (keeps<K>()) {
+            out[n] = move;
+            n += move != skip;
+        }
     }
     // Targets in square order, quiet moves and captures interleaved, the capture flag taken from `enemies` (the order
     // of mg_emit_targets). A stage with only one of the two kinds takes its own subset.
     void mixed(int base, U64 to, U64 enemies) {
         constexpr bool kq = keeps<K_QUIET>(), kc = keeps<K_CAPTURE>();
-        if constexpr (kq && kc)
+        if constexpr (kq && kc) {
+            to = unskip(base, to, enemies);
+#if defined(LEGALGEN_VEC)
+            emit_vec(base, to, enemies);
+#else
             for (; to; to &= to - 1) {
                 const int t = lsb(to);
                 out[n++]    = base | (t << MV_TO) | (int((enemies >> t) & 1) << 20);
             }
-        else if constexpr (kc)
+#endif
+        } else if constexpr (kc)
             targets<K_CAPTURE>(base | MV_CAPTURE, to & enemies);
         else if constexpr (kq)
             targets<K_QUIET>(base, to & ~enemies);
@@ -186,20 +212,82 @@ struct ListSink {
     void slot(int move, U64 keep) {
         if constexpr (keeps<K>()) {
             out[n] = move;
-            n += (int)keep;
+            n += (int)keep & (move != skip);
         }
     }
 
 private:
-    // The tactics stage takes only the queen of a push-promotion; the other three go to the quiets stage.
+    // `to` without the target of the skipped move when the skipped move is one of base's: same origin, piece and
+    // flags, with the capture flag of its target taken from `enemies` (0: the flag is in base). No branch.
+    U64 unskip(int base, U64 to, U64 enemies) const {
+        const int t   = (skip >> MV_TO) & 63;
+        const int cap = int((enemies >> t) & 1) << 20;
+        const U64 hit = (U64)((skip & ~(63 << MV_TO)) == (base | cap));
+        return to & ~(hit << t);
+    }
+#if defined(LEGALGEN_VEC)
+    // (26/11/2026, speed, same moves in the same order) Vector emission of a piece's targets, in square order, the
+    // capture flag of each target from `cap`. The scalar loop wrote one move per bit and its exit, with a count that
+    // changes at every piece, was a mispredicted branch: in the profiles of 26/11 (Zen 4 and Xeon) the quiet loop was
+    // the heaviest function of the generation (Zen 4: 28 cycles per node, 1.1% of the mispredicted branches). The
+    // whole-vector stores beyond the count stay inside the lists (256 slots, at most 218 legal moves, 32 lanes).
+    void emit_vec(int base, U64 to, U64 cap) {
+        const __m512i bv = _mm512_set1_epi32(base);
+#if defined(__AVX512VBMI2__)
+        // Ice Lake / Zen 4: the 64 squares as bytes (+64 where a capture lands), packed in one vpcompressb and widened
+        // to 32-bit words 16 at a time: target = byte & 63 in bits 6-11, capture = bit 6 of the byte in bit 20.
+        alignas(64) static const unsigned char kSq[64] = {
+            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+            22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+            44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+        const __m512i sq = _mm512_load_si512(kSq);
+        const __m512i b  = _mm512_mask_add_epi8(sq, (__mmask64)cap, sq, _mm512_set1_epi8(64));
+        const __m512i c  = _mm512_maskz_compress_epi8((__mmask64)to, b);
+        const __m512i m63 = _mm512_set1_epi32(63), m64 = _mm512_set1_epi32(64);
+        auto words = [&](__m128i x) {
+            const __m512i w = _mm512_cvtepu8_epi32(x);
+            return _mm512_or_si512(bv, _mm512_or_si512(_mm512_slli_epi32(_mm512_and_si512(w, m63), MV_TO),
+                                                       _mm512_slli_epi32(_mm512_and_si512(w, m64), 14)));
+        };
+        const int cnt = (int)_mm_popcnt_u64(to);
+        _mm512_storeu_si512(out + n, words(_mm512_castsi512_si128(c)));
+        if (cnt > 16)   // a queen or a rook in an open position
+            _mm512_storeu_si512(out + n + 16, words(_mm512_extracti32x4_epi32(c, 1)));
+        n += cnt;
+#else
+        // AVX-512F (Skylake-SP): four fixed groups of 16 squares, each built in register (target per lane, capture
+        // bit from `cap`) and packed with vpcompressd on its 16 bits of `to` (the emission of 05/10/2026,
+        // mg_emit_vec in 08_movegen.inc, which the legal generator of 15/10 did not inherit).
+        alignas(64) static const int kLane[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+        const __m512i lane = _mm512_load_si512(kLane);
+        const __m512i capv = _mm512_set1_epi32(MV_CAPTURE);
+        for (int c = 0; c < 4; c++) {
+            const __mmask16 tm  = (__mmask16)(to >> (16 * c));
+            const __mmask16 em  = (__mmask16)(cap >> (16 * c));
+            const __m512i   tgt = _mm512_slli_epi32(_mm512_add_epi32(lane, _mm512_set1_epi32(16 * c)), MV_TO);
+            __m512i         mv  = _mm512_or_si512(bv, tgt);
+            mv                  = _mm512_mask_or_epi32(mv, em, mv, capv);
+            _mm512_storeu_si512(out + n, _mm512_maskz_compress_epi32(tm, mv));
+            n += (int)_mm_popcnt_u32(tm);
+        }
+#endif
+    }
+#endif
+    // The tactics stage takes only the queen of a push-promotion, QUIETS_NQ only the other three, QUIETS all four.
     template <Kind K>
     void promos(int m, int queen) {
-        out[n++] = m | (queen << MV_PROMO);
+        if constexpr (!(S == QUIETS_NQ && K == K_PROMO)) {
+            const int q = m | (queen << MV_PROMO);
+            out[n]      = q;
+            n += q != skip;
+        }
         if constexpr (S == TACTICS && K == K_PROMO)
             return;
-        out[n++] = m | ((queen - 1) << MV_PROMO);
-        out[n++] = m | ((queen - 2) << MV_PROMO);
-        out[n++] = m | ((queen - 3) << MV_PROMO);
+        for (int d = 1; d <= 3; d++) {
+            const int u = m | ((queen - d) << MV_PROMO);
+            out[n]      = u;
+            n += u != skip;
+        }
     }
 };
 

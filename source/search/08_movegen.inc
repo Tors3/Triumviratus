@@ -557,13 +557,14 @@ struct LegalNode {
   legalgen::LegalInfo info;
   bool                ready;
 };
+// skip: a move the list must not hold (the hash move the queue has already handed out; 0 = none).
 template <legalgen::Stage St>
-static inline int legal_generate_stage(ThreadData &td, LegalNode &z, int *out) {
+static inline int legal_generate_stage(ThreadData &td, LegalNode &z, int *out, int skip = 0) {
   PROF_GUARD(prof_mg);
 #ifdef TRIUMV_PROFILE
   prof_n_mg++;
 #endif
-  legalgen::ListSink<St> sink(out);
+  legalgen::ListSink<St> sink(out, skip ? skip : -1);
   if (td.side == white) {
     if (!z.ready) legalgen::legal_prepare<white>(td, z.info);
     legalgen::legal_emit_tv<white>(td, z.info, sink);

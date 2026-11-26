@@ -337,6 +337,75 @@ __attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv,
 #endif
 #if defined(__AVX512F__)
 #define TRIUMV_HAVE_RANKV 1
+// (26/11/2026, speed, same output) Sorting network in register for the sorted part of up to 32 moves, in place of the
+// rank counting (one broadcast, nh / 16 comparisons and one scattered store per move, and a loop whose count changes
+// at every call). Bitonic network of 16 lanes: 10 steps of permute + min + max + blend, the masks choosing which lane
+// of each pair keeps the larger key. Two registers are sorted, the second reversed, and the 32 keys merged (one
+// step between the registers, then the last four steps in each). The keys are unique (place in the low byte), so any
+// correct sort gives the order of the counting. The low byte gives back the place of the move in hmv / hsc, which
+// are permuted with the keys, interleaved into ScoredMove pairs and stored under a mask: the moves below the limit,
+// already written from out + nh, stay untouched. Profile of 26/11 (Zen 4): the ranking 50 cycles per node.
+struct SortNet16 {
+  int            idx[10][16];
+  unsigned short mx[10];
+};
+static constexpr SortNet16 make_sortnet16() {
+  SortNet16 t{};
+  int s = 0;
+  for (int k = 2; k <= 16; k <<= 1)
+    for (int j = k >> 1; j > 0; j >>= 1, s++) {
+      unsigned m = 0;
+      for (int i = 0; i < 16; i++) {
+        t.idx[s][i] = i ^ j;
+        if (((i & j) == 0) == ((i & k) == 0))   // the lower lane of a pair keeps the larger key in descending blocks
+          m |= 1u << i;
+      }
+      t.mx[s] = (unsigned short)m;
+    }
+  return t;
+}
+alignas(64) static constexpr SortNet16 kSortNet16 = make_sortnet16();
+static inline __m512i sortnet_step(__m512i v, int s) {
+  const __m512i p = _mm512_permutexvar_epi32(_mm512_load_si512(kSortNet16.idx[s]), v);
+  return _mm512_mask_blend_epi32((__mmask16)kSortNet16.mx[s], _mm512_min_epi32(v, p), _mm512_max_epi32(v, p));
+}
+static inline __m512i sortnet_sort16(__m512i v) {   // descending
+  for (int s = 0; s < 10; s++)
+    v = sortnet_step(v, s);
+  return v;
+}
+static inline __m512i sortnet_merge16(__m512i v) {   // a bitonic register, descending (the last steps, k = 16)
+  for (int s = 6; s < 10; s++)
+    v = sortnet_step(v, s);
+  return v;
+}
+// Writes pairs [base, base + 16) of the sorted part from the sorted keys k, up to nh.
+static inline void rank_store16(ScoredMove *out, __m512i k, __m512i m0, __m512i m1, __m512i s0, __m512i s1, int base,
+                                int nh, __m512i ilo, __m512i ihi) {
+  const __m512i j  = _mm512_xor_si512(_mm512_and_si512(k, _mm512_set1_epi32(255)), _mm512_set1_epi32(255));
+  const __m512i mv = _mm512_permutex2var_epi32(m0, j, m1), sv = _mm512_permutex2var_epi32(s0, j, s1);
+  const int c0 = std::clamp(nh - base, 0, 8), c1 = std::clamp(nh - base - 8, 0, 8);
+  _mm512_mask_storeu_epi32(reinterpret_cast<void *>(out + base), (__mmask16)((1u << (2 * c0)) - 1),
+                           _mm512_permutex2var_epi32(mv, ilo, sv));
+  _mm512_mask_storeu_epi32(reinterpret_cast<void *>(out + base + 8), (__mmask16)((1u << (2 * c1)) - 1),
+                           _mm512_permutex2var_epi32(mv, ihi, sv));
+}
+static inline void rank_sort32(ScoredMove *out, const int *key, const int *hmv, const int *hsc, int nh, __m512i ilo,
+                               __m512i ihi) {
+  if (nh <= 0)
+    return;
+  const __m512i m0 = _mm512_load_si512(hmv), s0 = _mm512_load_si512(hsc);
+  if (nh <= 16) {
+    rank_store16(out, sortnet_sort16(_mm512_load_si512(key)), m0, m0, s0, s0, 0, nh, ilo, ihi);
+    return;
+  }
+  const __m512i m1 = _mm512_load_si512(hmv + 16), s1 = _mm512_load_si512(hsc + 16);
+  const __m512i rev = _mm512_setr_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+  const __m512i a = sortnet_sort16(_mm512_load_si512(key));
+  const __m512i b = _mm512_permutexvar_epi32(rev, sortnet_sort16(_mm512_load_si512(key + 16)));
+  rank_store16(out, sortnet_merge16(_mm512_max_epi32(a, b)), m0, m1, s0, s1, 0, nh, ilo, ihi);
+  rank_store16(out, sortnet_merge16(_mm512_min_epi32(a, b)), m0, m1, s0, s1, 16, nh, ilo, ihi);
+}
 __attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv, const int *sc, int n, int limit) {
   PROF_GUARD(prof_mp);
   alignas(64) int key[256 + 16], hmv[256 + 16], hsc[256 + 16];
@@ -358,12 +427,16 @@ __attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv,
     const __mmask16 k = n - 16 * g >= 16 ? (__mmask16)0xFFFF : (__mmask16)((1u << (n - 16 * g)) - 1);
     const __m512i s = _mm512_maskz_loadu_epi32(k, sc + 16 * g), m = _mm512_maskz_loadu_epi32(k, mv + 16 * g);
     const __mmask16 u = up[g], d = k & (__mmask16)~u;
-    const __m512i cl = _mm512_min_epi32(_mm512_max_epi32(s, _mm512_set1_epi32(-(1 << 22))), _mm512_set1_epi32((1 << 22) - 1));
+    // (26/11/2026) The key's low byte is 255 - the move's place in the packed list (h + lane), not in the generator's
+    // list: the packed list keeps generation order, so the ties break the same way, and the sorted key gives back the
+    // place of its move in hmv / hsc (rank_sort32 below).
+    const __m512i cs = _mm512_maskz_compress_epi32(u, s);
+    const __m512i cl = _mm512_min_epi32(_mm512_max_epi32(cs, _mm512_set1_epi32(-(1 << 22))), _mm512_set1_epi32((1 << 22) - 1));
     const __m512i ky = _mm512_or_si512(_mm512_slli_epi32(cl, 8),
-                                       _mm512_sub_epi32(_mm512_set1_epi32(255 - 16 * g), iota));
-    _mm512_storeu_si512(key + h, _mm512_maskz_compress_epi32(u, ky));
+                                       _mm512_sub_epi32(_mm512_set1_epi32(255 - h), iota));
+    _mm512_storeu_si512(key + h, ky);
     _mm512_storeu_si512(hmv + h, _mm512_maskz_compress_epi32(u, m));
-    _mm512_storeu_si512(hsc + h, _mm512_maskz_compress_epi32(u, s));
+    _mm512_storeu_si512(hsc + h, cs);
     h += count_bits(u);
     const __m512i lm = _mm512_maskz_compress_epi32(d, m), ls = _mm512_maskz_compress_epi32(d, s);
     _mm512_storeu_si512(reinterpret_cast<void *>(out + l), _mm512_permutex2var_epi32(lm, ilo, ls));
@@ -371,6 +444,10 @@ __attribute__((noinline)) static int rank_into_v(ScoredMove *out, const int *mv,
     l += count_bits(d);
   }
   _mm512_storeu_si512(key + nh, _mm512_set1_epi32(INT_MIN));   // padding up to the next group of 16
+  if (nh <= 32) {
+    rank_sort32(out, key, hmv, hsc, nh, ilo, ihi);
+    return nh;
+  }
   const int nchunk = (nh + 15) >> 4;
   for (int j = 0; j < nh; j++) {
     const __m512i x = _mm512_set1_epi32(key[j]);
@@ -966,18 +1043,20 @@ __attribute__((noinline)) static void fill_tactics(MoveQueue &q) {
   ThreadData &td = *q.td;
   moves ml[1];
   int sc[256];
+  // The hash move has already been handed out (QS_HASH): it is left out of the list, so the loops of queue_next no
+  // longer compare it at every move (same order, same tree). The legal generator drops it as it writes (26/11/2026,
+  // ListSink::skip); the pseudo-legal one (Chess960) is compacted here in place, without branches.
+  int n = 0;
   if (td_lists_legal())
-    ml->count = legal_generate_stage<legalgen::TACTICS>(td, q.lgen, ml->moves);
-  else
+    n = ml->count = legal_generate_stage<legalgen::TACTICS>(td, q.lgen, ml->moves, q.hash_move);
+  else {
     td_generate_moves(td, ml, /*captures_only=*/true, /*quiets_only=*/false, /*known_in_check=*/0,
                       /*promo_quiet=*/true, /*promo_queen_only=*/true);
-  // The hash move has already been handed out (QS_HASH): it is removed here by compacting in place, without
-  // branches, so the loops of queue_next no longer compare it at every move (same order, same tree).
-  int n = 0;
-  for (int i = 0; i < ml->count; i++) {
-    const int m = ml->moves[i];
-    ml->moves[n] = m;
-    n += m != q.hash_move;
+    for (int i = 0; i < ml->count; i++) {
+      const int m = ml->moves[i];
+      ml->moves[n] = m;
+      n += m != q.hash_move;
+    }
   }
   q.ex = search_band(td);   // expert of the node: capture weights and group thresholds
   q.good_capt = by_exp4(q.ex, StGood0, StGood1, StGood2, StGood3);
@@ -1015,13 +1094,15 @@ __attribute__((noinline)) static void fill_quiets(MoveQueue &q) {
   ThreadData &td = *q.td;
   moves ml[1];
   int sc[256];
-  if (td_lists_legal())
-    ml->count = legal_generate_stage<legalgen::QUIETS>(td, q.lgen, ml->moves);
-  else
-    td_generate_moves(td, ml, /*captures_only=*/false, /*quiets_only=*/true, /*known_in_check=*/0);
-  // The queen promotion is already among the tactical moves and the hash move has been handed out: both are removed
-  // by compacting in place, without branches.
+  // The queen promotion is already among the tactical moves and the hash move has been handed out: both are left out.
+  // The legal generator does not write them (26/11/2026: stage QUIETS_NQ, ListSink::skip; before, this function read
+  // the whole list again to compact it, and the vector reload of moves just stored one by one stalled: Zen 4 profile,
+  // ~8 cycles per node on that line). The pseudo-legal lists (Chess960) are compacted in place, without branches.
   int n = 0;
+  if (td_lists_legal())
+    n = ml->count = legal_generate_stage<legalgen::QUIETS_NQ>(td, q.lgen, ml->moves, q.hash_move);
+  else {
+    td_generate_moves(td, ml, /*captures_only=*/false, /*quiets_only=*/true, /*known_in_check=*/0);
 #if defined(__AVX512F__)
   // (28/10/2026 night, speed, same list) 16 moves at a time: queen promotion = promotion field 4 (Q) or 10 (q); the
   // kept moves are packed in register (vpcompressd) and stored whole. The store at n <= i never reaches the moves not
@@ -1063,6 +1144,7 @@ __attribute__((noinline)) static void fill_quiets(MoveQueue &q) {
     n += (promo_kind(m) != Q) & (m != q.hash_move);
   }
 #endif
+  }
   q.n_all = q.n_tact + n;
   score_quiets(q, ml->moves, sc, n);
   if (LmrRank) {   // LmrRank: the highest score among the quiet moves (including the unsorted ones below the limit)
@@ -1102,15 +1184,16 @@ __attribute__((noinline)) static void fill_evasions(MoveQueue &q) {
   ThreadData &td = *q.td;
   moves ml[1];
   int sc[256];
-  if (td_lists_legal())
-    ml->count = legal_generate_stage<legalgen::ALL>(td, q.lgen, ml->moves);
-  else
-    td_generate_moves(td, ml, false, false, /*known_in_check=*/1);
   int n = 0;   // without the hash move, already handed out (see fill_tactics)
-  for (int i = 0; i < ml->count; i++) {
-    const int m = ml->moves[i];
-    ml->moves[n] = m;
-    n += m != q.hash_move;
+  if (td_lists_legal())
+    n = ml->count = legal_generate_stage<legalgen::ALL>(td, q.lgen, ml->moves, q.hash_move);
+  else {
+    td_generate_moves(td, ml, false, false, /*known_in_check=*/1);
+    for (int i = 0; i < ml->count; i++) {
+      const int m = ml->moves[i];
+      ml->moves[n] = m;
+      n += m != q.hash_move;
+    }
   }
   const PieceToRow &c1 = *q.f[-1].cont_hist;
   // Tactical moves ahead of every quiet one: 1 << 20 is enough (|quiet| <= LIM_QUIET + LIM_FOLLOW = 37,183) and fits
