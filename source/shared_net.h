@@ -67,6 +67,26 @@ inline void release() {
     v = View{};
 }
 
+// NumaSpread views of the other nodes (audit 26/11/2026). attach_extra kept them open and never closed them, so each
+// EvalFile or PassedScale after a search with several threads left one more ~200 MB view per node. They are now kept
+// here, and release_extra closes the one whose weights start at p (nothing when p is not an extra view).
+inline View* extras() { static View v[64]; return v; }
+inline void keep_extra(const View& v) {
+    View* e = extras();
+    for (int i = 0; i < 64; i++)
+        if (!e[i].base) { e[i] = v; return; }
+}
+inline void release_extra(const void* p) {
+    View* e = extras();
+    for (int i = 0; p && i < 64; i++)
+        if (e[i].base && static_cast<const char*>(e[i].base) + HeaderBytes == p) {
+            UnmapViewOfFile(e[i].base);
+            if (e[i].map) CloseHandle(e[i].map);
+            e[i] = View{};
+            return;
+        }
+}
+
 // Opens read-only an already existing area (first as large pages, then normal) and checks the header.
 // 1 = open and ready; 0 = does not exist; -1 = exists but is not (yet) ready or does not match.
 // It can be called without the mutex too: the creator writes `ready` last, after the barrier.
@@ -120,7 +140,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
         w = WaitForSingleObject(mtx, 1000);
         if (w == WAIT_TIMEOUT && open_ready(name, hash, size, node, v, result, status) == 1) {
             CloseHandle(mtx);
-            if (!extra) current() = v;
+            if (!extra) current() = v; else keep_extra(v);
             return result;
         }
     }
@@ -166,7 +186,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
     }
     ReleaseMutex(mtx);
     CloseHandle(mtx);
-    if (result && !extra) current() = v;
+    if (result) { if (!extra) current() = v; else keep_extra(v); }
     return result;
 }
 // NumaSpread: the area of the calling thread's node, kept open beside the current view.
@@ -226,6 +246,24 @@ inline void release() {
     View& v = current();
     if (v.base) munmap(v.base, v.len);
     v = View{};
+}
+
+// NumaSpread mappings of the other nodes (audit 26/11/2026): kept here so that a network reload can unmap them, as on
+// Windows. The files themselves stay for the next processes (see above).
+inline View* extras() { static View v[64]; return v; }
+inline void keep_extra(const View& v) {
+    View* e = extras();
+    for (int i = 0; i < 64; i++)
+        if (!e[i].base) { e[i] = v; return; }
+}
+inline void release_extra(const void* p) {
+    View* e = extras();
+    for (int i = 0; p && i < 64; i++)
+        if (e[i].base && static_cast<const char*>(e[i].base) + HeaderBytes == p) {
+            munmap(e[i].base, e[i].len);
+            e[i] = View{};
+            return;
+        }
 }
 
 // Maps an existing complete file read-only and checks the header (the content hash too unless anyHash); false if it
@@ -310,7 +348,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
             const std::string alias = netpath ? file_alias(dir, netpath, param, size, node) : "";
             if (!alias.empty())
                 link(path.c_str(), alias.c_str());
-            if (!extra) current() = v;
+            if (!extra) current() = v; else keep_extra(v);
             status    = "shared (opened " + path + ")";
             return result;
         }
@@ -354,7 +392,7 @@ inline const void* attach(const void* src, std::size_t size, std::uint64_t hash,
         flock(lk, LOCK_UN);
         close(lk);
         if (result) {
-            if (!extra) current() = v;
+            if (!extra) current() = v; else keep_extra(v);
             status    = std::string(created ? "shared (created " : "shared (opened ") + path + ")";
             return result;
         }

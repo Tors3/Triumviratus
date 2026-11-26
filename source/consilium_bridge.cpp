@@ -874,8 +874,10 @@ void nn_pos_rehome(void* handle, int node) {
 void nn_bind_node_net(int node) {
 #if defined(TRIUMV_SHARED_NET) && (defined(_WIN32) || defined(__linux__))
     static const cn::Net* per_node[64];
+    static bool           per_extra[64];
     static int            per_gen[64];
     static std::mutex     mx;
+    extern std::mutex     output_mutex;
     if (!g_cn_view || node < 0 || node >= 64) {
         t_net = nullptr;
         return;
@@ -886,8 +888,16 @@ void nn_bind_node_net(int node) {
         std::string st;
         const void* sh = TriumvShm::attach_extra(g_cn_view, sizeof(cn::Net),
                                                  g_cn_view->contentHash ^ std::uint64_t(sizeof(cn::Net)), st);
-        per_node[node] = sh ? static_cast<const cn::Net*>(sh) : g_cn_view;
-        per_gen[node]  = gen;
+        // (audit 26/11/2026) The copy of the previous network on this node is released once the new one is open: the
+        // threads of this node read it only inside a search, and each rebinds here before its first evaluation.
+        // Only an extra view is released (an address taken from the old load copy may now belong to a new view).
+        if (per_extra[node])
+            TriumvShm::release_extra(per_node[node]);
+        per_node[node]  = sh ? static_cast<const cn::Net*>(sh) : g_cn_view;
+        per_extra[node] = sh != nullptr;
+        per_gen[node]   = gen;
+        // (audit 26/11/2026) Under the output lock: the search threads print their info lines at the same time.
+        std::lock_guard<std::mutex> out(output_mutex);
         std::printf("info string NUMA node %d network: %s\n", node, st.c_str());
         std::fflush(stdout);
     }

@@ -66,7 +66,16 @@ static int best_variant() {
   const unsigned eax1 = (unsigned)r[0];
   const int family = ((eax1 >> 8) & 0xF) + (((eax1 >> 8) & 0xF) == 0xF ? ((eax1 >> 20) & 0xFF) : 0);
   const bool popcnt = ecx1 & (1u << 23), osxsave = ecx1 & (1u << 27), avx = ecx1 & (1u << 28),
-             fma = ecx1 & (1u << 12), sse41 = ecx1 & (1u << 19);
+             fma = ecx1 & (1u << 12), sse41 = ecx1 & (1u << 19), movbe = ecx1 & (1u << 22), f16c = ecx1 & (1u << 29);
+  // LZCNT (extended leaf 0x80000001, ECX bit 5). Audit 26/11/2026: /arch:AVX2 also allows LZCNT, MOVBE and F16C in
+  // the AVX2 and AVX-512 variants; every real AVX2 CPU has them, but a virtual CPU may hide one, so a CPU without all
+  // three now gets the sse41 variant instead of an illegal-instruction crash.
+  __cpuid(r, 0x80000000);
+  bool lzcnt = false;
+  if ((unsigned)r[0] >= 0x80000001u) {
+    __cpuid(r, 0x80000001);
+    lzcnt = (unsigned)r[2] & (1u << 5);
+  }
   const int fallback = sse41 && popcnt ? 6 : 0;   // without AVX2: the sse41 variant, if the CPU has SSE4.1 and POPCNT
   g_can[6] = fallback != 0;
   if (!(popcnt && osxsave && avx && fma) || max_leaf < 7)
@@ -77,7 +86,7 @@ static int best_variant() {
   __cpuidex(r, 7, 0);
   const unsigned ebx7 = (unsigned)r[1], ecx7 = (unsigned)r[2], max_sub7 = (unsigned)r[0];
   const bool avx2 = ebx7 & (1u << 5), bmi1 = ebx7 & (1u << 3), bmi2 = ebx7 & (1u << 8);
-  if (!(avx2 && bmi1))
+  if (!(avx2 && bmi1 && lzcnt && movbe && f16c))
     return fallback;
   bool avxvnni = false;   // AVX-VNNI: foglia 7, sottofoglia 1, EAX bit 4
   if (max_sub7 >= 1) {
