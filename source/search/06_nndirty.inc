@@ -504,6 +504,20 @@ static inline void nn_dp_toggle(NnTB &tb, const NnDirtyPiece &dp) {  // XOR: wor
   if (dp.remove_sq != NN_SQ_NONE) nn_tb_toggle(tb, dp.remove_pc, 1ULL << dp.remove_sq);
   if (dp.add_sq != NN_SQ_NONE) nn_tb_toggle(tb, dp.add_pc, 1ULL << dp.add_sq);
 }
+#if defined(NN_MB8)
+// The same toggles on the working board held in one register (nn_dirty_catch_up): lane = type (0-5) and colour (6-7).
+static inline __m512i nn_tbv_toggle(__m512i v, int pc, U64 b) {
+  const unsigned c = pc >= 6, k = (unsigned)pc - 6 * c;
+  return _mm512_mask_xor_epi64(v, (__mmask8)((1u << k) | (1u << (6 + c))), v, _mm512_set1_epi64((long long)b));
+}
+static inline __m512i nn_dpv_toggle(__m512i v, const NnDirtyPiece &dp) {
+  v = nn_tbv_toggle(v, dp.pc, 1ULL << dp.from);
+  if (dp.to != NN_SQ_NONE) v = nn_tbv_toggle(v, dp.pc, 1ULL << dp.to);
+  if (dp.remove_sq != NN_SQ_NONE) v = nn_tbv_toggle(v, dp.remove_pc, 1ULL << dp.remove_sq);
+  if (dp.add_sq != NN_SQ_NONE) v = nn_tbv_toggle(v, dp.add_pc, 1ULL << dp.add_sq);
+  return v;
+}
+#endif
 // First the arrival squares are emptied, then the starting pieces are put back: in Chess960 castling the squares
 // overlap.
 static inline void nn_mb_undo(int *mb, const NnDirtyPiece &dp) {
@@ -572,9 +586,25 @@ static inline void nn_dirty_catch_up(ThreadData &td) {
 #if defined(NN_MB8)
   alignas(64) std::int8_t mb8[64];
   __m512i b8 = _mm512_load_si512(td.pc8);
+  // (26/11/2026, speed, same bitboards) The working board is undone in one register as well, like the byte board:
+  // lanes 0-5 the six types over both colours, 6-7 the two colours, every toggle one masked XOR (nn_dpv_toggle). The
+  // toggles in memory read back each word of tb right after writing it, a chain of store-to-load waits that the Zen 4
+  // paid dearly (profile of 26/11: nn_tb_toggle 34 cycles per node, 5 on the Xeon, which reads the saved board,
+  // NN_PREBOARD). tb is written once, after the undo.
+  static_assert(offsetof(ThreadData, occupancies) == offsetof(ThreadData, bitboards) + 12 * sizeof(U64),
+                "the colour lanes are loaded right after the twelve bitboards");
+  static_assert(offsetof(NnTB, color) == 6 * sizeof(U64) && offsetof(NnTB, occ) == 8 * sizeof(U64),
+                "types and colours fill the first 64 bytes of NnTB");
+  __m512i tv = _mm512_or_si512(_mm512_maskz_loadu_epi64(0x3F, td.bitboards), _mm512_maskz_loadu_epi64(0x3F, td.bitboards + 6));
+  tv = _mm512_mask_loadu_epi64(tv, 0xC0, td.bitboards + 6);   // lanes 6-7: bitboards[12-13] = occupancies[white, black]
   for (int i = last - 1; i >= first; i--) {
-    nn_dp_toggle(tb, S.st[i].dp);
+    tv = nn_dpv_toggle(tv, S.st[i].dp);
     b8 = nn_b8_undo(b8, S.st[i].dp);
+  }
+  _mm512_storeu_si512(reinterpret_cast<void *>(&tb), tv);
+  {
+    const __m256i hi = _mm512_extracti64x4_epi64(tv, 1);   // lanes 4-7
+    tb.occ = (U64)_mm256_extract_epi64(hi, 2) | (U64)_mm256_extract_epi64(hi, 3);
   }
   _mm512_store_si512(mb8, b8);
 #else

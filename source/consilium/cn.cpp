@@ -680,6 +680,15 @@ struct RowList {
         n8a += add;
         n8s += 1 - add;
     }
+    // push8 with the counters held by the caller (see pushT_at).
+    void push8_at(const std::int8_t* w, int add, int& na, int& ns) {
+        CN_PREFETCH(w);
+        CN_PREFETCH_HALF(w);
+        a8[na] = w;
+        s8[ns] = w;
+        na += add;
+        ns += 1 - add;
+    }
     // A threat row only if valid (threat_row), still without a branch: no counter moves when valid = 0.
     void pushT(int r, int valid, int add) {
         CN_ROWHIT(r, valid);
@@ -690,6 +699,20 @@ struct RowList {
         s8[n8s] = w;
         n8a += add & valid;
         n8s += (1 - add) & valid;
+    }
+    // pushT with the two counters held by the caller (26/11/2026, speed, same lists): clang-cl compiles without strict
+    // aliasing, so after every store into a8 / s8 the member counters were read back from memory, a chain of
+    // store-to-load waits through the whole loop of a move's tuples (Zen 4 profile of 26/11: pushT 61 cycles per node,
+    // 41 on the Xeon). Locals of the loop stay in registers; the caller writes them back.
+    void pushT_at(int r, int valid, int add, int& na, int& ns) {
+        CN_ROWHIT(r, valid);
+        const std::int8_t* w = net->wThr[r];
+        CN_PREFETCH(w);
+        CN_PREFETCH_HALF(w);
+        a8[na] = w;
+        s8[ns] = w;
+        na += add & valid;
+        ns += (1 - add) & valid;
     }
     void pushH(int r, int sign) { push8(net->wHka[r], sign > 0); }
     // A HalfKA row only if valid (the mailbox form of kcache_rows), without a branch, as pushT.
@@ -1269,22 +1292,30 @@ void move_threats(const NnStack& S, int i, const Persp* const PP[2], RowList* co
     const NnDirtyThreats& th = S.st[i].threats;
     const int m0 = PP[0] ? PP[0]->mo : 0, m1 = PP[1] ? PP[1]->mo : 0;
     const int o0 = g_oo[0][m0], o1 = g_oo[1][m1];
-    for (std::uint32_t k = 0; k < th.n; k++) {
+    // The counters of the two lists in registers for the whole loop (RowList::pushT_at); the two lists are distinct
+    // (one per perspective), so each pair of counters is the only writer of its list here.
+    RowList* const L0 = PP[0] ? LL[0] : nullptr;
+    RowList* const L1 = PP[1] ? LL[1] : nullptr;
+    int a0 = L0 ? L0->n8a : 0, s0 = L0 ? L0->n8s : 0, a1 = L1 ? L1->n8a : 0, s1 = L1 ? L1->n8s : 0;
+    const std::uint32_t nt = th.n;
+    for (std::uint32_t k = 0; k < nt; k++) {
         const std::uint32_t t    = th.list[k];
         const int           pair = (t >> NN_THR_TPC) & 255;   // attacker << 4 | target (NN_THR_PC = NN_THR_TPC + 4)
         const int           f = t & 255, to = (t >> NN_THR_TSQ) & 255;
         const int           add = int((t >> 31) ^ (dir < 0));
-        if (PP[0]) {
+        if (L0) {
             int       valid;
             const int r = threat_row_pair(0, o0, pair, f, to, valid);
-            LL[0]->pushT(r, valid, add);
+            L0->pushT_at(r, valid, add, a0, s0);
         }
-        if (PP[1]) {
+        if (L1) {
             int       valid;
             const int r = threat_row_pair(1, o1, pair, f, to, valid);
-            LL[1]->pushT(r, valid, add);
+            L1->pushT_at(r, valid, add, a1, s1);
         }
     }
+    if (L0) L0->n8a = a0, L0->n8s = s0;
+    if (L1) L1->n8a = a1, L1->n8s = s1;
 }
 
 // Pawn pairs and passed pawns of move i (only on moves that touch pawns).
@@ -1301,14 +1332,20 @@ void move_pawns(const NnStack& S, int i, const Persp& P, RowList& L, int dir) {
     const NnState&      st = S.st[i];
     const NnDirtyPawns& pw = st.pawns;
     if (pw.any) {
+        // (26/11/2026, speed, same lists) The list counters in registers for the loops below (RowList::push8_at,
+        // see pushT_at); written back at the end. pushP and pushS are push8 of a pawn-pair or a passer row.
+        int na = L.n8a, ns = L.n8s;
         u64 cur[2] = {pw.before[0], pw.before[1]};
-        for (int k = 0; k < pw.nRemoved; k++) {
+        const int nrem = pw.nRemoved;
+        for (int k = 0; k < nrem; k++) {
             const int           s     = pw.removedSq[k], c = pw.removedC[k];
             const std::uint16_t* ppRow = g_ppRow[P.pid(c, s)];
             cur[c] &= ~(1ULL << s);
             for (u64 t = g_ppMask[s] & (cur[0] | cur[1]); t; t &= t - 1) {
                 const int to = CN_LSB(t);
-                L.pushP(ppRow[P.pid((cur[1] >> to) & 1, to)], -1 * dir);
+                const int r  = ppRow[P.pid((cur[1] >> to) & 1, to)];
+                CN_PPHIT(r);
+                L.push8_at(L.net->wPP[r], -1 * dir > 0, na, ns);
             }
         }
         if (pw.addedSq != NN_SQ_NONE) {
@@ -1316,7 +1353,9 @@ void move_pawns(const NnStack& S, int i, const Persp& P, RowList& L, int dir) {
             const std::uint16_t* ppRow = g_ppRow[P.pid(c, s)];
             for (u64 t = g_ppMask[s] & (cur[0] | cur[1]); t; t &= t - 1) {
                 const int to = CN_LSB(t);
-                L.pushP(ppRow[P.pid((cur[1] >> to) & 1, to)], 1 * dir);
+                const int r  = ppRow[P.pid((cur[1] >> to) & 1, to)];
+                CN_PPHIT(r);
+                L.push8_at(L.net->wPP[r], 1 * dir > 0, na, ns);
             }
         }
 #if defined(USE_AVX512ICL)
@@ -1326,10 +1365,11 @@ void move_pawns(const NnStack& S, int i, const Persp& P, RowList& L, int dir) {
 #else
         const u64 bw = S.v1PassW[i - 1], aw = S.v1PassW[i], bb = S.v1PassB[i - 1], ab = S.v1PassB[i];
 #endif
-        for (u64 x = bw & ~aw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), -1 * dir);
-        for (u64 x = aw & ~bw; x; x &= x - 1) L.pushS(P.pid(0, CN_LSB(x)), 1 * dir);
-        for (u64 x = bb & ~ab; x; x &= x - 1) L.pushS(P.pid(1, CN_LSB(x)), -1 * dir);
-        for (u64 x = ab & ~bb; x; x &= x - 1) L.pushS(P.pid(1, CN_LSB(x)), 1 * dir);
+        for (u64 x = bw & ~aw; x; x &= x - 1) L.push8_at(L.net->wPas[P.pid(0, CN_LSB(x))], -1 * dir > 0, na, ns);
+        for (u64 x = aw & ~bw; x; x &= x - 1) L.push8_at(L.net->wPas[P.pid(0, CN_LSB(x))], 1 * dir > 0, na, ns);
+        for (u64 x = bb & ~ab; x; x &= x - 1) L.push8_at(L.net->wPas[P.pid(1, CN_LSB(x))], -1 * dir > 0, na, ns);
+        for (u64 x = ab & ~bb; x; x &= x - 1) L.push8_at(L.net->wPas[P.pid(1, CN_LSB(x))], 1 * dir > 0, na, ns);
+        L.n8a = na, L.n8s = ns;
     }
 }
 
