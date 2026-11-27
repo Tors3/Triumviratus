@@ -2862,12 +2862,20 @@ inline void cancel_pairs(RowList& L) {
 CN_EVAL_CC Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1) {   // System V: see cn.h
     CN_TIME(0);
     CN_AST(g_applyStats.evals++);
-    {   // The pawn-king entry is read at the end: asked for now, so it arrives under the accumulator work (21/10/2026).
+    // The pawn-king entry is read at the end: asked for now, so it arrives under the accumulator work (21/10/2026).
+    // (27/11/2026, speed, same values) Only where pawn_king reads it: when pk_gate_skip holds (a rook or a queen on the
+    // board, or two minor pieces) the gate returns the mean outputs, and the three lines were fetched for nothing. The
+    // PSQT of the stack state is taken first for the same reason: its table reads now overlap the accumulator work
+    // instead of ending the call (psq_top touches only bit 2 of computed[0]). xperf, 6 rounds, against an identical
+    // copy of the base: Zen 4 (avx512icl) -0.89 / -0.37% and -0.12 / -1.34% cycles per node (middlegame / endgames,
+    // two captures), Xeon (avx512) -0.47 / -0.53%, fewer instructions and branch misses on both.
+    if (!pk_gate_skip(b)) {
         const char* e = reinterpret_cast<const char*>(&h.pkc[pk_index(b)]);
         CN_PREFETCH(e);
         CN_PREFETCH(e + 64);
         CN_PREFETCH(e + 128);
     }
+    const std::int32_t* psq = psq_top(net, h, b);   // the PSQT from the table, per stack state
     NnStack&  S   = h.stack;
     const int top = S.size - 1;
     static_assert(3 * sizeof(RowList) <= sizeof(h.scratch), "Handle::scratch too small for 3 row lists");
@@ -3124,7 +3132,7 @@ CN_EVAL_CC Out evaluate(const Net& net, Handle& h, const Board& b, bool want_x1)
 #else
     Out o = CN_FORWARD(net, h.acc[top][b.stm], h.acc[top][b.stm ^ 1], bucket_of(b), pk, want_x1 ? h.x1 : nullptr);
 #endif
-    o.psqt = psq_out(psq_top(net, h, b), b);   // the PSQT from the table, per stack state
+    o.psqt = psq_out(psq, b);
     return o;
 }
 

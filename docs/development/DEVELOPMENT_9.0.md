@@ -110,6 +110,21 @@ came after the measurement of section 1.2, so they are not in its 9.0 numbers. T
 Two more were measured and dropped: accumulator tiles of 8 registers instead of 16 (slower on the Xeon, and on the
 Zen 4 once the changes above were in), and a bitset of the non-zero groups in the AVX2 forward pass (+2.7% cycles).
 
+### 1.4 Speed change of 27 November 2026
+
+The evaluation asked for the pawn-king cache entry at every call, although the subnetwork reads it only without rooks
+and queens and with at most one minor piece; it now asks only there, and the PSQT of the stack state is taken at the
+start of the call, so that its table reads overlap the accumulator work. Same values (`bench` unchanged), 6 rounds
+against an identical copy of the base:
+
+| | Xeon middlegame | Xeon endgame | Zen 4 middlegame | Zen 4 endgame |
+|---|---:|---:|---:|---:|
+| pawn-king prefetch only where read, PSQT first | −0.47% | −0.53% | −0.89% / −0.12% | −0.37% / −1.34% |
+
+(two Zen 4 captures). Measured with it and dropped: the whole HalfKA rows of the last move asked for before the threat
+catch-up (+0.7% to +2.4% on both machines), and the first-layer inputs of each perspective made right after its
+accumulator update (Zen 4 between −0.7% and +0.9% from one capture to the next, Xeon +0.3% / +0.4%).
+
 ## 2. Search changes
 
 ### 2.1 Two search levers of 24 November 2026
