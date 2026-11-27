@@ -1724,18 +1724,10 @@
   P(CorrSingMax, 256, 64, 600)           /* clamp of the correction reward after a multi-cut (limit / 4)     */ \
   /* -- histories and ordering --                                                                                  */ \
   P(BonusTriedDiv, 256, 64, 1024)        /* non-PV: bonus grows by bonus * moves tried / this                */ \
-  /* HistGrad (22/10/2026, ours): quiet history updates scaled by the gradient of a listwise ranker over the        */ \
-  /* ordering scores of the best move and of the quiet moves tried (13_learn.inc, hist_grad_factors). HistGradT is the    */ \
-  /* temperature in score units: the own form is a log-odds x 1000 (about 1000), the inherited score is in history   */ \
-  /* units (several thousand).                                                                                  */ \
-  /* BAKE HISTGRAD (22/10/2026, user): HistGradMix 0 -> 256 on the inherited ordering. Mix 512 lost (-4.0 +- 6.3     */ \
-  /* over 3,066). Mix 256 at 5+0.05: socket 0 +1.58 +- 5.52 (4,190), socket 1 -3.37 +- 5.77 (3,810), Zen 4 laptop     */ \
-  /* +4.16 +- 8.40 (1,920); all +0.37 +- 3.56 over 10,220, without socket 1 +2.39 +- 4.62 (laptop as referee). Mix    */ \
-  /* and temperature go to the history SPSA after the network (O1). HistGradMix=0 = the inherited update exactly.    */ \
-  /* New canary (MinGW dev build, Consilium Plebis ep27 net): bench 420601 (150757 with HistGradMix=0).                 */ \
-  P(HistGradMix, 256, 0, 1024)                                                                             \
-  P(HistGradT, 3000, 200, 40000)                                                                           \
-  P(PawnHistSplit, -4, -64, 0)           /* pawn history: PawnBonusScale above this amount, PawnMalusScale at or below */ \
+  /* HistGrad (HistGradMix, HistGradT; 22/10/2026, ours: quiet updates scaled by the gradient of a listwise ranker,  */ \
+  /* baked at +0.90 +- 3.41) REMOVED 27/11/2026 by the author as a simplification: its softmax cost 1.05% cycles per  */ \
+  /* node in the middlegame on the Xeon (xperf, PGO avx512, 6 rounds, A/A 0.04%), more than the gain shown.            */ \
+  P(PawnHistSplit, -4, -64, 0)          /* pawn history: PawnBonusScale above this amount, PawnMalusScale at or below */ \
   P(HistLimPawn, 8192, 2048, 16384)      /* limit of the pawn history (LIM_PAWN)                             */ \
   P(HistLimTtMove, 8192, 2048, 16384)    /* limit of the hash-move history (LIM_TTMOVE)                      */ \
   P(HistLimCorr, 1024, 256, 4096)        /* limit of the correction histories (LIM_CORR)                     */ \

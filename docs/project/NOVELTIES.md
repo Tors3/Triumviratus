@@ -66,7 +66,7 @@ newest their record in the development log.
 | Experts by material on the king-relative input block: Consilium (8.0, four experts by piece count) and Consilium Plebis (8.1, eight experts per side, chosen by the opponent's non-pawn material) | New | 8.0, 8.1 | 8.0 against 7.0 **+27.3 ± 8.3** (15+0.15, 2,000 games), of which about +15 from the network with its tuning; Consilium Plebis over Consilium **+10.3 ± 4.3** (same search, 30k nodes per move, 8,332 games) | the 8.1 network; the 9.0 network (Lex Hortensia) also has experts by material |
 | `PassedPawns` input block (96 inputs) | New | 6.0 | **+6.96 Elo** (15+0.15, 2,596 games), network alone | in every network since 6.0 |
 | Correction history per material band (`CorrPhase`) | New in its form | 8.0 | **+3.2 ± 3.8** (12+0.12, 8,634) | in use |
-| History update as a listwise ranker (`HistGrad`) | New | 8.1 | non-regression test passed (5+0.05, both sockets and a Zen 4 laptop, 11,166 games); a stronger blend (512) did not hold | in use at 256 |
+| History update as a listwise ranker (`HistGrad`) | New | 8.1 | non-regression test passed (5+0.05, both sockets and a Zen 4 laptop, 11,166 games); a stronger blend (512) did not hold | removed 27/11/2026 (about 1% of the time per node for a gain within noise) |
 | Capture of a bishop of the pair in move ordering (`BishopPairCapt`) | New | 8.0 | not measured alone; adopted in 8.0 with the tuned vector of the ordering terms (+3.4 ± 3.9, about 8,100 games) | in use |
 | Slider attacks by obstruction difference on the four lines of a square in one AVX-512 register | New in its form | 8.1 | **−0.98%** cycles per node in the middlegame, **−1.20%** in endgames, whole engine (hardware counters, PGO build, Xeon) | default of the AVX-512 builds |
 | Correction from the opponent's plan (`CorrContOppW`, the author's idea): a continuation-correction term whose pair of moves is the opponent's two last moves (three plies back and one ply back), a fragment of the opponent's plan, instead of one of our moves and its answer. The engines read use only pairs that contain one of our moves | New | 9.0 | **+2.70 ± 2.15** (8+0.08, UHO openings, 24,698 games, SPRT [−1, 2] passed) on the 9.0 search and network; on 8.0 it had lost (−5.2 ± 12.7 over 742, −4.8 ± 8.7 over 1,806) | in use since 24 November 2026 at weight 8000 ([`DEVELOPMENT_9.0.md` §2.2](../development/DEVELOPMENT_9.0.md)) |
@@ -191,7 +191,9 @@ learns a lot, and a tried move that the ordering already rated low is barely pun
 with the ordinary one (`HistGradMix`, 256 of 1024) at a fixed temperature (`HistGradT`).
 
 **Measured.** Non-regression test passed at 5+0.05 on both sockets of the test machine and on a Zen 4 laptop (11,166
-games); a stronger blend (512) did not hold. Adopted at 256 on 22 October 2026.
+games); a stronger blend (512) did not hold. Adopted at 256 on 22 October 2026. Removed from the engine on 27 November
+2026 as a simplification: the softmax cost about 1% of the time per node (instruction counters on the test machine),
+more than the gain it had shown (+0.90 +- 3.41 Elo).
 
 **Compared with others.** History updates scaled by depth, by the size of the cutoff or by the current value of the
 entry (gravity) are standard. No engine was found that scales the reward and the penalties by the ordering scores of

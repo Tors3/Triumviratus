@@ -162,6 +162,16 @@ SPRT of the vector against all terms at zero, in four parts pooled (10+0.1, UHO 
 over 30,268 games, LLR +1.76 of 2.94. The author accepted it at 30,000 games without the LLR closing. Bench 302771 →
 168444 (with the nine terms at zero the bench is 302771 again). The terms stay parameters for later tuning.
 
+### 2.4 HistGrad removed, 27 November 2026
+
+`HistGrad` (8.1, adopted at +0.90 ± 3.41 Elo) scaled the quiet history updates by the gradient of a softmax over the
+ordering scores of the moves involved. A comparison of the learning code with the current reference engines showed it
+as the main extra cost of the updates, and the instruction counters confirmed it: with `HistGradMix` at 0 the Xeon
+(PGO avx512, 6 rounds, identical copy of the base at −0.04% / −0.06%) spent 1.05% fewer cycles per node in the
+middlegame and 1.14% fewer in endgames (instructions −0.41% / −0.87%, branch misses −1.28% / −1.74%). The author
+removed it as a simplification: the updates are those it gave at 0, and the two parameters, the softmax and the
+ordering scores the node kept for it are gone. Bench 333951 → 356977.
+
 ## 3. Correctness fixes of the 25 November 2026 audit
 
 A code audit of dev 223220b (search, quiescence, histories, move ordering, hash table, the network's incremental state,

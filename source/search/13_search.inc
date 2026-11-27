@@ -43,8 +43,7 @@ struct NodeState {
   int  prior_red;
   HashView h;
   int  n_quiets;                  // quiet moves in quiets (below)
-  int  best_score;                // HistGrad: ordering score of the best move (INT_MIN: none)
-  int  best_ctx;                  // ThreatHist: context of the best move (0 if tactical)
+  int  best_ctx;                 // ThreatHist: context of the best move (0 if tactical)
   int  n_tacts;                   // tactical moves in tacts (below)
   U64  causal;                   // CausalRed: squares of the refutation of the last quiet move that failed low (0 = none)
   int  expert;                   // network expert for the node's material (net_phase), for the *Exp* margins
@@ -71,7 +70,6 @@ struct NodeState {
   // NodeState instead of two. The arrays are written only as moves are tried.
   int  pc_miss[4];                // ProbCutMiss: captures the node's ProbCut searched and found below beta
   int  quiets[TRACKED];           // quiet moves tried (for the maluses)
-  int  quiet_score[TRACKED];      // HistGrad: ordering score of each quiet move tried (INT_MIN: not from a sorted stage)
   unsigned char quiet_ctx[TRACKED];   // ThreatHist: threat context of each quiet move tried
   int  tacts[TRACKED];            // tactical moves tried
 };
@@ -2635,7 +2633,6 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
       if (value + nudge > n.alpha) {
         n.best_move = m;
         n.best_ctx = ctx;
-        n.best_score = (!tact && q.rank_ok) ? q.last_score : INT_MIN;
         if (n.pv)
           pv_extend(td, m);
         if (value >= n.beta) {
@@ -2691,7 +2688,6 @@ static TRIUMV_SEARCH_CC int move_loop(ThreadData &td, NodeFrame *f, NodeState &n
       if (tact) n.tacts[n.n_tacts++] = m;
       else {
         n.quiet_ctx[n.n_quiets] = (unsigned char)ctx;
-        n.quiet_score[n.n_quiets] = q.rank_ok ? q.last_score : INT_MIN;
         n.quiets[n.n_quiets++] = m;
       }
     }
@@ -2811,7 +2807,6 @@ static TRIUMV_SEARCH_CC int explore(ThreadData &td, NodeFrame *f, int alpha, int
   n.pc_miss_n = 0;
   n.cap_value = infinity;
   n.n_quiets = n.n_tacts = 0;
-  n.best_score = INT_MIN;
   n.causal = 0;
   n.sing_drop = false, n.rep_seen = false;   // R19 techniques
   // LdseMax: Ldse extensions on the line up to here. f->ldse goes back to 0 until move_loop extends a move, so

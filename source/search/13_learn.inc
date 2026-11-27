@@ -10,7 +10,7 @@
 // permuted ep486). The values move only in the SPSA blocks Q, O1 and O2.
 //
 //   event                                   amount                                       tables reached
-//   cut by a quiet move (on_best_move)      reward(depth) x HlQBonus x HistGrad factor   quiet set
+//   cut by a quiet move (on_best_move)      reward(depth) x HlQBonus                     quiet set
 //   quiet moves tried before it             penalty(depth) x HlQMalus x HlQDecay^i       quiet set
 //   cut by a capture                        reward x HlCBonus                            capture
 //   captures tried before the best move     -penalty x HlCMalus                          capture
@@ -153,38 +153,8 @@ static inline int fail_penalty(const NodeState &n) {
   return hist_amount(n.expert, n.depth, MalusMul, MalusSub, MalusMax);
 }
 
-// HistGrad (22/10/2026, ours, HistGradMix 0 = off): the factors of a listwise ranker for the best quiet move and the
-// quiet moves tried before it. Their ordering scores give a softmax p (temperature HistGradT, in score units); the
-// gradient of the log-loss of "the best move is the right one" is 1 - p for the best move and -p_i for each other
-// move. A best move the ordering already expected learns little, a surprising one a lot; a tried move rated low by the
-// ordering is barely punished, one rated high in full. HistGradMix blends this with the fixed amounts (1024 = full);
-// the factors average 1 over a uniform p, so the size of the update is kept. Factors /1024, clamped to [0, 3072].
-// (25/11/2026, speed, same factors) The softmax is out of line (hist_grad_softmax): inlined, its floating-point work
-// kept four values in xmm6-9 across the calls of std::exp, so on_node_outcome saved and restored those four registers at
-// every call, also for a capture, a fail low or a best move without an ordering score (the hash move, most often), which
-// never reach the softmax. Same float operations in the same order.
-__attribute__((noinline)) static int hist_grad_softmax(const NodeState &n, int fq[TRACKED]) {
-  const float t = 1.0f / std::max(HistGradT, 1);
-  int top = n.best_score, ranked = 1;
-  for (int i = 0; i < n.n_quiets; i++)
-    if (n.quiet_score[i] != INT_MIN)
-      top = std::max(top, n.quiet_score[i]), ranked++;
-  float w[TRACKED], z = std::exp((n.best_score - top) * t);
-  const float w_best = z;
-  for (int i = 0; i < n.n_quiets; i++)
-    z += (w[i] = n.quiet_score[i] != INT_MIN ? std::exp((n.quiet_score[i] - top) * t) : 0.0f);
-  for (int i = 0; i < n.n_quiets; i++)
-    if (n.quiet_score[i] != INT_MIN)
-      fq[i] = std::clamp(1024 + int(HistGradMix * (ranked * w[i] / z - 1.0f)), 0, 3072);
-  return std::clamp(1024 + int(HistGradMix * (2.0f * (1.0f - w_best / z) - 1.0f)), 0, 3072);
-}
-static inline int hist_grad_factors(const NodeState &n, int fq[TRACKED]) {
-  for (int i = 0; i < n.n_quiets; i++)
-    fq[i] = 1024;
-  if (!HistGradMix || n.best_score == INT_MIN)
-    return 1024;
-  return hist_grad_softmax(n, fq);
-}
+// (HistGrad, the listwise-ranker factors of these updates, was removed on 27/11/2026: see 01_params.inc. The updates
+// below are the ones it gave with HistGradMix 0.)
 
 // ----------------------------------------------------------------------------
 // Events
@@ -199,9 +169,7 @@ static void on_best_move(const Learner &L, const NodeState &n) {
   PROF_GUARD(prof_hist);
   const int bm = n.best_move, reward = best_reward(L.f, n), penalty = fail_penalty(n);
   if (!is_tactical(bm)) {
-    int fq[TRACKED];
-    const int fb = hist_grad_factors(n, fq);
-    L.quiet(bm, reward * by_exp4(n.expert, HlQBonus0, HlQBonus1, HlQBonus2, HlQBonus3) / 1024 * fb / 1024, n.best_ctx);
+    L.quiet(bm, reward * by_exp4(n.expert, HlQBonus0, HlQBonus1, HlQBonus2, HlQBonus3) / 1024, n.best_ctx);
     const int decay = by_exp4(n.expert, HlQDecay0, HlQDecay1, HlQDecay2, HlQDecay3);
     int p = penalty * by_exp4(n.expert, HlQMalus0, HlQMalus1, HlQMalus2, HlQMalus3) / 1024;
     for (int i = 0; i < n.n_quiets; i++) {
@@ -209,9 +177,9 @@ static void on_best_move(const Learner &L, const NodeState &n) {
       // (25/11/2026, speed, same updates) Inline in this loop: one call with seven saved registers per quiet move tried
       // before the best one.
 #if defined(__clang__)
-      [[clang::always_inline]] L.quiet(n.quiets[i], -p * fq[i] / 1024, n.quiet_ctx[i]);
+      [[clang::always_inline]] L.quiet(n.quiets[i], -p, n.quiet_ctx[i]);
 #else
-      L.quiet(n.quiets[i], -p * fq[i] / 1024, n.quiet_ctx[i]);
+      L.quiet(n.quiets[i], -p, n.quiet_ctx[i]);
 #endif
     }
   } else
