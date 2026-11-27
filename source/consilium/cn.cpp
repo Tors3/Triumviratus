@@ -28,7 +28,7 @@
 
 #include "../nn_attacks.h"
 
-#if defined(USE_AVX2) || defined(USE_AVX512)
+#if defined(USE_AVX2) || defined(USE_AVX512) || defined(USE_SSSE3)
     #include <immintrin.h>
 #endif
 
@@ -1816,6 +1816,74 @@ CN_LEAF Out forward_simd(const Net& net, const Acc& us, const Acc& them, int buc
     if (x1out)
         for (int k = 0; k < 4; k++) _mm256_storeu_si256((__m256i*)(x1out + 8 * k), x1[k]);
     return forward_tail_avx2(st, x1, us, them, bucket);
+}
+#elif defined(USE_SSSE3)
+// SSSE3 (the sse41 variant of the universal executable, 28/11/2026). It used the plain forward_scalar: the whole of l1
+// as a dense product. Same steps as the AVX2 path at 128 bits: packus over one register keeps l0 in the plain order
+// (l0_group(g) = g), the nonzero 4-byte groups are compacted with a 4-bit mask, and l1 runs over them only, with
+// pmaddubsw + pmaddwd into eight registers of four int32 (the 32 outputs). Inputs <= 127 and int8 weights: a pmaddubsw
+// pair is at most 2 * 127 * 128 = 32512, no 16-bit saturation, so the sums are the integers of forward_scalar. The
+// layers after l1 stay in forward_tail (small). Not timed: the variant runs only on processors without AVX2.
+
+// g_nzIdx4[m]: the positions of the set bits of the 4-bit mask m, as four int32 (unused ones zero).
+alignas(64) std::int32_t g_nzIdx4[16][4];
+struct NzIdx4Init {
+    NzIdx4Init() {
+        for (int m = 0; m < 16; m++) {
+            int k = 0;
+            for (int b = 0; b < 4; b++)
+                if (m & (1 << b)) g_nzIdx4[m][k++] = b;
+            while (k < 4) g_nzIdx4[m][k++] = 0;
+        }
+    }
+} g_nzIdx4Init;
+
+// l0 of one side (16 values per step, (a * b) >> 9 as the AVX2 l0_side) and its nonzero 4-byte groups, appended to nz.
+inline int l0_side_sse(const Acc& a, std::uint8_t* out, std::int32_t* nz, int n, int firstGroup) {
+    const __m128i       zero = _mm_setzero_si128(), top = _mm_set1_epi16(255);
+    const std::int16_t* v    = a.v;
+    CN_ONE_REG(v);
+    for (int j = 0; j < L1H; j += 16) {
+        __m128i x0 = _mm_loadu_si128((const __m128i*)(v + j)), x1 = _mm_loadu_si128((const __m128i*)(v + j + 8));
+        __m128i y0 = _mm_loadu_si128((const __m128i*)(v + L1H + j));
+        __m128i y1 = _mm_loadu_si128((const __m128i*)(v + L1H + j + 8));
+        x0 = _mm_slli_epi16(_mm_min_epi16(_mm_max_epi16(x0, zero), top), 7);
+        x1 = _mm_slli_epi16(_mm_min_epi16(_mm_max_epi16(x1, zero), top), 7);
+        y0 = _mm_min_epi16(y0, top);
+        y1 = _mm_min_epi16(y1, top);
+        const __m128i p = _mm_packus_epi16(_mm_mulhi_epi16(x0, y0), _mm_mulhi_epi16(x1, y1));
+        _mm_store_si128((__m128i*)(out + j), p);
+        const unsigned m = unsigned(_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(p, zero)))) ^ 0xFu;
+        const __m128i pos = _mm_load_si128(reinterpret_cast<const __m128i*>(g_nzIdx4[m]));
+        _mm_storeu_si128((__m128i*)(nz + n), _mm_add_epi32(pos, _mm_set1_epi32(firstGroup + j / 4)));
+        n += CN_POPCNT(m);
+    }
+    return n;
+}
+
+CN_LEAF Out forward_simd(const Net& net, const Acc& us, const Acc& them, int bucket CN_PK_PARAM) {
+    CN_TIME(4);
+    alignas(64) std::uint8_t l0[L1];
+    alignas(64) std::int32_t nz[L1 / 4 + 8];
+    int n = l0_side_sse(us, l0, nz, 0, 0);
+    n     = l0_side_sse(them, l0 + L1H, nz, n, L1H / 4);
+    const Stack&        st   = net.stack[bucket];
+    const std::int32_t* in   = reinterpret_cast<const std::int32_t*>(l0);
+    const __m128i       ones = _mm_set1_epi16(1);
+    __m128i             a[8];   // outputs 4k .. 4k + 3; the bias and the pawn-king outputs first
+    for (int k = 0; k < 8; k++)
+        a[k] = _mm_add_epi32(_mm_loadu_si128((const __m128i*)(st.b1 + 4 * k)),
+                             _mm_loadu_si128((const __m128i*)(pk + 4 * k)));
+    for (int i = 0; i < n; i++) {
+        const __m128i  x = _mm_set1_epi32(in[nz[i]]);
+        const __m128i* w = reinterpret_cast<const __m128i*>(st.w1g[nz[i]]);
+        for (int k = 0; k < 8; k++)
+            a[k] = _mm_add_epi32(a[k], _mm_madd_epi16(_mm_maddubs_epi16(x, _mm_load_si128(w + k)), ones));
+    }
+    alignas(64) std::int32_t x1loc[L2];
+    std::int32_t* x1 = x1out ? x1out : x1loc;
+    for (int k = 0; k < 8; k++) _mm_storeu_si128((__m128i*)(x1 + 4 * k), a[k]);
+    return forward_tail(st, x1, us, them, bucket);
 }
 #else
 Out forward_simd(const Net& net, const Acc& us, const Acc& them, int bucket CN_PK_PARAM) {
